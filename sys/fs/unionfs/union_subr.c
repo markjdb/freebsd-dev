@@ -64,22 +64,17 @@ static MALLOC_DEFINE(M_UNIONFSHASH, "UNIONFS hash", "UNIONFS hash table");
 MALLOC_DEFINE(M_UNIONFSNODE, "UNIONFS node", "UNIONFS vnode private part");
 MALLOC_DEFINE(M_UNIONFSPATH, "UNIONFS path", "UNIONFS path private part");
 
-/*
- * Initialize
- */
 int
 unionfs_init(struct vfsconf *vfsp)
 {
-	UNIONFSDEBUG("unionfs_init\n");	/* printed during system boot */
+
 	return (0);
 }
 
-/*
- * Uninitialize
- */
 int
 unionfs_uninit(struct vfsconf *vfsp)
 {
+
 	return (0);
 }
 
@@ -109,7 +104,7 @@ unionfs_get_cached_vnode(struct vnode *uvp, struct vnode *lvp,
 {
 	struct unionfs_node_hashhead *hd;
 	struct unionfs_node *unp;
-	struct vnode   *vp;
+	struct vnode *vp;
 
 	KASSERT((uvp == NULLVP || uvp->v_type == VDIR),
 	    ("unionfs_get_cached_vnode: v_type != VDIR"));
@@ -1127,13 +1122,11 @@ unionfs_check_rmdir(struct vnode *vp, struct ucred *cred, struct thread *td)
 	uvp = UNIONFSVPTOUPPERVP(vp);
 	lvp = UNIONFSVPTOLOWERVP(vp);
 
-	/* check opaque */
 	if ((error = VOP_GETATTR(uvp, &va, cred)) != 0)
 		return (error);
 	if (va.va_flags & OPAQUE)
 		return (0);
 
-	/* open vnode */
 #ifdef MAC
 	if ((error = mac_vnode_check_open(cred, vp, VEXEC|VREAD)) != 0)
 		return (error);
@@ -1218,15 +1211,13 @@ unionfs_check_rmdir(struct vnode *vp, struct ucred *cred, struct thread *td)
 		}
 	}
 
-	/* close vnode */
 	VOP_CLOSE(vp, FREAD, cred, td);
 
 	return (error);
 }
 
 #ifdef DIAGNOSTIC
-
-struct vnode   *
+struct vnode *
 unionfs_checkuppervp(struct vnode *vp, char *fil, int lno)
 {
 	struct unionfs_node *unp;
@@ -1246,7 +1237,7 @@ unionfs_checkuppervp(struct vnode *vp, char *fil, int lno)
 	return (unp->un_uppervp);
 }
 
-struct vnode   *
+struct vnode *
 unionfs_checklowervp(struct vnode *vp, char *fil, int lno)
 {
 	struct unionfs_node *unp;

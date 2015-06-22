@@ -55,7 +55,7 @@ static MALLOC_DEFINE(M_UNIONFSMNT, "UNIONFS mount", "UNIONFS mount structure");
 
 static vfs_fhtovp_t	unionfs_fhtovp;
 static vfs_checkexp_t	unionfs_checkexp;
-static vfs_mount_t	unionfs_domount;
+static vfs_mount_t	unionfs_mount;
 static vfs_quotactl_t	unionfs_quotactl;
 static vfs_root_t	unionfs_root;
 static vfs_sync_t	unionfs_sync;
@@ -70,7 +70,7 @@ static struct vfsops unionfs_vfsops;
  * Mount unionfs layer.
  */
 static int
-unionfs_domount(struct mount *mp)
+unionfs_mount(struct mount *mp)
 {
 	int		error;
 	struct vnode   *lowerrootvp;
@@ -110,17 +110,11 @@ unionfs_domount(struct mount *mp)
 		return (EOPNOTSUPP);
 	}
 
-	/*
-	 * Update is a no operation.
-	 */
 	if (mp->mnt_flag & MNT_UPDATE) {
 		vfs_mount_error(mp, "unionfs does not support mount update");
 		return (EOPNOTSUPP);
 	}
 
-	/*
-	 * Get argument
-	 */
 	error = vfs_getopt(mp->mnt_optnew, "target", (void **)&target, &len);
 	if (error)
 		error = vfs_getopt(mp->mnt_optnew, "from", (void **)&target,
@@ -229,22 +223,17 @@ unionfs_domount(struct mount *mp)
 	UNIONFSDEBUG("unionfs_mount: udir=0%03o, ufile=0%03o\n", udir, ufile);
 	UNIONFSDEBUG("unionfs_mount: copymode=%d\n", copymode);
 
-	/*
-	 * Find upper node
-	 */
 	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, target, td);
 	if ((error = namei(ndp)))
 		return (error);
 
 	NDFREE(ndp, NDF_ONLY_PNBUF);
 
-	/* get root vnodes */
 	lowerrootvp = mp->mnt_vnodecovered;
 	upperrootvp = ndp->ni_vp;
 
-	/* create unionfs_mount */
-	ump = (struct unionfs_mount *)malloc(sizeof(struct unionfs_mount),
-	    M_UNIONFSMNT, M_WAITOK | M_ZERO);
+	ump = malloc(sizeof(struct unionfs_mount), M_UNIONFSMNT,
+	    M_WAITOK | M_ZERO);
 
 	/*
 	 * Save reference
@@ -268,19 +257,10 @@ unionfs_domount(struct mount *mp)
 
 	mp->mnt_data = ump;
 
-	/*
-	 * Copy upper layer's RDONLY flag.
-	 */
 	mp->mnt_flag |= ump->um_uppervp->v_mount->mnt_flag & MNT_RDONLY;
 
-	/*
-	 * Unlock the node
-	 */
 	VOP_UNLOCK(ump->um_uppervp, LK_RELEASE);
 
-	/*
-	 * Get the unionfs root vnode.
-	 */
 	error = unionfs_nodeget(mp, ump->um_uppervp, ump->um_lowervp,
 	    NULLVP, &(ump->um_rootvp), NULL, td);
 	vrele(upperrootvp);
@@ -299,9 +279,6 @@ unionfs_domount(struct mount *mp)
 		mp->mnt_kern_flag |= MNTK_SUSPENDABLE;
 	MNT_IUNLOCK(mp);
 
-	/*
-	 * Get new fsid
-	 */
 	vfs_getnewfsid(mp);
 
 	len = MNAMELEN - 1;
@@ -440,13 +417,14 @@ unionfs_statfs(struct mount *mp, struct statfs *sbp)
 static int
 unionfs_sync(struct mount *mp, int waitfor)
 {
-	/* nothing to do */
+
 	return (0);
 }
 
 static int
 unionfs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 {
+
 	return (EOPNOTSUPP);
 }
 
@@ -454,6 +432,7 @@ static int
 unionfs_fhtovp(struct mount *mp, struct fid *fidp, int flags,
     struct vnode **vpp)
 {
+
 	return (EOPNOTSUPP);
 }
 
@@ -461,6 +440,7 @@ static int
 unionfs_checkexp(struct mount *mp, struct sockaddr *nam, int *extflagsp,
     struct ucred **credanonp, int *numsecflavors, int **secflavors)
 {
+
 	return (EOPNOTSUPP);
 }
 
@@ -488,7 +468,7 @@ static struct vfsops unionfs_vfsops = {
 	.vfs_extattrctl =	unionfs_extattrctl,
 	.vfs_fhtovp =		unionfs_fhtovp,
 	.vfs_init =		unionfs_init,
-	.vfs_mount =		unionfs_domount,
+	.vfs_mount =		unionfs_mount,
 	.vfs_quotactl =		unionfs_quotactl,
 	.vfs_root =		unionfs_root,
 	.vfs_statfs =		unionfs_statfs,
