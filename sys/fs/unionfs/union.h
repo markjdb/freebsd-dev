@@ -40,15 +40,15 @@
 
 /* copy method of attr from lower to upper */
 typedef enum _unionfs_copymode {
-	UNIONFS_TRADITIONAL = 0,
+	UNIONFS_TRADITIONAL,
 	UNIONFS_TRANSPARENT,
 	UNIONFS_MASQUERADE
 } unionfs_copymode;
 
 /* whiteout policy of upper layer */
 typedef enum _unionfs_whitemode {
-       UNIONFS_WHITE_ALWAYS = 0,
-       UNIONFS_WHITE_WHENNEEDED
+	UNIONFS_WHITE_ALWAYS,
+	UNIONFS_WHITE_WHENNEEDED
 } unionfs_whitemode;
 
 struct unionfs_mount {
@@ -65,7 +65,7 @@ struct unionfs_mount {
 
 /* unionfs status list */
 struct unionfs_node_status {
-	LIST_ENTRY(unionfs_node_status) uns_list;	/* Status list */
+	LIST_ENTRY(unionfs_node_status) uns_list; /* status list */
 	pid_t		uns_pid;		/* current process id */
 	int		uns_node_flag;		/* uns flag */
 	int		uns_lower_opencnt;	/* open count of lower */
@@ -79,17 +79,17 @@ struct unionfs_node_status {
 
 /* A cache of vnode references */
 struct unionfs_node {
-	struct vnode   *un_lowervp;		/* lower side vnode */
-	struct vnode   *un_uppervp;		/* upper side vnode */
-	struct vnode   *un_dvp;			/* parent unionfs vnode */
-	struct vnode   *un_vnode;		/* Back pointer */
+	struct vnode	*un_lowervp;		/* lower side vnode */
+	struct vnode	*un_uppervp;		/* upper side vnode */
+	struct vnode	*un_dvp;		/* parent unionfs vnode */
+	struct vnode	*un_vnode;		/* back pointer */
 	LIST_HEAD(, unionfs_node_status) un_unshead;
 						/* unionfs status head */
 	LIST_HEAD(unionfs_node_hashhead, unionfs_node) *un_hashtbl;
 						/* dir vnode hash table */
-	LIST_ENTRY(unionfs_node)   un_hash;	/* hash list entry */
+	LIST_ENTRY(unionfs_node) un_hash;	/* hash list entry */
 	u_long		un_hashmask;		/* bit mask */
-	char           *un_path;		/* path */
+	char		*un_path;		/* path */
 	int		un_flag;		/* unionfs node flag */
 };
 
@@ -97,8 +97,8 @@ struct unionfs_node {
  * unionfs node flags
  * It needs the vnode with exclusive lock, when changing the un_flag variable.
  */
-#define UNIONFS_OPENEXTL	0x01	/* openextattr (lower) */
-#define UNIONFS_OPENEXTU	0x02	/* openextattr (upper) */
+#define	UNIONFS_OPENEXTL	0x01	/* openextattr (lower) */
+#define	UNIONFS_OPENEXTU	0x02	/* openextattr (upper) */
 
 #define	MOUNTTOUNIONFSMOUNT(mp) ((struct unionfs_mount *)((mp)->mnt_data))
 #define	VTOUNIONFS(vp) ((struct unionfs_node *)(vp)->v_data)
@@ -157,9 +157,9 @@ MALLOC_DECLARE(M_UNIONFSPATH);
 #endif
 
 #ifdef UNIONFS_DEBUG
-#define UNIONFSDEBUG(format, args...) printf(format ,## args)
+#define	UNIONFSDEBUG(format, args...) printf(format ,## args)
 #else
-#define UNIONFSDEBUG(format, args...)
-#endif				/* UNIONFS_DEBUG */
+#define	UNIONFSDEBUG(format, args...)
+#endif
 
-#endif				/* _KERNEL */
+#endif /* _KERNEL */
