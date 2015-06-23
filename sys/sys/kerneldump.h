@@ -105,9 +105,6 @@ struct dump_pa {
 	vm_paddr_t pa_size;
 };
 
-void mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
-    uint64_t dumplen, uint32_t blksz);
-
 int dumpsys_generic(struct dumperinfo *);
 
 void dumpsys_map_chunk(vm_paddr_t, size_t, void **);
@@ -123,9 +120,16 @@ void dumpsys_gen_wbinv_all(void);
 void dumpsys_gen_unmap_chunk(vm_paddr_t, size_t, void *);
 int dumpsys_gen_write_aux_headers(struct dumperinfo *);
 
-int	set_dumper(struct dumperinfo *, const char *, struct thread *);
-int	dump_write(struct dumperinfo *, void *, vm_offset_t, off_t, size_t);
+int	dump_start(struct dumperinfo *, struct kerneldumpheader *);
+int	dump_finish(struct dumperinfo *, struct kerneldumpheader *);
+int	dump_append(struct dumperinfo *, void *, vm_offset_t, size_t);
+int	dump_skip(struct dumperinfo *, size_t);
+int	dump_write_raw(struct dumperinfo *, void *, vm_offset_t, off_t, size_t);
+
 int	doadump(boolean_t);
+int	set_dumper(struct dumperinfo *, const char *, struct thread *);
+void	mkdumpheader(struct kerneldumpheader *, char *, uint32_t, uint64_t,
+	    uint32_t);
 
 extern int do_minidump;
 

@@ -47,20 +47,10 @@ __FBSDID("$FreeBSD$");
 #include <machine/minidump.h>
 #include <machine/cache.h>
 
-CTASSERT(sizeof(struct kerneldumpheader) == 512);
-
-/*
- * Don't touch the first SIZEOF_METADATA bytes on the dump device. This
- * is to protect us from metadata and to protect metadata from us.
- */
-#define	SIZEOF_METADATA		(64*1024)
-
 uint32_t *vm_page_dump;
 int vm_page_dump_size;
 
 static struct kerneldumpheader kdh;
-static off_t dumplo;
-static off_t origdumplo;
 
 /* Handle chunked writes. */
 static uint64_t counter, progress;
@@ -132,10 +122,9 @@ write_buffer(struct dumperinfo *di, char *ptr, size_t sz)
 		}
 
 		if (ptr) {
-			error = dump_write(di, ptr, 0, dumplo, len);
+			error = dump_append(di, ptr, 0, len);
 			if (error)
 				return (error);
-			dumplo += len;
 			ptr += len;
 			sz -= len;
 		} else {
@@ -219,14 +208,6 @@ minidumpsys(struct dumperinfo *di)
 
 	dumpsize += PAGE_SIZE;
 
-	/* Determine dump offset on device. */
-	if (di->mediasize < SIZEOF_METADATA + dumpsize + sizeof(kdh) * 2) {
-		error = ENOSPC;
-		goto fail;
-	}
-
-	origdumplo = dumplo = di->mediaoffset + di->mediasize - dumpsize;
-	dumplo -= sizeof(kdh) * 2;
 	progress = dumpsize;
 
 	/* Initialize mdhdr */
@@ -245,11 +226,9 @@ minidumpsys(struct dumperinfo *di)
 	    (uintmax_t)ptoa((uintmax_t)physmem) / 1048576);
 	printf("Dumping %llu MB:", (long long)dumpsize >> 20);
 
-	/* Dump leader */
-	error = dump_write(di, &kdh, 0, dumplo, sizeof(kdh));
+	error = dump_start(di, &kdh);
 	if (error)
 		goto fail;
-	dumplo += sizeof(kdh);
 
 	/* Dump my header */
 	bzero(tmpbuffer, sizeof(tmpbuffer));
@@ -316,14 +295,10 @@ minidumpsys(struct dumperinfo *di)
 		}
 	}
 
-	/* Dump trailer */
-	error = dump_write(di, &kdh, 0, dumplo, sizeof(kdh));
+	/* Signal completion, signoff and exit stage left. */
+	error = dump_finish(di, &kdh);
 	if (error)
 		goto fail;
-	dumplo += sizeof(kdh);
-
-	/* Signal completion, signoff and exit stage left. */
-	dump_write(di, NULL, 0, 0, 0);
 	printf("\nDump complete\n");
 	return (0);
 
