@@ -49,7 +49,6 @@ __FBSDID("$FreeBSD$");
 
 static off_t fileofs;
 
-extern off_t dumplo;
 extern struct dump_pa dump_map[DUMPSYS_MD_PA_NPAIRS];
 
 int do_minidump = 0;
@@ -103,19 +102,14 @@ dumpsys(struct dumperinfo *di)
 		goto fail;
 	}
 
-	/* Determine dump offset on device. */
-	dumplo = di->mediaoffset + di->mediasize - totsize;
-
 	mkdumpheader(&kdh, KERNELDUMPMAGIC, KERNELDUMP_SPARC64_VERSION, size,
 	    di->blocksize);
 
 	printf("Dumping %lu MB (%d chunks)\n", (u_long)(size >> 20), nreg);
 
-	/* Dump leader */
-	error = dump_write(di, &kdh, 0, dumplo, sizeof(kdh));
+	error = dump_start(di, &kdh);
 	if (error)
 		goto fail;
-	dumplo += sizeof(kdh);
 
 	/* Dump the private header. */
 	hdr.dh_hdr_size = hdrsize;
@@ -142,13 +136,10 @@ dumpsys(struct dumperinfo *di)
 	if (error < 0)
 		goto fail;
 
-	/* Dump trailer */
-	error = dump_write(di, &kdh, 0, dumplo, sizeof(kdh));
-	if (error)
-		goto fail;
-
 	/* Signal completion, signoff and exit stage left. */
-	dump_write(di, NULL, 0, 0, 0);
+	error = dump_finish(di, &kdh);
+	if (error != 0)
+		goto fail;
 	printf("\nDump complete\n");
 	return (0);
 

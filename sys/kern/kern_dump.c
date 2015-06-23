@@ -43,10 +43,13 @@ __FBSDID("$FreeBSD$");
 #ifdef SW_WATCHDOG
 #include <sys/watchdog.h>
 #endif
+
 #include <ddb/ddb.h>
+
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
+
 #include <machine/dump.h>
 #include <machine/elf.h>
 #include <machine/md_var.h>
@@ -64,7 +67,6 @@ CTASSERT(sizeof(struct kerneldumpheader) == 512);
 #define	DEV_ALIGN(x)	(((off_t)(x) + (DEV_BSIZE-1)) & ~(DEV_BSIZE-1))
 
 struct dump_pa dump_map[DUMPSYS_MD_PA_NPAIRS];
-off_t dumplo;
 
 /* Our selected dumper. */
 static struct dumperinfo dumper;
@@ -73,11 +75,12 @@ static struct dumperinfo dumper;
 static struct pcb dumppcb;		/* Registers. */
 lwpid_t dumptid;			/* Thread ID. */
 
-/* Handle buffered writes. */
+/* Dump state. */
+static off_t dumpoff;
 static char buffer[DEV_BSIZE];
 static size_t fragsz;
 
-char dumpdevname[sizeof(((struct cdev *)NULL)->si_name)];
+static char dumpdevname[sizeof(((struct cdev *)NULL)->si_name)];
 SYSCTL_DECL(_kern_shutdown);
 SYSCTL_STRING(_kern_shutdown, OID_AUTO, dumpdevname, CTLFLAG_RD, dumpdevname, 0,
     "Device for kernel dumps");
@@ -112,9 +115,71 @@ doadump(boolean_t textdump)
 	return (error);
 }
 
+/* Perform any needed initialization in preparation for a kernel dump. */
+int
+dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
+{
+	uint64_t length;
+
+	length = dtoh64(kdh->dumplength);
+	if (di->mediasize < SIZEOF_METADATA + length + sizeof(*kdh) * 2)
+		return (E2BIG);
+
+	dumpoff = di->mediaoffset + di->mediasize - length - sizeof(*kdh);
+	return (0);
+}
+
+/* Complete a kernel dump. */
+int
+dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh)
+{
+	uint64_t length;
+	int error;
+
+	dumpoff = 0;
+
+	length = dtoh64(kdh->dumplength);
+
+	/* Write dump headers at the beginning and end of the dump extent. */
+	error = dump_write_raw(di, kdh, 0,
+	    di->mediaoffset + di->mediasize - sizeof(*kdh), sizeof(*kdh));
+	if (error != 0)
+		return (error);
+	error = dump_write_raw(di, kdh, 0,
+	    di->mediaoffset + di->mediasize - length - 2 * sizeof(*kdh),
+	      sizeof(*kdh));
+	if (error != 0)
+		return (error);
+
+	/* Tell the dump media driver that we're done. */
+	return (dump_write_raw(di, NULL, 0, 0, 0));
+}
+
+/* Write starting at the current kernel dump offset. */
+int
+dump_append(struct dumperinfo *di, void *virtual, vm_offset_t physical,
+    size_t length)
+{
+	int error;
+
+	error = dump_write_raw(di, virtual, physical, dumpoff, length);
+	if (error == 0)
+		dumpoff += length;
+	return (error);
+}
+
+/* Seek forward by the specified number of bytes. */
+int
+dump_skip(struct dumperinfo *di, size_t gap)
+{
+
+	dumpoff += gap;
+	return (0);
+}
+
 /* Call dumper with bounds checking. */
 int
-dump_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
+dump_write_raw(struct dumperinfo *di, void *virtual, vm_offset_t physical,
     off_t offset, size_t length)
 {
 
@@ -242,11 +307,9 @@ dumpsys_buf_write(struct dumperinfo *di, char *ptr, size_t sz)
 		ptr += len;
 		sz -= len;
 		if (fragsz == DEV_BSIZE) {
-			error = dump_write(di, buffer, 0, dumplo,
-			    DEV_BSIZE);
+			error = dump_append(di, buffer, 0, DEV_BSIZE);
 			if (error)
 				return (error);
-			dumplo += DEV_BSIZE;
 			fragsz = 0;
 		}
 	}
@@ -261,8 +324,7 @@ dumpsys_buf_flush(struct dumperinfo *di)
 	if (fragsz == 0)
 		return (0);
 
-	error = dump_write(di, buffer, 0, dumplo, DEV_BSIZE);
-	dumplo += DEV_BSIZE;
+	error = dump_append(di, buffer, 0, DEV_BSIZE);
 	fragsz = 0;
 	return (error);
 }
@@ -310,11 +372,10 @@ dumpsys_cb_dumpdata(struct dump_pa *mdp, int seqnr, void *arg)
 		wdog_kern_pat(WD_LASTVAL);
 #endif
 
-		error = dump_write(di, va, 0, dumplo, sz);
+		error = dump_append(di, va, 0, sz);
 		dumpsys_unmap_chunk(pa, chunk, va);
 		if (error)
 			break;
-		dumplo += sz;
 		pgs -= chunk;
 		pa += sz;
 
@@ -435,25 +496,15 @@ dumpsys_generic(struct dumperinfo *di)
 	dumpsize += fileofs;
 	hdrgap = fileofs - DEV_ALIGN(hdrsz);
 
-	/* Determine dump offset on device. */
-	if (di->mediasize < SIZEOF_METADATA + dumpsize + sizeof(kdh) * 2) {
-		error = ENOSPC;
-		goto fail;
-	}
-	dumplo = di->mediaoffset + di->mediasize - dumpsize;
-	dumplo -= sizeof(kdh) * 2;
-
 	mkdumpheader(&kdh, KERNELDUMPMAGIC, KERNELDUMP_ARCH_VERSION, dumpsize,
 	    di->blocksize);
 
 	printf("Dumping %ju MB (%d chunks)\n", (uintmax_t)dumpsize >> 20,
 	    ehdr.e_phnum - DUMPSYS_NUM_AUX_HDRS);
 
-	/* Dump leader */
-	error = dump_write(di, &kdh, 0, dumplo, sizeof(kdh));
+	error = dump_start(di, &kdh);
 	if (error)
 		goto fail;
-	dumplo += sizeof(kdh);
 
 	/* Dump ELF header */
 	error = dumpsys_buf_write(di, (char*)&ehdr, sizeof(ehdr));
@@ -473,23 +524,23 @@ dumpsys_generic(struct dumperinfo *di)
 	 * All headers are written using blocked I/O, so we know the
 	 * current offset is (still) block aligned. Skip the alignement
 	 * in the file to have the segment contents aligned at page
-	 * boundary. We cannot use MD_ALIGN on dumplo, because we don't
-	 * care and may very well be unaligned within the dump device.
+	 * boundary. We cannot use MD_ALIGN on the current offset, because
+	 * we don't care and may very well be unaligned within the dump
+	 * device.
 	 */
-	dumplo += hdrgap;
+	error = dump_skip(di, hdrgap);
+	if (error != 0)
+		goto fail;
 
-	/* Dump memory chunks (updates dumplo) */
+	/* Dump memory chunks. */
 	error = dumpsys_foreach_chunk(dumpsys_cb_dumpdata, di);
 	if (error < 0)
 		goto fail;
 
-	/* Dump trailer */
-	error = dump_write(di, &kdh, 0, dumplo, sizeof(kdh));
-	if (error)
-		goto fail;
-
 	/* Signal completion, signoff and exit stage left. */
-	dump_write(di, NULL, 0, 0, 0);
+	error = dump_finish(di, &kdh);
+	if (error != 0)
+		goto fail;
 	printf("\nDump complete\n");
 	return (0);
 

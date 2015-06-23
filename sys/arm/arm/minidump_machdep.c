@@ -50,22 +50,12 @@ __FBSDID("$FreeBSD$");
 #include <machine/minidump.h>
 #include <machine/cpufunc.h>
 
-CTASSERT(sizeof(struct kerneldumpheader) == 512);
-
-/*
- * Don't touch the first SIZEOF_METADATA bytes on the dump device. This
- * is to protect us from metadata and to protect metadata from us.
- */
-#define	SIZEOF_METADATA		(64*1024)
-
 uint32_t *vm_page_dump;
 int vm_page_dump_size;
 
 #ifndef ARM_NEW_PMAP
 
 static struct kerneldumpheader kdh;
-
-static off_t dumplo;
 
 /* Handle chunked writes. */
 static size_t fragsz, offset;
@@ -96,8 +86,7 @@ blk_flush(struct dumperinfo *di)
 	if (fragsz == 0)
 		return (0);
 
-	error = dump_write(di, (char*)dump_va + offset, 0, dumplo, fragsz - offset);
-	dumplo += (fragsz - offset);
+	error = dump_append(di, (char*)dump_va + offset, 0, fragsz - offset);
 	fragsz = 0;
 	offset = 0;
 	return (error);
@@ -149,10 +138,9 @@ blk_write(struct dumperinfo *di, char *ptr, vm_paddr_t pa, size_t sz)
 		wdog_kern_pat(WD_LASTVAL);
 #endif
 		if (ptr) {
-			error = dump_write(di, ptr, 0, dumplo, len);
+			error = dump_append(di, ptr, 0, len);
 			if (error)
 				return (error);
-			dumplo += len;
 			ptr += len;
 			sz -= len;
 		} else {
@@ -294,14 +282,6 @@ minidumpsys(struct dumperinfo *di)
 
 	dumpsize += PAGE_SIZE;
 
-	/* Determine dump offset on device. */
-	if (di->mediasize < SIZEOF_METADATA + dumpsize + sizeof(kdh) * 2) {
-		error = ENOSPC;
-		goto fail;
-	}
-
-	dumplo = di->mediaoffset + di->mediasize - dumpsize;
-	dumplo -= sizeof(kdh) * 2;
 	progress = dumpsize;
 
 	/* Initialize mdhdr */
@@ -319,11 +299,9 @@ minidumpsys(struct dumperinfo *di)
 	printf("Physical memory: %u MB\n", ptoa((uintmax_t)physmem) / 1048576);
 	printf("Dumping %llu MB:", (long long)dumpsize >> 20);
 
-	/* Dump leader */
-	error = dump_write(di, &kdh, 0, dumplo, sizeof(kdh));
+	error = dump_start(di, &kdh);
 	if (error)
 		goto fail;
-	dumplo += sizeof(kdh);
 
 	/* Dump my header */
 	bzero(&fakept, sizeof(fakept));
@@ -454,14 +432,10 @@ minidumpsys(struct dumperinfo *di)
 		prev_pa = 0;
 	}
 
-	/* Dump trailer */
-	error = dump_write(di, &kdh, 0, dumplo, sizeof(kdh));
-	if (error)
-		goto fail;
-	dumplo += sizeof(kdh);
-
 	/* Signal completion, signoff and exit stage left. */
-	dump_write(di, NULL, 0, 0, 0);
+	error = dump_finish(di, &kdh);
+	if (error != 0)
+		goto fail;
 	printf("\nDump complete\n");
 	return (0);
 
