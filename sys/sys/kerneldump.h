@@ -133,6 +133,10 @@ int	set_dumper(struct dumperinfo *, const char *, struct thread *);
 void	mkdumpheader(struct kerneldumpheader *, char *, uint32_t, uint64_t,
 	    uint32_t);
 
+int	set_dumper(struct dumperinfo *, const char *, struct thread *);
+int	dump_write(struct dumperinfo *, void *, vm_offset_t, off_t, size_t);
+int	doadump(boolean_t);
+
 extern int do_minidump;
 
 #endif
