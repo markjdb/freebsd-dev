@@ -336,9 +336,6 @@ struct dumperinfo {
 	off_t   mediasize;	/* Space available in bytes. */
 };
 
-int set_dumper(struct dumperinfo *, const char *_devname, struct thread *td);
-int dump_write(struct dumperinfo *, void *, vm_offset_t, off_t, size_t);
-int doadump(boolean_t);
 extern int dumping;		/* system is dumping */
 
 #endif /* _KERNEL */

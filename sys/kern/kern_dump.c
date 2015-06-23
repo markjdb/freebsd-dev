@@ -27,18 +27,23 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
+#include "opt_ddb.h"
 #include "opt_watchdog.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
 #include <sys/cons.h>
+#include <sys/jail.h>
 #include <sys/kernel.h>
-#include <sys/proc.h>
 #include <sys/kerneldump.h>
+#include <sys/priv.h>
+#include <sys/proc.h>
+#include <sys/sysctl.h>
 #ifdef SW_WATCHDOG
 #include <sys/watchdog.h>
 #endif
+#include <ddb/ddb.h>
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
@@ -58,13 +63,117 @@ CTASSERT(sizeof(struct kerneldumpheader) == 512);
 #define	MD_ALIGN(x)	(((off_t)(x) + PAGE_MASK) & ~PAGE_MASK)
 #define	DEV_ALIGN(x)	(((off_t)(x) + (DEV_BSIZE-1)) & ~(DEV_BSIZE-1))
 
+struct dump_pa dump_map[DUMPSYS_MD_PA_NPAIRS];
 off_t dumplo;
+
+/* Our selected dumper. */
+static struct dumperinfo dumper;
+
+/* Context information for dump-debuggers. */
+static struct pcb dumppcb;		/* Registers. */
+lwpid_t dumptid;			/* Thread ID. */
 
 /* Handle buffered writes. */
 static char buffer[DEV_BSIZE];
 static size_t fragsz;
 
-struct dump_pa dump_map[DUMPSYS_MD_PA_NPAIRS];
+char dumpdevname[sizeof(((struct cdev *)NULL)->si_name)];
+SYSCTL_DECL(_kern_shutdown);
+SYSCTL_STRING(_kern_shutdown, OID_AUTO, dumpdevname, CTLFLAG_RD, dumpdevname, 0,
+    "Device for kernel dumps");
+
+int
+doadump(boolean_t textdump)
+{
+	boolean_t coredump;
+	int error;
+
+	error = 0;
+	if (dumping)
+		return (EBUSY);
+	if (dumper.dumper == NULL)
+		return (ENXIO);
+
+	savectx(&dumppcb);
+	dumptid = curthread->td_tid;
+	dumping++;
+
+	coredump = TRUE;
+#ifdef DDB
+	if (textdump && textdump_pending) {
+		coredump = FALSE;
+		textdump_dumpsys(&dumper);
+	}
+#endif
+	if (coredump)
+		error = dumpsys(&dumper);
+
+	dumping--;
+	return (error);
+}
+
+/* Call dumper with bounds checking. */
+int
+dump_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
+    off_t offset, size_t length)
+{
+
+	if (length != 0 && (offset < di->mediaoffset ||
+	    offset - di->mediaoffset + length > di->mediasize)) {
+		printf("Attempt to write outside dump device boundaries.\n"
+	    "offset(%jd), mediaoffset(%jd), length(%ju), mediasize(%jd).\n",
+		    (intmax_t)offset, (intmax_t)di->mediaoffset,
+		    (uintmax_t)length, (intmax_t)di->mediasize);
+		return (ENOSPC);
+	}
+	return (di->dumper(di->priv, virtual, physical, offset, length));
+}
+
+/* Register a dumper. */
+int
+set_dumper(struct dumperinfo *di, const char *devname, struct thread *td)
+{
+	size_t wantcopy;
+	int error;
+
+	error = priv_check(td, PRIV_SETDUMPER);
+	if (error != 0)
+		return (error);
+
+	if (di == NULL) {
+		bzero(&dumper, sizeof dumper);
+		dumpdevname[0] = '\0';
+		return (0);
+	}
+	if (dumper.dumper != NULL)
+		return (EBUSY);
+	dumper = *di;
+	wantcopy = strlcpy(dumpdevname, devname, sizeof(dumpdevname));
+	if (wantcopy >= sizeof(dumpdevname))
+		printf("set_dumper: device name truncated from '%s' -> '%s'\n",
+		    devname, dumpdevname);
+	return (0);
+}
+
+void
+mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
+    uint64_t dumplen, uint32_t blksz)
+{
+
+	bzero(kdh, sizeof(*kdh));
+	strlcpy(kdh->magic, magic, sizeof(kdh->magic));
+	strlcpy(kdh->architecture, MACHINE_ARCH, sizeof(kdh->architecture));
+	kdh->version = htod32(KERNELDUMPVERSION);
+	kdh->architectureversion = htod32(archver);
+	kdh->dumplength = htod64(dumplen);
+	kdh->dumptime = htod64(time_second);
+	kdh->blocksize = htod32(blksz);
+	strlcpy(kdh->hostname, prison0.pr_hostname, sizeof(kdh->hostname));
+	strlcpy(kdh->versionstring, version, sizeof(kdh->versionstring));
+	if (panicstr != NULL)
+		strlcpy(kdh->panicstring, panicstr, sizeof(kdh->panicstring));
+	kdh->parity = kerneldump_parity(kdh);
+}
 
 #if !defined(__powerpc__) && !defined(__sparc__)
 void
