@@ -123,6 +123,10 @@ void dumpsys_gen_wbinv_all(void);
 void dumpsys_gen_unmap_chunk(vm_paddr_t, size_t, void *);
 int dumpsys_gen_write_aux_headers(struct dumperinfo *);
 
+int	set_dumper(struct dumperinfo *, const char *, struct thread *);
+int	dump_write(struct dumperinfo *, void *, vm_offset_t, off_t, size_t);
+int	doadump(boolean_t);
+
 extern int do_minidump;
 
 #endif
