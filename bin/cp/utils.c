@@ -124,20 +124,21 @@ copy_file(const FTSENT *entp, int dne)
 			}
 		}
 
-		if (fflag) {
-			/*
-			 * Remove existing destination file name create a new
-			 * file.
-			 */
-			(void)unlink(to.p_path);
-			if (!lflag && !sflag) {
+		if (!lflag && !sflag) {
+			/* Overwrite existing destination file. */
+			to_fd = open(to.p_path, O_WRONLY | O_TRUNC, 0);
+			if (to_fd < 0 && fflag) {
+				/*
+				 * Remove existing destination file and create a
+				 * new file.
+				 */
+				(void)unlink(to.p_path);
 				to_fd = open(to.p_path,
 				    O_WRONLY | O_TRUNC | O_CREAT,
 				    fs->st_mode & ~(S_ISUID | S_ISGID));
 			}
-		} else if (!lflag && !sflag) {
-			/* Overwrite existing destination file name. */
-			to_fd = open(to.p_path, O_WRONLY | O_TRUNC, 0);
+		} else if (fflag) {
+			(void)unlink(to.p_path);
 		}
 	} else if (!lflag && !sflag) {
 		to_fd = open(to.p_path, O_WRONLY | O_TRUNC | O_CREAT,

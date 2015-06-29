@@ -121,9 +121,8 @@ Archive mode.
 Same as
 .Fl RpP .
 .It Fl f
-For each existing destination pathname, remove it and
-create a new file, without prompting for confirmation
-regardless of its permissions.
+If a target file cannot be opened, attempt to unlink it
+and create a new file, without prompting for confirmation.
 (The
 .Fl f
 option overrides any previous
