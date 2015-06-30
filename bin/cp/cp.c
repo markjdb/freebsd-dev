@@ -266,7 +266,7 @@ copy(char *argv[], enum op type, int fts_options)
 	struct stat to_stat;
 	FTS *ftsp;
 	FTSENT *curr;
-	int base = 0, dne, badcp, rval;
+	int base = 0, dne, badcp, rval, follow;
 	size_t nlen;
 	char *p, *target_mid;
 	mode_t mask, mode;
@@ -388,8 +388,12 @@ copy(char *argv[], enum op type, int fts_options)
 			continue;
 		}
 
+		follow = (fts_options & FTS_LOGICAL) ||
+		    (fts_options & FTS_COMFOLLOW);
+
 		/* Not an error but need to remember it happened. */
-		if (stat(to.p_path, &to_stat) == -1)
+		if ((follow && stat(to.p_path, &to_stat) == -1) ||
+		    (!follow && lstat(to.p_path, &to_stat) == -1))
 			dne = 1;
 		else {
 			if (to_stat.st_dev == curr->fts_statp->st_dev &&
@@ -415,9 +419,7 @@ copy(char *argv[], enum op type, int fts_options)
 		switch (curr->fts_statp->st_mode & S_IFMT) {
 		case S_IFLNK:
 			/* Catch special case of a non-dangling symlink. */
-			if ((fts_options & FTS_LOGICAL) ||
-			    ((fts_options & FTS_COMFOLLOW) &&
-			    curr->fts_level == 0)) {
+			if (follow && curr->fts_level == 0) {
 				if (copy_file(curr, dne))
 					badcp = rval = 1;
 			} else {	
