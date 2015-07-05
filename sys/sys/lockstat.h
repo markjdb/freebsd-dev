@@ -87,9 +87,19 @@ SDT_PROBE_DECLARE(lockstat, , , thread__spin);
 	LOCKSTAT_RECORD0(probe, lp);					\
 } while (0)
 
+#define	LOCKSTAT_PROFILE_OBTAIN_RWLOCK_SUCCESS(probe, lp, c, wt, f, l, a) do { \
+	lock_profile_obtain_lock_success(&(lp)->lock_object, c, wt, f, l); \
+	LOCKSTAT_RECORD1(probe, lp, a);					\
+} while (0)
+
 #define	LOCKSTAT_PROFILE_RELEASE_LOCK(probe, lp) do {			\
 	lock_profile_release_lock(&(lp)->lock_object);			\
 	LOCKSTAT_RECORD0(probe, lp);					\
+} while (0)
+
+#define	LOCKSTAT_PROFILE_RELEASE_RWLOCK(probe, lp, a) do {		\
+	lock_profile_release_lock(&(lp)->lock_object);			\
+	LOCKSTAT_RECORD1(probe, lp, a);					\
 } while (0)
 
 #define	LOCKSTAT_WRITER		0
@@ -107,9 +117,13 @@ extern uint64_t lockstat_nsecs(void);
 
 #define	LOCKSTAT_PROFILE_OBTAIN_LOCK_SUCCESS(probe, lp, c, wt, f, l)	\
 	lock_profile_obtain_lock_success(&(lp)->lock_object, c, wt, f, l)
+#define	LOCKSTAT_PROFILE_OBTAIN_RWLOCK_SUCCESS(probe, lp, c, wt, f, l, a) \
+	LOCKSTAT_PROFILE_OBTAIN_LOCK_SUCCESS(probe, lp, c, wt, f, l)
 
 #define	LOCKSTAT_PROFILE_RELEASE_LOCK(probe, lp)  			\
 	lock_profile_release_lock(&(lp)->lock_object)
+#define	LOCKSTAT_PROFILE_RELEASE_RWLOCK1(probe, lp, a)  		\
+	LOCKSTAT_PROFILE_RELEASE_LOCK(probe, lp)
 
 #endif /* !KDTRACE_HOOKS */
 #endif /* _KERNEL */
