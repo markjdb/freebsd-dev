@@ -16,7 +16,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  ichwd coretemp                               \
 				  linux linprocfs                              \
 				  geom/geom_mirror                             \
-				  crypto geom/geom_eli                         \
+				  geom/geom_eli                                \
 				  wlan_acl iwnfw/iwn1000                       \
 				  procfs nullfs fuse unionfs                   \
 				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
@@ -28,6 +28,7 @@ options 	SCHED_ULE		# ULE scheduler
 options 	PREEMPTION		# Enable kernel thread preemption
 options 	INET			# InterNETworking
 options 	INET6			# IPv6 communications protocols
+options 	IPSEC			# IP (v4/v6) security
 options 	TCP_OFFLOAD		# TCP offload
 options 	SCTP			# Stream Control Transmission Protocol
 options 	FFS			# Berkeley Fast Filesystem
@@ -363,3 +364,5 @@ device		virtio_balloon	# VirtIO Memory Balloon device
 
 # VMware support
 #device		vmx		# VMware VMXNET3 Ethernet
+
+device		crypto		# Required by IPSEC
