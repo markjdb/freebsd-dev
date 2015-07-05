@@ -122,7 +122,7 @@ extern uint64_t lockstat_nsecs(void);
 
 #define	LOCKSTAT_PROFILE_RELEASE_LOCK(probe, lp)  			\
 	lock_profile_release_lock(&(lp)->lock_object)
-#define	LOCKSTAT_PROFILE_RELEASE_RWLOCK1(probe, lp, a)  		\
+#define	LOCKSTAT_PROFILE_RELEASE_RWLOCK(probe, lp, a)  			\
 	LOCKSTAT_PROFILE_RELEASE_LOCK(probe, lp)
 
 #endif /* !KDTRACE_HOOKS */
