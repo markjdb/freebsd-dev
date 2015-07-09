@@ -92,18 +92,6 @@ __FBSDID("$FreeBSD$");
 #endif
 
 SDT_PROVIDER_DEFINE(proc);
-SDT_PROBE_DEFINE4(proc, kernel, ctor, entry, "struct proc *", "int",
-    "void *", "int");
-SDT_PROBE_DEFINE4(proc, kernel, ctor, return, "struct proc *", "int",
-    "void *", "int");
-SDT_PROBE_DEFINE4(proc, kernel, dtor, entry, "struct proc *", "int",
-    "void *", "struct thread *");
-SDT_PROBE_DEFINE3(proc, kernel, dtor, return, "struct proc *", "int",
-    "void *");
-SDT_PROBE_DEFINE3(proc, kernel, init, entry, "struct proc *", "int",
-    "int");
-SDT_PROBE_DEFINE3(proc, kernel, init, return, "struct proc *", "int",
-    "int");
 
 MALLOC_DEFINE(M_PGRP, "pgrp", "process group header");
 MALLOC_DEFINE(M_SESSION, "session", "session header");
@@ -181,9 +169,7 @@ proc_ctor(void *mem, int size, void *arg, int flags)
 	struct proc *p;
 
 	p = (struct proc *)mem;
-	SDT_PROBE(proc, kernel, ctor , entry, p, size, arg, flags, 0);
 	EVENTHANDLER_INVOKE(process_ctor, p);
-	SDT_PROBE(proc, kernel, ctor , return, p, size, arg, flags, 0);
 	return (0);
 }
 
@@ -199,7 +185,6 @@ proc_dtor(void *mem, int size, void *arg)
 	/* INVARIANTS checks go here */
 	p = (struct proc *)mem;
 	td = FIRST_THREAD_IN_PROC(p);
-	SDT_PROBE(proc, kernel, dtor, entry, p, size, arg, td, 0);
 	if (td != NULL) {
 #ifdef INVARIANTS
 		KASSERT((p->p_numthreads == 1),
@@ -212,7 +197,6 @@ proc_dtor(void *mem, int size, void *arg)
 	EVENTHANDLER_INVOKE(process_dtor, p);
 	if (p->p_ksi != NULL)
 		KASSERT(! KSI_ONQ(p->p_ksi), ("SIGCHLD queue"));
-	SDT_PROBE(proc, kernel, dtor, return, p, size, arg, 0, 0);
 }
 
 /*
@@ -224,7 +208,6 @@ proc_init(void *mem, int size, int flags)
 	struct proc *p;
 
 	p = (struct proc *)mem;
-	SDT_PROBE(proc, kernel, init, entry, p, size, flags, 0, 0);
 	p->p_sched = (struct p_sched *)&p[1];
 	mtx_init(&p->p_mtx, "process lock", NULL, MTX_DEF | MTX_DUPOK | MTX_NEW);
 	mtx_init(&p->p_slock, "process slock", NULL, MTX_SPIN | MTX_NEW);
@@ -236,7 +219,6 @@ proc_init(void *mem, int size, int flags)
 	TAILQ_INIT(&p->p_threads);	     /* all threads in proc */
 	EVENTHANDLER_INVOKE(process_init, p);
 	p->p_stats = pstats_alloc();
-	SDT_PROBE(proc, kernel, init, return, p, size, flags, 0, 0);
 	return (0);
 }
 
