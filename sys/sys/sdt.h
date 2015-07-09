@@ -322,7 +322,7 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #define	DTRACE_PROBE_IMPL_START(name, arg0, arg1, arg2, arg3, arg4) do { \
 	static SDT_PROBE_DEFINE(sdt, , , name);				\
-	SDT_PROBE(sdt, , , name, arg0, arg1, arg2, arg3, arg4);
+	SDT_PROBE5(sdt, , , name, arg0, arg1, arg2, arg3, arg4);
 #define	DTRACE_PROBE_IMPL_END	} while (0)
 
 #define	DTRACE_PROBE(name)						\
