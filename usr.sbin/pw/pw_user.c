@@ -148,6 +148,50 @@ set_passwd(struct passwd *pwd, bool update)
 	return (1);
 }
 
+int
+pw_usernext(struct userconf *cnf, bool quiet)
+{
+	uid_t next = pw_uidpolicy(cnf, -1);
+
+	if (quiet)
+		return (next);
+
+	printf("%u:", next);
+	pw_groupnext(cnf, quiet);
+
+	return (EXIT_SUCCESS);
+}
+
+static int
+pw_usershow(char *name, long id, struct passwd *fakeuser)
+{
+	struct passwd *pwd = NULL;
+
+	if (id < 0 && name == NULL && !conf.all)
+		errx(EX_DATAERR, "username or id or '-a' required");
+
+	if (conf.all) {
+		SETPWENT();
+		while ((pwd = GETPWENT()) != NULL)
+			print_user(pwd);
+		ENDPWENT();
+		return (EXIT_SUCCESS);
+	}
+
+	pwd = (name != NULL) ? GETPWNAM(pw_checkname(name, 0)) : GETPWUID(id);
+	if (pwd == NULL) {
+		if (conf.force) {
+			pwd = fakeuser;
+		} else {
+			if (name == NULL)
+				errx(EX_NOUSER, "no such uid `%ld'", id);
+			errx(EX_NOUSER, "no such user `%s'", name);
+		}
+	}
+
+	return (print_user(pwd));
+}
+
 /*-
  * -C config      configuration file
  * -q             quiet operation
@@ -199,7 +243,7 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 
 	static struct passwd fakeuser =
 	{
-		NULL,
+		"nouser",
 		"*",
 		-1,
 		-1,
@@ -216,19 +260,11 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 
 	cnf = conf.userconf;
 
-	/*
-	 * With M_NEXT, we only need to return the
-	 * next uid to stdout
-	 */
 	if (mode == M_NEXT)
-	{
-		uid_t next = pw_uidpolicy(cnf, id);
-		if (getarg(args, 'q'))
-			return next;
-		printf("%u:", next);
-		pw_group(mode, name, -1, args);
-		return EXIT_SUCCESS;
-	}
+		return (pw_usernext(cnf, conf.quiet));
+
+	if (mode == M_PRINT)
+		return (pw_usershow(name, id, &fakeuser));
 
 	/*
 	 * We can do all of the common legwork here
@@ -374,14 +410,6 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 		err(EX_IOERR, "config udpate");
 	}
 
-	if (mode == M_PRINT && getarg(args, 'a')) {
-		SETPWENT();
-		while ((pwd = GETPWENT()) != NULL)
-			print_user(pwd);
-		ENDPWENT();
-		return EXIT_SUCCESS;
-	}
-
 	if (name != NULL)
 		pwd = GETPWNAM(pw_checkname(name, 0));
 
@@ -392,17 +420,12 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 	 * Update, delete & print require that the user exists
 	 */
 	if (mode == M_UPDATE || mode == M_DELETE ||
-	    mode == M_PRINT  || mode == M_LOCK   || mode == M_UNLOCK) {
+	    mode == M_LOCK   || mode == M_UNLOCK) {
 
 		if (name == NULL && pwd == NULL)	/* Try harder */
 			pwd = GETPWUID(id);
 
 		if (pwd == NULL) {
-			if (mode == M_PRINT && getarg(args, 'F')) {
-				fakeuser.pw_name = name ? name : "nouser";
-				fakeuser.pw_uid = (uid_t) id;
-				return print_user(&fakeuser);
-			}
 			if (name == NULL)
 				errx(EX_NOUSER, "no such uid `%ld'", id);
 			errx(EX_NOUSER, "no such user `%s'", name);
@@ -437,8 +460,6 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 		} else if (mode == M_DELETE)
 			return (delete_user(cnf, pwd, name,
 				    getarg(args, 'r') != NULL, mode));
-		else if (mode == M_PRINT)
-			return print_user(pwd);
 
 		/*
 		 * The rest is edit code
@@ -845,11 +866,8 @@ pw_gidpolicy(struct cargs * args, char *nam, gid_t prefer)
 			addarg(&grpargs, 'g', tmp);
 		}
 		if (conf.dryrun) {
-			addarg(&grpargs, 'q', NULL);
-			gid = pw_group(M_NEXT, nam, -1, &grpargs);
-		}
-		else
-		{
+			gid = pw_groupnext(cnf, true);
+		} else {
 			pw_group(M_ADD, nam, -1, &grpargs);
 			if ((grp = GETGRNAM(nam)) != NULL)
 				gid = grp->gr_gid;

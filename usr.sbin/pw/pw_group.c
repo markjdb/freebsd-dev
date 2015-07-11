@@ -92,6 +92,49 @@ set_passwd(struct group *grp, bool update)
 }
 
 int
+pw_groupnext(struct userconf *cnf, bool quiet)
+{
+	gid_t next = gr_gidpolicy(cnf, -1);
+
+	if (quiet)
+		return (next);
+	printf("%u\n", next);
+
+	return (EXIT_SUCCESS);
+}
+
+static int
+pw_groupshow(const char *name, long id, struct group *fakegroup)
+{
+	struct group *grp = NULL;
+
+	if (id < 0 && name == NULL && !conf.all)
+		errx(EX_DATAERR, "groupname or id or '-a' required");
+
+	if (conf.all) {
+		SETGRENT();
+		while ((grp = GETGRENT()) != NULL)
+			print_group(grp);
+		ENDGRENT();
+
+		return (EXIT_SUCCESS);
+	}
+
+	grp = (name != NULL) ? GETGRNAM(name) : GETGRGID(id);
+	if (grp == NULL) {
+		if (conf.force) {
+			grp = fakegroup;
+		} else {
+			if (name == NULL)
+				errx(EX_DATAERR, "unknown gid `%ld'", id);
+			errx(EX_DATAERR, "unknown group `%s'", name);
+		}
+	}
+
+	return (print_group(grp));
+}
+
+int
 pw_group(int mode, char *name, long id, struct cargs * args)
 {
 	int		rc;
@@ -109,46 +152,25 @@ pw_group(int mode, char *name, long id, struct cargs * args)
 		NULL
 	};
 
+	if (mode == M_NEXT)
+		return (pw_groupnext(cnf, conf.quiet));
+
+	if (mode == M_PRINT)
+		return (pw_groupshow(name, id, &fakegroup));
+
 	if (mode == M_LOCK || mode == M_UNLOCK)
 		errx(EX_USAGE, "'lock' command is not available for groups");
 
-	/*
-	 * With M_NEXT, we only need to return the
-	 * next gid to stdout
-	 */
-	if (mode == M_NEXT) {
-		gid_t next = gr_gidpolicy(cnf, id);
-		if (getarg(args, 'q'))
-			return next;
-		printf("%u\n", next);
-		return EXIT_SUCCESS;
-	}
-
-	if (mode == M_PRINT && getarg(args, 'a')) {
-		SETGRENT();
-		while ((grp = GETGRENT()) != NULL)
-			print_group(grp);
-		ENDGRENT();
-		return EXIT_SUCCESS;
-	}
 	if (id < 0 && name == NULL)
 		errx(EX_DATAERR, "group name or id required");
 
 	grp = (name != NULL) ? GETGRNAM(name) : GETGRGID(id);
 
-	if (mode == M_UPDATE || mode == M_DELETE || mode == M_PRINT) {
+	if (mode == M_UPDATE || mode == M_DELETE) {
 		if (name == NULL && grp == NULL)	/* Try harder */
 			grp = GETGRGID(id);
 
 		if (grp == NULL) {
-			if (mode == M_PRINT && getarg(args, 'F')) {
-				char	*fmems[1];
-				fmems[0] = NULL;
-				fakegroup.gr_name = name ? name : "nogroup";
-				fakegroup.gr_gid = (gid_t) id;
-				fakegroup.gr_mem = fmems;
-				return print_group(&fakegroup);
-			}
 			if (name == NULL)
 				errx(EX_DATAERR, "unknown group `%s'", name);
 			else
