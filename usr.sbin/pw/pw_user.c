@@ -67,20 +67,20 @@ static void     rmopie(char const * name);
 static void
 create_and_populate_homedir(struct passwd *pwd)
 {
-	char *homedir, *dotdir;
 	struct userconf *cnf = conf.userconf;
+	const char *skeldir;
+	int skelfd = -1;
 
-	homedir = dotdir = NULL;
+	skeldir = cnf->dotdir;
 
-	if (conf.rootdir[0] != '\0') {
-		asprintf(&homedir, "%s/%s", conf.rootdir, pwd->pw_dir);
-		if (homedir == NULL)
-			errx(EX_OSERR, "out of memory");
-		asprintf(&dotdir, "%s/%s", conf.rootdir, cnf->dotdir);
+	if (skeldir != NULL && *skeldir != '\0') {
+		if (*skeldir == '/')
+			skeldir++;
+		skelfd = openat(conf.rootfd, skeldir, O_DIRECTORY|O_CLOEXEC);
 	}
 
-	copymkdir(homedir ? homedir : pwd->pw_dir, dotdir ? dotdir: cnf->dotdir,
-	    cnf->homemode, pwd->pw_uid, pwd->pw_gid);
+	copymkdir(conf.rootfd, pwd->pw_dir, skelfd, cnf->homemode, pwd->pw_uid,
+	    pwd->pw_gid, 0);
 	pw_log(cnf, M_ADD, W_USER, "%s(%u) home %s made", pwd->pw_name,
 	    pwd->pw_uid, pwd->pw_dir);
 }
@@ -440,23 +440,23 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 		cnf->default_class = pw_checkname(arg->val, 0);
 
 	if ((arg = getarg(args, 'G')) != NULL && arg->val) {
-		int i = 0;
-
 		for (p = strtok(arg->val, ", \t"); p != NULL; p = strtok(NULL, ", \t")) {
 			if ((grp = GETGRNAM(p)) == NULL) {
 				if (!isdigit((unsigned char)*p) || (grp = GETGRGID((gid_t) atoi(p))) == NULL)
 					errx(EX_NOUSER, "group `%s' does not exist", p);
 			}
-			if (extendarray(&cnf->groups, &cnf->numgroups, i + 2) != -1)
-				cnf->groups[i++] = newstr(grp->gr_name);
+			sl_add(cnf->groups, newstr(grp->gr_name));
 		}
-		while (i < cnf->numgroups)
-			cnf->groups[i++] = NULL;
 	}
 
 	if ((arg = getarg(args, 'k')) != NULL) {
-		if (stat(cnf->dotdir = arg->val, &st) == -1 || !S_ISDIR(st.st_mode))
-			errx(EX_OSFILE, "skeleton `%s' is not a directory or does not exist", cnf->dotdir);
+		char *tmp = cnf->dotdir = arg->val;
+		if (*tmp == '/')
+			tmp++;
+		if ((fstatat(conf.rootfd, tmp, &st, 0) == -1) ||
+		    !S_ISDIR(st.st_mode))
+			errx(EX_OSFILE, "skeleton `%s' is not a directory or "
+			    "does not exist", cnf->dotdir);
 	}
 
 	if ((arg = getarg(args, 's')) != NULL)
@@ -690,7 +690,8 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 	 */
 
 	if (mode == M_ADD || getarg(args, 'G') != NULL) {
-		int i, j;
+		int j;
+		size_t i;
 		/* First remove the user from all group */
 		SETGRENT();
 		while ((grp = GETGRENT()) != NULL) {
@@ -709,8 +710,8 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 		ENDGRENT();
 
 		/* now add to group where needed */
-		for (i = 0; cnf->groups[i] != NULL; i++) {
-			grp = GETGRNAM(cnf->groups[i]);
+		for (i = 0; i < cnf->groups->sl_cur; i++) {
+			grp = GETGRNAM(cnf->groups->sl_str[i]);
 			grp = gr_add(grp, pwd->pw_name);
 			/*
 			 * grp can only be NULL in 2 cases:
@@ -720,7 +721,7 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 			 */
 			if (grp == NULL)
 				continue;
-			chggrent(cnf->groups[i], grp);
+			chggrent(grp->gr_name, grp);
 			free(grp);
 		}
 	}
@@ -751,12 +752,12 @@ pw_user(int mode, char *name, long id, struct cargs * args)
 	 */
 	if (mode == M_ADD) {
 		if (PWALTDIR() != PWF_ALT) {
-			arg = getarg(args, 'R');
-			snprintf(path, sizeof(path), "%s%s/%s",
-			    arg ? arg->val : "", _PATH_MAILDIR, pwd->pw_name);
-			close(open(path, O_RDWR | O_CREAT, 0600));	/* Preserve contents &
-									 * mtime */
-			chown(path, pwd->pw_uid, pwd->pw_gid);
+			snprintf(path, sizeof(path), "%s/%s", _PATH_MAILDIR,
+			    pwd->pw_name);
+			close(openat(conf.rootfd, path +1, O_RDWR | O_CREAT,
+			    0600));	/* Preserve contents & mtime */
+			fchownat(conf.rootfd, path + 1, pwd->pw_uid,
+			    pwd->pw_gid, AT_SYMLINK_NOFOLLOW);
 		}
 	}
 
@@ -878,10 +879,7 @@ pw_gidpolicy(struct cargs * args, char *nam, gid_t prefer)
 	    (grp->gr_mem == NULL || grp->gr_mem[0] == NULL)) {
 		gid = grp->gr_gid;  /* Already created? Use it anyway... */
 	} else {
-		struct cargs    grpargs;
-		char            tmp[32];
-
-		LIST_INIT(&grpargs);
+		gid_t		grid = -1;
 
 		/*
 		 * We need to auto-create a group with the user's name. We
@@ -892,22 +890,14 @@ pw_gidpolicy(struct cargs * args, char *nam, gid_t prefer)
 		 * user's name dups an existing group, then the group add
 		 * function will happily handle that case for us and exit.
 		 */
-		if (GETGRGID(prefer) == NULL) {
-			snprintf(tmp, sizeof(tmp), "%u", prefer);
-			addarg(&grpargs, 'g', tmp);
-		}
+		if (GETGRGID(prefer) == NULL)
+			grid = prefer;
 		if (conf.dryrun) {
 			gid = pw_groupnext(cnf, true);
 		} else {
-			pw_group(M_ADD, nam, -1, &grpargs);
+			pw_group(M_ADD, nam, grid, NULL);
 			if ((grp = GETGRNAM(nam)) != NULL)
 				gid = grp->gr_gid;
-		}
-		a_gid = LIST_FIRST(&grpargs);
-		while (a_gid != NULL) {
-			struct carg    *t = LIST_NEXT(a_gid, list);
-			LIST_REMOVE(a_gid, list);
-			a_gid = t;
 		}
 	}
 	ENDGRENT();
@@ -1103,16 +1093,13 @@ pw_userdel(char *name, long id)
 	if (strcmp(pwd->pw_name, "root") == 0)
 		errx(EX_DATAERR, "cannot remove user 'root'");
 
-	if (!PWALTDIR()) {
-		/*
-		 * Remove opie record from /etc/opiekeys
-		*/
+		/* Remove opie record from /etc/opiekeys */
 
+	if (PWALTDIR() != PWF_ALT)
 		rmopie(pwd->pw_name);
 
-		/*
-		 * Remove crontabs
-		 */
+	if (!PWALTDIR()) {
+		/* Remove crontabs */
 		snprintf(file, sizeof(file), "/var/cron/tabs/%s", pwd->pw_name);
 		if (access(file, F_OK) == 0) {
 			snprintf(file, sizeof(file), "crontab -u %s -r", pwd->pw_name);
@@ -1174,28 +1161,23 @@ pw_userdel(char *name, long id)
 	pw_log(conf.userconf, M_DELETE, W_USER, "%s(%u) account removed", name,
 	    uid);
 
-	if (!PWALTDIR()) {
-		/*
-		 * Remove mail file
-		 */
-		remove(file);
+	/* Remove mail file */
+	if (PWALTDIR() != PWF_ALT)
+		unlinkat(conf.rootfd, file + 1, 0);
 
-		/*
-		 * Remove at jobs
-		 */
-		if (getpwuid(uid) == NULL)
-			rmat(uid);
+		/* Remove at jobs */
+	if (!PWALTDIR() && getpwuid(uid) == NULL)
+		rmat(uid);
 
-		/*
-		 * Remove home directory and contents
-		 */
-		if (conf.deletehome && *home == '/' && getpwuid(uid) == NULL &&
-		    stat(home, &st) != -1) {
-			rm_r(home, uid);
-			pw_log(conf.userconf, M_DELETE, W_USER, "%s(%u) home '%s' %sremoved",
-			       name, uid, home,
-			       stat(home, &st) == -1 ? "" : "not completely ");
-		}
+	/* Remove home directory and contents */
+	if (PWALTDIR() != PWF_ALT && conf.deletehome && *home == '/' &&
+	    getpwuid(uid) == NULL &&
+	    fstatat(conf.rootfd, home + 1, &st, 0) != -1) {
+		rm_r(conf.rootfd, home, uid);
+		pw_log(conf.userconf, M_DELETE, W_USER, "%s(%u) home '%s' %s"
+		    "removed", name, uid, home,
+		     fstatat(conf.rootfd, home + 1, &st, 0) == -1 ? "" : "not "
+		     "completely ");
 	}
 
 	return (EXIT_SUCCESS);
@@ -1369,27 +1351,29 @@ rmat(uid_t uid)
 static void
 rmopie(char const * name)
 {
-	static const char etcopie[] = "/etc/opiekeys";
-	FILE   *fp = fopen(etcopie, "r+");
+	char tmp[1014];
+	FILE *fp;
+	int fd;
+	size_t len;
+	off_t	atofs = 0;
+	
+	if ((fd = openat(conf.rootfd, "etc/opiekeys", O_RDWR)) == -1)
+		return;
 
-	if (fp != NULL) {
-		char	tmp[1024];
-		off_t	atofs = 0;
-		int	length = strlen(name);
+	fp = fdopen(fd, "r+");
+	len = strlen(name);
 
-		while (fgets(tmp, sizeof tmp, fp) != NULL) {
-			if (strncmp(name, tmp, length) == 0 && tmp[length]==' ') {
-				if (fseek(fp, atofs, SEEK_SET) == 0) {
-					fwrite("#", 1, 1, fp);	/* Comment username out */
-				}
-				break;
-			}
-			atofs = ftell(fp);
+	while (fgets(tmp, sizeof(tmp), fp) != NULL) {
+		if (strncmp(name, tmp, len) == 0 && tmp[len]==' ') {
+			/* Comment username out */
+			if (fseek(fp, atofs, SEEK_SET) == 0)
+				fwrite("#", 1, 1, fp);
+			break;
 		}
-		/*
-		 * If we got an error of any sort, don't update!
-		 */
-		fclose(fp);
+		atofs = ftell(fp);
 	}
+	/*
+	 * If we got an error of any sort, don't update!
+	 */
+	fclose(fp);
 }
-
