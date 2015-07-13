@@ -703,7 +703,7 @@ DoFile(const char *savedir, const char *device)
 	fclose(info);
 
 	syslog(LOG_NOTICE, "writing %score to %s/%s",
-	    compress || isgzipdump ? "compressed " : "", savedir, corename);
+	    (compress || isgzipdump) ? "compressed " : "", savedir, corename);
 
 	if (istextdump) {
 		if (DoTextdumpFile(fd, dumplength, lasthd, buf, device,

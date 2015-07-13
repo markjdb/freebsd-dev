@@ -251,7 +251,7 @@ minidumpsys(struct dumperinfo *di)
 	printf("Dumping %llu MB:", (long long)dumpsize >> 20);
 
 	/* Dump leader */
-	error = dump_finish(di, &kdh);
+	error = dump_start(di, &kdh);
 	if (error)
 		goto fail;
 
