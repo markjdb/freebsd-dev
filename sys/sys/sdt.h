@@ -283,65 +283,62 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	SDT_PROBE_ARGTYPE(prov, mod, func, name, 6, arg6, xarg6)
 
 #define	SDT_PROBE0(prov, mod, func, name) do {				\
-	extern void __dtrace_probe_##prov##_##mod##_##func##_##name(void); \
-	__dtrace_probe_##prov##_##mod##_##func##_##name();		\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(void); \
+	__dtrace_sdt_##prov##_##mod##_##func##_##name();		\
 } while (0)
 
 #define	SDT_PROBE1(prov, mod, func, name, arg0) do {			\
-	extern void __dtrace_probe_##prov##_##mod##_##func##_##name(	\
-	    uintptr_t);							\
-	__dtrace_probe_##prov##_##mod##_##func##_##name((uintptr_t)arg0); \
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(uintptr_t); \
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0);	\
 } while (0)
 
 #define	SDT_PROBE2(prov, mod, func, name, arg0, arg1) do {		\
-	extern void __dtrace_probe_##prov##_##mod##_##func##_##name(	\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
 	    uintptr_t, uintptr_t);					\
-	__dtrace_probe_##prov##_##mod##_##func##_##name(		\
-	    (uintptr_t)arg0, (uintptr_t)arg1);				\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1);						\
 } while (0)
 
 #define	SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2) do {	\
-	extern void __dtrace_probe_##prov##_##mod##_##func##_##name(	\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
 	    uintptr_t, uintptr_t, uintptr_t);				\
-	__dtrace_probe_##prov##_##mod##_##func##_##name(		\
-	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2); 	\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2);				\
 } while (0)
 
 #define	SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3) do {	\
-	extern void __dtrace_probe_##prov##_##mod##_##func##_##name(	\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
 	    uintptr_t, uintptr_t, uintptr_t, uintptr_t);		\
-	__dtrace_probe_##prov##_##mod##_##func##_##name(		\
-	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
-	    (uintptr_t)arg3);						\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3);		\
 } while (0)
 
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) do { \
-	extern void __dtrace_probe_##prov##_##mod##_##func##_##name(	\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
 	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);	\
-	__dtrace_probe_##prov##_##mod##_##func##_##name(		\
-	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
-	    (uintptr_t)arg3, (uintptr_t)arg4);				\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4);						\
 } while (0)
 
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
     arg5) do {								\
-	extern void __dtrace_probe_##prov##_##mod##_##func##_##name(	\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
 	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,	\
 	    uintptr_t);							\
-	__dtrace_probe_##prov##_##mod##_##func##_##name(		\
-	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
-	    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5);		\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4, (uintptr_t)arg5);				\
 } while (0)
 
 #define	SDT_PROBE7(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, \
     arg5, arg6) do {							\
-	extern void __dtrace_probe_##prov##_##mod##_##func##_##name(	\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
 	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,	\
 	    uintptr_t, uintptr_t);					\
-	__dtrace_probe_##prov##_##mod##_##func##_##name(		\
-	    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,		\
-	    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5,		\
-	    (uintptr_t)arg6);						\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4, (uintptr_t)arg5, (uintptr_t)arg6);		\
 } while (0)
 
 #define	DTRACE_PROBE_IMPL_START(name, arg0, arg1, arg2, arg3, arg4) do { \
