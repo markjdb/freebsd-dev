@@ -190,7 +190,7 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
 	uint64_t length;
 
 	length = dtoh64(kdh->dumplength);
-	if (di->mediasize < SIZEOF_METADATA + length + sizeof(*kdh) * 2) {
+	if (di->mediasize < SIZEOF_METADATA + length + 2 * sizeof(*kdh)) {
 		if (compress_kernel_dumps)
 			/*
 			 * We don't yet know how much space the compressed dump
@@ -289,7 +289,7 @@ dump_skip(struct dumperinfo *di, size_t gap)
 {
 
 	if (gap > di->maxiosize)
-		return (ENXIO);
+		return (EINVAL);
 
 #ifdef GZIO
 	if (compress_kernel_dumps) {
@@ -353,6 +353,15 @@ dump_gz_write_cb(void *base, size_t length, off_t offset __unused, void *arg)
 	int error;
 
 	di = (struct dumperinfo *)arg;
+
+	if (dumpoff % di->blocksize != 0)
+		/*
+		 * A previous write caused us to end up at an unaligned offset.
+		 * Only the final gzio flush should cause that, in which case we
+		 * shouldn't be here.
+		 */
+		return (EINVAL);
+
 	error = dump_write_raw(di, base, 0, dumpoff,
 	    roundup(length, di->blocksize));
 	if (error == 0)
