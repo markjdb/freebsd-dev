@@ -34,10 +34,8 @@
 #ifdef KDTRACE_HOOKS
 SDT_PROBE_DECLARE(sdt, , , set__error);
 
-#define SET_ERROR(err) \
-	((sdt_sdt___set__error->id ? \
-	(*sdt_probe_func)(sdt_sdt___set__error->id, \
-	    (uintptr_t)err, 0, 0, 0, 0) : 0), err)
+extern void __dtrace_probe_sdt___set__error(uintptr_t);
+#define SET_ERROR(err)	(__dtrace_probe_sdt___set__error(err), (err))
 #else
 #define SET_ERROR(err) (err)
 #endif

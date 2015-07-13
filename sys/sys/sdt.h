@@ -9,7 +9,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -159,12 +159,8 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 #define	SDT_PROBE_DECLARE(prov, mod, func, name)			\
 	extern struct sdt_probe sdt_##prov##_##mod##_##func##_##name[1]
 
-#define	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) do { \
-	if (sdt_##prov##_##mod##_##func##_##name->id)			\
-		(*sdt_probe_func)(sdt_##prov##_##mod##_##func##_##name->id, \
-		    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2,	\
-		    (uintptr_t)arg3, (uintptr_t)arg4);			\
-} while (0)
+#define	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
+	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
 
 #define	SDT_PROBE_ARGTYPE(prov, mod, func, name, num, type, xtype)	\
 	static struct sdt_argtype sdta_##prov##_##mod##_##func##_##name##num[1] \
@@ -286,38 +282,64 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	SDT_PROBE_ARGTYPE(prov, mod, func, name, 5, arg5, xarg5);	\
 	SDT_PROBE_ARGTYPE(prov, mod, func, name, 6, arg6, xarg6)
 
-#define	SDT_PROBE0(prov, mod, func, name)				\
-	SDT_PROBE(prov, mod, func, name, 0, 0, 0, 0, 0)
-#define	SDT_PROBE1(prov, mod, func, name, arg0)				\
-	SDT_PROBE(prov, mod, func, name, arg0, 0, 0, 0, 0)
-#define	SDT_PROBE2(prov, mod, func, name, arg0, arg1)			\
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, 0, 0, 0)
-#define	SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2)		\
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2,  0, 0)
-#define	SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3)	\
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, 0)
-#define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) \
-	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
-#define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5) \
-	do {								\
-		if (sdt_##prov##_##mod##_##func##_##name->id)		\
-			(*(void (*)(uint32_t, uintptr_t, uintptr_t, uintptr_t, \
-			    uintptr_t, uintptr_t, uintptr_t))sdt_probe_func)(  \
-			    sdt_##prov##_##mod##_##func##_##name->id,	\
-			    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2, \
-			    (uintptr_t)arg3, (uintptr_t)arg4,		\
-			    (uintptr_t)arg5);				\
+#define	SDT_PROBE0(prov, mod, func, name) do {				\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(void); \
+	__dtrace_sdt_##prov##_##mod##_##func##_##name();		\
 } while (0)
-#define	SDT_PROBE7(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5, \
-    arg6) do {								\
-		if (sdt_##prov##_##mod##_##func##_##name->id)		\
-			(*(void (*)(uint32_t, uintptr_t, uintptr_t, uintptr_t, \
-			    uintptr_t, uintptr_t, uintptr_t, uintptr_t))\
-			    sdt_probe_func)(				\
-			    sdt_##prov##_##mod##_##func##_##name->id,	\
-			    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2, \
-			    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5, \
-			    (uintptr_t)arg6);				\
+
+#define	SDT_PROBE1(prov, mod, func, name, arg0) do {			\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
+	    uintptr_t);							\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0);	\
+} while (0)
+
+#define	SDT_PROBE2(prov, mod, func, name, arg0, arg1) do {		\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
+	    uintptr_t, uintptr_t);					\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1);						\
+} while (0)
+
+#define	SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2) do {	\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
+	    uintptr_t, uintptr_t, uintptr_t);				\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2);				\
+} while (0)
+
+#define	SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3) do {	\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
+	    uintptr_t, uintptr_t, uintptr_t, uintptr_t);		\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3);		\
+} while (0)
+
+#define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) do { \
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
+	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);	\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4);						\
+} while (0)
+
+#define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
+    arg5) do {								\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
+	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,	\
+	    uintptr_t);							\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4, (uintptr_t)arg5);				\
+} while (0)
+
+#define	SDT_PROBE7(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, \
+    arg5, arg6) do {							\
+	extern void __dtrace_sdt_##prov##_##mod##_##func##_##name(	\
+	    uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,	\
+	    uintptr_t, uintptr_t);					\
+	__dtrace_sdt_##prov##_##mod##_##func##_##name((uintptr_t)arg0,	\
+	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
+	    (uintptr_t)arg4, (uintptr_t)arg5, (uintptr_t)arg6);		\
 } while (0)
 
 #define	DTRACE_PROBE_IMPL_START(name, arg0, arg1, arg2, arg3, arg4) do { \
@@ -368,18 +390,6 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #endif /* KDTRACE_HOOKS */
 
-/*
- * This type definition must match that of dtrace_probe. It is defined this
- * way to avoid having to rely on CDDL code.
- */
-typedef	void (*sdt_probe_func_t)(uint32_t, uintptr_t arg0, uintptr_t arg1,
-    uintptr_t arg2, uintptr_t arg3, uintptr_t arg4);
-
-/*
- * The 'sdt' provider will set it to dtrace_probe when it loads.
- */
-extern sdt_probe_func_t	sdt_probe_func;
-
 struct sdt_probe;
 struct sdt_provider;
 struct linker_file;
@@ -396,7 +406,7 @@ struct sdt_probe {
 	int		version;	/* Set to sizeof(struct sdt_probe). */
 	struct sdt_provider *prov;	/* Ptr to the provider structure. */
 	TAILQ_ENTRY(sdt_probe) probe_entry; /* SDT probe list entry. */
-	TAILQ_HEAD(argtype_list_head, sdt_argtype) argtype_list;
+	TAILQ_HEAD(, sdt_argtype)	argtype_list;
 	const char	*mod;
 	const char	*func;
 	const char	*name;
@@ -411,9 +421,6 @@ struct sdt_provider {
 	uintptr_t	id;		/* DTrace provider ID. */
 	int		sdt_refs;	/* Number of module references. */
 };
-
-void sdt_probe_stub(uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
-    uintptr_t);
 
 SDT_PROVIDER_DECLARE(sdt);
 

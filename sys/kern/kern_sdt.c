@@ -32,6 +32,7 @@
 
 SDT_PROVIDER_DEFINE(sdt);
 
+#if 0
 /*
  * Hook for the DTrace probe function. The SDT provider will set this to
  * dtrace_probe() when it loads.
@@ -51,3 +52,4 @@ sdt_probe_stub(uint32_t id, uintptr_t arg0, uintptr_t arg1,
 	printf("sdt_probe_stub: unexpectedly called\n");
 	kdb_backtrace();
 }
+#endif
