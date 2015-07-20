@@ -99,6 +99,7 @@ static const char * const _nc_errors[] = {
 };
 
 struct netconfig_info {
+    FILE	*file;	/* netconfig db file handle */
     int		eof;	/* all entries has been read */
     int		ref;	/* # of times setnetconfig() has been called */
     struct netconfig_list	*head;	/* head of the list */
@@ -126,11 +127,7 @@ static int *__nc_error(void);
 static int parse_ncp(char *, struct netconfig *);
 static struct netconfig *dup_ncp(struct netconfig *);
 
-
-static FILE *nc_file;		/* for netconfig db */
-static mutex_t nc_file_lock = MUTEX_INITIALIZER;
-
-static struct netconfig_info	ni = { 0, 0, NULL, NULL};
+static struct netconfig_info ni;
 static mutex_t ni_lock = MUTEX_INITIALIZER;
 
 static thread_key_t nc_key;
@@ -197,30 +194,24 @@ setnetconfig(void)
 {
     struct netconfig_vars *nc_vars;
 
-    if ((nc_vars = (struct netconfig_vars *)malloc(sizeof
-		(struct netconfig_vars))) == NULL) {
-	return(NULL);
+    if ((nc_vars = malloc(sizeof(*nc_vars))) == NULL) {
+	nc_error = NC_NOMEM;
+	return (NULL);
     }
 
     /*
-     * For multiple calls, i.e. nc_file is not NULL, we just return the
+     * For multiple calls, i.e. ni.file is not NULL, we just return the
      * handle without reopening the netconfig db.
      */
     mutex_lock(&ni_lock);
     ni.ref++;
-    mutex_unlock(&ni_lock);
-
-    mutex_lock(&nc_file_lock);
-    if ((nc_file != NULL) || (nc_file = fopen(NETCONFIG, "r")) != NULL) {
+    if (ni.file != NULL || (ni.file = fopen(NETCONFIG, "r")) != NULL) {
 	nc_vars->valid = NC_VALID;
 	nc_vars->flag = 0;
 	nc_vars->nc_configs = ni.head;
-	mutex_unlock(&nc_file_lock);
+	mutex_unlock(&ni_lock);
 	return ((void *)nc_vars);
     }
-    mutex_unlock(&nc_file_lock);
-
-    mutex_lock(&ni_lock);
     ni.ref--;
     mutex_unlock(&ni_lock);
 
@@ -228,7 +219,6 @@ setnetconfig(void)
     free(nc_vars);
     return (NULL);
 }
-
 
 /*
  * When first called, getnetconfig() returns a pointer to the first entry in
@@ -242,21 +232,22 @@ struct netconfig *
 getnetconfig(void *handlep)
 {
     struct netconfig_vars *ncp = (struct netconfig_vars *)handlep;
-    char *stringp;		/* tmp string pointer */
-    struct netconfig_list	*list;
-    struct netconfig *np;
-    struct netconfig *result;
+    struct netconfig_list *list;
+    struct netconfig *np, *result;
+    char *stringp;
+
+    list = NULL;
+    stringp = NULL;
+    np = NULL;
 
     /*
      * Verify that handle is valid
      */
-    mutex_lock(&nc_file_lock);
-    if (ncp == NULL || nc_file == NULL) {
+    mutex_lock(&ni_lock);
+    if (ncp == NULL || ni.file == NULL) {
 	nc_error = NC_NOTINIT;
-	mutex_unlock(&nc_file_lock);
-	return (NULL);
+	goto error;
     }
-    mutex_unlock(&nc_file_lock);
 
     switch (ncp->valid) {
     case NC_VALID:
@@ -270,37 +261,34 @@ getnetconfig(void *handlep)
 	 */
 	if (ncp->flag == 0) {	/* first time */
 	    ncp->flag = 1;
-	    mutex_lock(&ni_lock);
 	    ncp->nc_configs = ni.head;
-	    mutex_unlock(&ni_lock);
-	    if (ncp->nc_configs != NULL)	/* entry already exist */
-		return(ncp->nc_configs->ncp);
-	}
-	else if (ncp->nc_configs != NULL && ncp->nc_configs->next != NULL) {
-	    ncp->nc_configs = ncp->nc_configs->next;
-	    return(ncp->nc_configs->ncp);
-	}
-
-	/*
-	 * If we cannot find the entry in the list and is end of file,
-	 * we give up.
-	 */
-	mutex_lock(&ni_lock);
-	if (ni.eof == 1) {
+	    if (ncp->nc_configs != NULL) {	/* entry already exist */
 		mutex_unlock(&ni_lock);
-		return(NULL);
+		return (ncp->nc_configs->ncp);
+	    }
+	} else if (ncp->nc_configs != NULL && ncp->nc_configs->next != NULL) {
+	    ncp->nc_configs = ncp->nc_configs->next;
+	    result = ncp->nc_configs->ncp;
+	    mutex_unlock(&ni_lock);
+	    return (result);
 	}
-	mutex_unlock(&ni_lock);
-
 	break;
     default:
 	nc_error = NC_NOTINIT;
-	return (NULL);
+	goto error;
     }
 
-    stringp = (char *) malloc(MAXNETCONFIGLINE);
-    if (stringp == NULL)
-    	return (NULL);
+    /*
+     * If we've already read to the end of the file, we're done.
+     */
+    if (ni.eof != 0)
+	goto error;
+
+    stringp = malloc(MAXNETCONFIGLINE);
+    if (stringp == NULL) {
+	nc_error = NC_NOMEM;
+	goto error;
+    }
 
 #ifdef MEM_CHK
     if (malloc_verify() == 0) {
@@ -312,60 +300,58 @@ getnetconfig(void *handlep)
     /*
      * Read a line from netconfig file.
      */
-    mutex_lock(&nc_file_lock);
     do {
-	if (fgets(stringp, MAXNETCONFIGLINE, nc_file) == NULL) {
-	    free(stringp);
-	    mutex_lock(&ni_lock);
+	if (fgets(stringp, MAXNETCONFIGLINE, ni.file) == NULL) {
 	    ni.eof = 1;
-	    mutex_unlock(&ni_lock);
-	    mutex_unlock(&nc_file_lock);
-	    return (NULL);
+	    goto error;
         }
     } while (*stringp == '#');
-    mutex_unlock(&nc_file_lock);
 
-    list = (struct netconfig_list *) malloc(sizeof (struct netconfig_list));
+    list = malloc(sizeof(*list));
     if (list == NULL) {
-    	free(stringp);
-    	return(NULL);
+	nc_error = NC_NOMEM;
+	goto error;
     }
-    np = (struct netconfig *) malloc(sizeof (struct netconfig));
+    np = malloc(sizeof(*np));
     if (np == NULL) {
-    	free(stringp);
-	free(list);
-    	return(NULL);
+	nc_error = NC_NOMEM;
+	goto error;
     }
     list->ncp = np;
     list->next = NULL;
     list->ncp->nc_lookups = NULL;
     list->linep = stringp;
-    if (parse_ncp(stringp, list->ncp) == -1) {
-	free(stringp);
-	free(np);
-	free(list);
-	return (NULL);
+    if (parse_ncp(stringp, list->ncp) == -1)
+	goto error;
+
+    /*
+     * If this is the first entry that's been read, it is the head of
+     * the list.  If not, put the entry at the end of the list.
+     */
+    if (ni.head == NULL) {	/* first entry */
+	ni.head = ni.tail = list;
+    } else {
+	ni.tail->next = list;
+	ni.tail = ni.tail->next;
     }
-    else {
-	/*
-	 * If this is the first entry that's been read, it is the head of
-	 * the list.  If not, put the entry at the end of the list.
-	 * Reposition the current pointer of the handle to the last entry
-	 * in the list.
-	 */
-	mutex_lock(&ni_lock);
-	if (ni.head == NULL) {	/* first entry */
-	    ni.head = ni.tail = list;
-	}
-    	else {
-    	    ni.tail->next = list;
-    	    ni.tail = ni.tail->next;
-    	}
-	ncp->nc_configs = ni.tail;
-	result = ni.tail->ncp;
-	mutex_unlock(&ni_lock);
-	return(result);
-    }
+    /*
+     * If this is our first time, start returning entries from the
+     * beginning of the cached config list.
+     */
+    if (ncp->nc_configs == NULL)
+	ncp->nc_configs = ni.head;
+    else
+	ncp->nc_configs = ncp->nc_configs->next;
+    result = ncp->nc_configs->ncp;
+    mutex_unlock(&ni_lock);
+    return (result);
+
+error:
+    mutex_unlock(&ni_lock);
+    free(stringp);
+    free(np);
+    free(list);
+    return (NULL);
 }
 
 /*
@@ -379,7 +365,6 @@ int
 endnetconfig(void *handlep)
 {
     struct netconfig_vars *nc_handlep = (struct netconfig_vars *)handlep;
-
     struct netconfig_list *q, *p;
 
     /*
@@ -401,17 +386,19 @@ endnetconfig(void *handlep)
     if (--ni.ref > 0) {
 	mutex_unlock(&ni_lock);
     	free(nc_handlep);
-	return(0);
+	return (0);
     }
 
     /*
-     * Noone needs these entries anymore, then frees them.
+     * No one needs these entries anymore, so free them.
      * Make sure all info in netconfig_info structure has been reinitialized.
      */
     q = ni.head;
     ni.eof = ni.ref = 0;
     ni.head = NULL;
     ni.tail = NULL;
+    fclose(ni.file);
+    ni.file = NULL;
     mutex_unlock(&ni_lock);
 
     while (q != NULL) {
@@ -423,11 +410,6 @@ endnetconfig(void *handlep)
 	q = p;
     }
     free(nc_handlep);
-
-    mutex_lock(&nc_file_lock);
-    fclose(nc_file);
-    nc_file = NULL;
-    mutex_unlock(&nc_file_lock);
 
     return (0);
 }
