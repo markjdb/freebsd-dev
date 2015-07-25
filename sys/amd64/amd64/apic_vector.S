@@ -310,6 +310,7 @@ IDTVEC(rendezvous)
 	movq	ipi_rendezvous_counts(,%rax,8), %rax
 	incq	(%rax)
 #endif
+	movq	%rsp, %rdi
 	call	smp_rendezvous_action
 	call	as_lapic_eoi
 	jmp	doreti

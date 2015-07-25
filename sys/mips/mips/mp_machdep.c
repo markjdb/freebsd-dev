@@ -133,7 +133,7 @@ mips_ipi_handler(void *arg)
 		switch (ipi) {
 		case IPI_RENDEZVOUS:
 			CTR0(KTR_SMP, "IPI_RENDEZVOUS");
-			smp_rendezvous_action();
+			smp_rendezvous_action(NULL);
 			break;
 
 		case IPI_AST:

@@ -330,6 +330,7 @@ IDTVEC(rendezvous)
 	movl	ipi_rendezvous_counts(,%eax,4), %eax
 	incl	(%eax)
 #endif
+	pushl	%esp
 	call	smp_rendezvous_action
 
 	call	as_lapic_eoi

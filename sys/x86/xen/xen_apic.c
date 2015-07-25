@@ -409,7 +409,7 @@ xen_smp_rendezvous_action(void *arg)
 	(*ipi_rendezvous_counts[PCPU_GET(cpuid)])++;
 #endif /* COUNT_IPIS */
 
-	smp_rendezvous_action();
+	smp_rendezvous_action(NULL);
 	return (FILTER_HANDLED);
 }
 

@@ -298,7 +298,7 @@ powerpc_ipi_handler(void *arg)
 			break;
 		case IPI_RENDEZVOUS:
 			CTR1(KTR_SMP, "%s: IPI_RENDEZVOUS", __func__);
-			smp_rendezvous_action();
+			smp_rendezvous_action(NULL);
 			break;
 		case IPI_STOP:
 
