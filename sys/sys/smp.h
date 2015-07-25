@@ -153,6 +153,7 @@ cpu_next(int i)
  * the exact maximum ID that early, then it may set mp_maxid to MAXCPU - 1.
  */
 struct thread;
+struct trapframe;
 
 struct cpu_group *cpu_topo(void);
 void	cpu_mp_announce(void);
@@ -169,7 +170,7 @@ int	suspend_cpus(cpuset_t);
 int	resume_cpus(cpuset_t);
 #endif
 
-void	smp_rendezvous_action(void);
+void	smp_rendezvous_action(struct trapframe *);
 extern	struct mtx smp_ipi_mtx;
 
 #endif /* SMP */

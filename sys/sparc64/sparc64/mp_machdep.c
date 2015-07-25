@@ -282,8 +282,7 @@ cpu_mp_start(void)
 	}
 
 	intr_setup(PIL_AST, cpu_ipi_ast, -1, NULL, NULL);
-	intr_setup(PIL_RENDEZVOUS, (ih_func_t *)smp_rendezvous_action,
-	    -1, NULL, NULL);
+	intr_setup(PIL_RENDEZVOUS, smp_rendezvous_action, -1, NULL, NULL);
 	intr_setup(PIL_STOP, cpu_ipi_stop, -1, NULL, NULL);
 	intr_setup(PIL_PREEMPT, cpu_ipi_preempt, -1, NULL, NULL);
 	intr_setup(PIL_HARDCLOCK, cpu_ipi_hardclock, -1, NULL, NULL);

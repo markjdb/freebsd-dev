@@ -293,7 +293,7 @@ ipi_handler(void *arg)
 		break;
 	case IPI_RENDEZVOUS:
 		CTR0(KTR_SMP, "IPI_RENDEZVOUS");
-		smp_rendezvous_action();
+		smp_rendezvous_action(NULL);
 		break;
 	case IPI_STOP:
 	case IPI_STOP_HARD:

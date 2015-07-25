@@ -370,9 +370,10 @@ resume_cpus(cpuset_t map)
  * that they are running in parallel and in an unknown lock context.
  */
 void
-smp_rendezvous_action(void)
+smp_rendezvous_action(struct trapframe *frame)
 {
 	struct thread *td;
+	struct trapframe *oldframe;
 	void *local_func_arg;
 	void (*local_setup_func)(void*);
 	void (*local_action_func)(void*);
@@ -380,6 +381,10 @@ smp_rendezvous_action(void)
 #ifdef INVARIANTS
 	int owepreempt;
 #endif
+
+	td = curthread;
+	KASSERT(frame != NULL || td->td_intr_frame != NULL ||
+	    mtx_owned(&smp_ipi_mtx), ("no interrupt frame available"));
 
 	/* Ensure we have up-to-date values. */
 	atomic_add_acq_int(&smp_rv_waiters[0], 1);
@@ -414,12 +419,16 @@ smp_rendezvous_action(void)
 	 * and thus td_owepreempt should never transition from 0 to 1
 	 * during this routine.
 	 */
-	td = curthread;
 	td->td_critnest++;
 #ifdef INVARIANTS
 	owepreempt = td->td_owepreempt;
 #endif
-	
+
+	if (frame != NULL) {
+		oldframe = td->td_intr_frame;
+		td->td_intr_frame = frame;
+	}
+
 	/*
 	 * If requested, run a setup function before the main action
 	 * function.  Ensure all CPUs have completed the setup
@@ -462,6 +471,9 @@ smp_rendezvous_action(void)
 	 * atomic_load_acq_int(&smp_rv_waiters[3]).
 	 */
 	atomic_add_rel_int(&smp_rv_waiters[3], 1);
+
+	if (frame != NULL)
+		td->td_intr_frame = oldframe;
 
 	td->td_critnest--;
 	KASSERT(owepreempt == td->td_owepreempt,
@@ -520,7 +532,7 @@ smp_rendezvous_cpus(cpuset_t map,
 
 	/* Check if the current CPU is in the map */
 	if (curcpumap != 0)
-		smp_rendezvous_action();
+		smp_rendezvous_action(NULL);
 
 	/*
 	 * Ensure that the master CPU waits for all the other
