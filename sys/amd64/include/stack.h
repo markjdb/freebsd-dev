@@ -39,4 +39,6 @@ struct amd64_frame {
 	long			f_arg0;
 };
 
+int	stack_nmi_handler(struct trapframe *);
+
 #endif /* !_MACHINE_STACK_H_ */

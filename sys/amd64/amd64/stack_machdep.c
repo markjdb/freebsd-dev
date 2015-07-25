@@ -29,15 +29,25 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/lock.h>
+#include <sys/kernel.h>
+#include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/stack.h>
 
 #include <machine/pcb.h>
+#include <machine/smp.h>
 #include <machine/stack.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
+
+static struct stack *nmi_stack;
+static volatile struct thread *nmi_pending;
+
+static struct mtx nmi_lock;
+MTX_SYSINIT(nmi_lock, &nmi_lock, "stack_nmi", MTX_SPIN);
 
 static void
 stack_capture(struct stack *st, register_t rbp)
@@ -63,6 +73,19 @@ stack_capture(struct stack *st, register_t rbp)
 	}
 }
 
+int
+stack_nmi_handler(struct trapframe *tf)
+{
+
+	if (nmi_stack == NULL)
+		return (0);
+
+	MPASS(curthread == nmi_pending);
+	stack_capture(nmi_stack, tf->tf_rbp);
+	nmi_pending = NULL;
+	return (1);
+}
+
 void
 stack_save_td(struct stack *st, struct thread *td)
 {
@@ -75,6 +98,39 @@ stack_save_td(struct stack *st, struct thread *td)
 
 	rbp = td->td_pcb->pcb_rbp;
 	stack_capture(st, rbp);
+}
+
+int
+stack_save_td_running(struct stack *st, struct thread *td)
+{
+
+	THREAD_LOCK_ASSERT(td, MA_OWNED);
+	MPASS(TD_IS_RUNNING(td));
+
+	if (td == curthread) {
+		stack_save(st);
+		return (0);
+	}
+
+	if (p_candebug(curthread, td->td_proc) != 0)
+		return (1);
+
+	mtx_lock_spin(&nmi_lock);
+
+	nmi_stack = st;
+	nmi_pending = td;
+	ipi_cpu(td->td_oncpu, IPI_TRACE);
+	while (nmi_pending != NULL)
+		cpu_spinwait();
+	nmi_stack = NULL;
+
+	mtx_unlock_spin(&nmi_lock);
+
+	if (st->depth == 0)
+		/* We interrupted a thread in user mode. */
+		return (1);
+
+	return (0);
 }
 
 void

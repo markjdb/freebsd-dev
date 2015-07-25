@@ -91,6 +91,7 @@ PMC_SOFT_DEFINE( , , page_fault, write);
 #ifdef SMP
 #include <machine/smp.h>
 #endif
+#include <machine/stack.h>
 #include <machine/tss.h>
 
 #ifdef KDTRACE_HOOKS
@@ -202,17 +203,20 @@ trap(struct trapframe *frame)
 		goto out;
 	}
 
-#ifdef	HWPMC_HOOKS
-	/*
-	 * CPU PMCs interrupt using an NMI.  If the PMC module is
-	 * active, pass the 'rip' value to the PMC module's interrupt
-	 * handler.  A return value of '1' from the handler means that
-	 * the NMI was handled by it and we can return immediately.
-	 */
-	if (type == T_NMI && pmc_intr &&
-	    (*pmc_intr)(PCPU_GET(cpuid), frame))
-		goto out;
+	if (type == T_NMI) {
+		if (stack_nmi_handler(frame) != 0)
+			goto out;
+#ifdef HWPMC_HOOKS
+		/*
+		 * CPU PMCs interrupt using an NMI.  If the PMC module is
+		 * active, pass the 'rip' value to the PMC module's interrupt
+		 * handler.  A non-zero return value from the handler means that
+		 * the NMI was consumed by it and we can return immediately.
+		 */
+		if (pmc_intr != NULL && (*pmc_intr)(PCPU_GET(cpuid), frame))
+			goto out;
 #endif
+	}
 
 	if (type == T_MCHK) {
 		mca_intr();
