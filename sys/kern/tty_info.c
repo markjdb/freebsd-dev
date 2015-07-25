@@ -48,13 +48,20 @@ __FBSDID("$FreeBSD$");
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
+#include <sys/sbuf.h>
 #include <sys/sched.h>
+#include <sys/stack.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/tty.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
+
+static int siginfo_stack = 0;
+SYSCTL_INT(_kern, OID_AUTO, siginfo_stack, CTLFLAG_RWTUN,
+    &siginfo_stack, 0, "Print a kernel stack trace on SIGINFO");
 
 /*
  * Returns 1 if p2 is "better" than p1
@@ -207,6 +214,16 @@ proc_compare(struct proc *p1, struct proc *p2)
 	return (p2->p_pid > p1->p_pid);		/* tie - return highest pid */
 }
 
+static int
+ttyinfo_drain(void *arg, const char *data, int len)
+{
+	struct tty *tp;
+
+	tp = arg;
+	ttyprintf(tp, "%s", data);
+	return (len);
+}
+
 /*
  * Report on state of foreground process group.
  */
@@ -214,6 +231,8 @@ void
 tty_info(struct tty *tp)
 {
 	struct timeval rtime, utime, stime;
+	struct sbuf sb;
+	struct stack st;
 	struct proc *p, *ppick;
 	struct thread *td, *tdpick;
 	const char *stateprefix, *state;
@@ -290,6 +309,13 @@ tty_info(struct tty *tp)
 	else
 		state = "unknown";
 	pctcpu = (sched_pctcpu(td) * 10000 + FSCALE / 2) >> FSHIFT;
+	if (siginfo_stack) {
+		stack_zero(&st);
+		if (TD_IS_RUNNING(td))
+			(void)stack_save_td_running(&st, td);
+		else if (!TD_IS_SWAPPED(td))
+			stack_save_td(&st, td);
+	}
 	thread_unlock(td);
 	if (p->p_state == PRS_NEW || p->p_state == PRS_ZOMBIE)
 		rss = 0;
@@ -302,12 +328,17 @@ tty_info(struct tty *tp)
 	strlcpy(comm, p->p_comm, sizeof comm);
 	PROC_UNLOCK(p);
 
+	sbuf_new(&sb, NULL, 256, SBUF_AUTOEXTEND);
+	sbuf_set_drain(&sb, ttyinfo_drain, tp);
 	/* Print command, pid, state, rtime, utime, stime, %cpu, and rss. */
-	ttyprintf(tp,
+	sbuf_printf(&sb,
 	    " cmd: %s %d [%s%s] %ld.%02ldr %ld.%02ldu %ld.%02lds %d%% %ldk\n",
 	    comm, pid, stateprefix, state,
 	    (long)rtime.tv_sec, rtime.tv_usec / 10000,
 	    (long)utime.tv_sec, utime.tv_usec / 10000,
 	    (long)stime.tv_sec, stime.tv_usec / 10000,
 	    pctcpu / 100, rss);
+	if (siginfo_stack)
+		stack_sbuf_print(&sb, &st);
+	sbuf_finish(&sb);
 }
