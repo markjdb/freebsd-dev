@@ -60,7 +60,6 @@ struct gzio_stream *
 gzio_init(gzio_cb cb, enum gzio_mode mode, size_t bufsz, int level, void *arg)
 {
 	struct gzio_stream *s;
-	uint8_t *hdr;
 	int error;
 
 	if (bufsz < KERN_GZ_HDRLEN)
@@ -87,18 +86,7 @@ gzio_init(gzio_cb cb, enum gzio_mode mode, size_t bufsz, int level, void *arg)
 	if (error != 0)
 		goto fail;
 
-	s->gz_stream.avail_out = s->gz_bufsz;
-	s->gz_stream.next_out = s->gz_buffer;
-
-	/* Write the gzip header to the output buffer. */
-	hdr = s->gz_buffer;
-	memset(hdr, 0, KERN_GZ_HDRLEN);
-	hdr[0] = KERN_GZ_MAGIC1;
-	hdr[1] = KERN_GZ_MAGIC2;
-	hdr[2] = Z_DEFLATED;
-	hdr[9] = OS_CODE;
-	s->gz_stream.next_out += KERN_GZ_HDRLEN;
-	s->gz_stream.avail_out -= KERN_GZ_HDRLEN;
+	gzio_reset(s);
 
 	return (s);
 
@@ -120,6 +108,30 @@ gzio_flush(struct gzio_stream *s)
 {
 
 	return (gz_write(s, NULL, 0, Z_FINISH));
+}
+
+void
+gzio_reset(struct gzio_stream *s)
+{
+	uint8_t *hdr;
+
+	(void)deflateReset(&s->gz_stream);
+
+	s->gz_off = 0;
+	s->gz_crc = ~0U;
+
+	s->gz_stream.avail_out = s->gz_bufsz;
+	s->gz_stream.next_out = s->gz_buffer;
+
+	/* Write the gzip header to the output buffer. */
+	hdr = s->gz_buffer;
+	memset(hdr, 0, KERN_GZ_HDRLEN);
+	hdr[0] = KERN_GZ_MAGIC1;
+	hdr[1] = KERN_GZ_MAGIC2;
+	hdr[2] = Z_DEFLATED;
+	hdr[9] = OS_CODE;
+	s->gz_stream.next_out += KERN_GZ_HDRLEN;
+	s->gz_stream.avail_out -= KERN_GZ_HDRLEN;
 }
 
 void

@@ -99,30 +99,37 @@ static sig_atomic_t got_siginfo;
 static void infohandler(int);
 
 static void
-printheader(xo_handle_t *xo, const struct kerneldumpheader *h, const char *device,
-    int bounds, const int status)
+printheader(xo_handle_t *xo, const struct kerneldumpheader *h,
+    const char *device, int bounds, const int status)
 {
 	uint64_t dumplen;
 	time_t t;
 	const char *stat_str;
 
 	xo_flush_h(xo);
-	xo_emit_h(xo, "{Lwc:Dump header from device}{:dump_device/%s}\n", device);
-	xo_emit_h(xo, "{P:  }{Lwc:Architecture}{:architecture/%s}\n", h->architecture);
-	xo_emit_h(xo, "{P:  }{Lwc:Architecture Version}{:architecture_version/%u}\n", dtoh32(h->architectureversion));
+	xo_emit_h(xo, "{Lwc:Dump header from device}{:dump_device/%s}\n",
+	    device);
+	xo_emit_h(xo, "{P:  }{Lwc:Architecture}{:architecture/%s}\n",
+	    h->architecture);
+	xo_emit_h(xo, "{P:  }{Lwc:Architecture Version}{:architecture_version/%u}\n",
+	    dtoh32(h->architectureversion));
 	dumplen = dtoh64(h->dumplength);
-	xo_emit_h(xo, "{P:  }{Lwc:Dump Length}{:dump_length_bytes/%lld}\n", (long long)dumplen);
-	xo_emit_h(xo, "{P:  }{Lwc:Blocksize}{:blocksize/%d}\n", dtoh32(h->blocksize));
+	xo_emit_h(xo, "{P:  }{Lwc:Dump Length}{:dump_length_bytes/%lld}\n",
+	    (long long)dumplen);
+	xo_emit_h(xo, "{P:  }{Lwc:Blocksize}{:blocksize/%d}\n",
+	    dtoh32(h->blocksize));
 	t = dtoh64(h->dumptime);
 	xo_emit_h(xo, "{P:  }{Lwc:Dumptime}{:dumptime/%s}", ctime(&t));
 	xo_emit_h(xo, "{P:  }{Lwc:Hostname}{:hostname/%s}\n", h->hostname);
 	xo_emit_h(xo, "{P:  }{Lwc:Magic}{:magic/%s}\n", h->magic);
-	xo_emit_h(xo, "{P:  }{Lwc:Version String}{:version_string/%s}", h->versionstring);
-	xo_emit_h(xo, "{P:  }{Lwc:Panic String}{:panic_string/%s}\n", h->panicstring);
+	xo_emit_h(xo, "{P:  }{Lwc:Version String}{:version_string/%s}",
+	    h->versionstring);
+	xo_emit_h(xo, "{P:  }{Lwc:Panic String}{:panic_string/%s}\n",
+	    h->panicstring);
 	xo_emit_h(xo, "{P:  }{Lwc:Dump Parity}{:dump_parity/%u}\n", h->parity);
 	xo_emit_h(xo, "{P:  }{Lwc:Bounds}{:bounds/%d}\n", bounds);
 
-	switch(status) {
+	switch (status) {
 	case STATUS_BAD:
 		stat_str = "bad";
 		break;
@@ -131,13 +138,15 @@ printheader(xo_handle_t *xo, const struct kerneldumpheader *h, const char *devic
 		break;
 	default:
 		stat_str = "unknown";
+		break;
 	}
 	xo_emit_h(xo, "{P:  }{Lwc:Dump Status}{:dump_status/%s}\n", stat_str);
 	xo_flush_h(xo);
 }
 
 static int
-getbounds(void) {
+getbounds(void)
+{
 	FILE *fp;
 	char buf[6];
 	int ret;
@@ -168,7 +177,8 @@ getbounds(void) {
 }
 
 static void
-writebounds(int bounds) {
+writebounds(int bounds)
+{
 	FILE *fp;
 
 	if ((fp = fopen("bounds", "w")) == NULL) {
@@ -288,12 +298,19 @@ check_space(const char *savedir, off_t dumpsize, int bounds)
 	return (1);
 }
 
+static int
+compare_magic(struct kerneldumpheader *kdh, const char *magic)
+{
+
+	return (strncmp(magic, kdh->magic, sizeof(kdh->magic)));
+}
+
 #define BLOCKSIZE (1<<12)
 #define BLOCKMASK (~(BLOCKSIZE-1))
 
 static int
-DoRegularFile(int fd, off_t dumpsize, char *buf, const char *device,
-    const char *filename, FILE *fp)
+DoRegularFile(int fd, off_t dumpsize, u_int sectorsize, int sparse, char *buf,
+    const char *device, const char *filename, FILE *fp)
 {
 	int he, hs, nr, nw, wl;
 	off_t dmpcnt, origsize;
@@ -305,8 +322,8 @@ DoRegularFile(int fd, off_t dumpsize, char *buf, const char *device,
 		wl = BUFFERSIZE;
 		if (wl > dumpsize)
 			wl = dumpsize;
-		nr = read(fd, buf, wl);
-		if (nr != wl) {
+		nr = read(fd, buf, roundup(wl, sectorsize));
+		if (nr != (int)roundup(wl, sectorsize)) {
 			if (nr == 0)
 				syslog(LOG_WARNING,
 				    "WARNING: EOF on dump device");
@@ -315,7 +332,7 @@ DoRegularFile(int fd, off_t dumpsize, char *buf, const char *device,
 			nerr++;
 			return (-1);
 		}
-		if (compress) {
+		if (!sparse) {
 			nw = fwrite(buf, 1, wl, fp);
 		} else {
 			for (nw = 0; nw < nr; nw = he) {
@@ -438,13 +455,13 @@ DoFile(const char *savedir, const char *device)
 	static char infoname[PATH_MAX], corename[PATH_MAX], linkname[PATH_MAX];
 	static char *buf = NULL;
 	struct kerneldumpheader kdhf, kdhl;
-	off_t mediasize, dumpsize, firsthd, lasthd;
+	off_t mediasize, dumpextent, dumplength, firsthd, lasthd;
 	FILE *info, *fp;
 	mode_t oumask;
 	int fd, fdinfo, error;
 	int bounds, status;
 	u_int sectorsize, xostyle;
-	int istextdump;
+	int istextdump, isgzipdump;
 
 	bounds = getbounds();
 	mediasize = 0;
@@ -499,8 +516,8 @@ DoFile(const char *savedir, const char *device)
 		    (long long)lasthd, device);
 		goto closefd;
 	}
-	istextdump = 0;
-	if (strncmp(kdhl.magic, TEXTDUMPMAGIC, sizeof kdhl) == 0) {
+	isgzipdump = istextdump = 0;
+	if (compare_magic(&kdhl, TEXTDUMPMAGIC) == 0) {
 		if (verbose)
 			printf("textdump magic on last dump header on %s\n",
 			    device);
@@ -514,8 +531,8 @@ DoFile(const char *savedir, const char *device)
 			if (force == 0)
 				goto closefd;
 		}
-	} else if (memcmp(kdhl.magic, KERNELDUMPMAGIC, sizeof kdhl.magic) ==
-	    0) {
+	} else if (compare_magic(&kdhl, KERNELDUMPMAGIC) == 0 ||
+	    compare_magic(&kdhl, GZDUMPMAGIC) == 0) {
 		if (dtoh32(kdhl.version) != KERNELDUMPVERSION) {
 			syslog(LOG_ERR,
 			    "unknown version (%d) in last dump header on %s",
@@ -524,6 +541,12 @@ DoFile(const char *savedir, const char *device)
 			status = STATUS_BAD;
 			if (force == 0)
 				goto closefd;
+		}
+		if (compare_magic(&kdhl, GZDUMPMAGIC) == 0) {
+			isgzipdump = 1;
+			if (compress && verbose)
+				printf("dump is already compressed\n");
+			compress = 0;
 		}
 	} else {
 		if (verbose)
@@ -534,12 +557,10 @@ DoFile(const char *savedir, const char *device)
 		if (force == 0)
 			goto closefd;
 
-		if (memcmp(kdhl.magic, KERNELDUMPMAGIC_CLEARED,
-			    sizeof kdhl.magic) == 0) {
+		if (compare_magic(&kdhl, KERNELDUMPMAGIC_CLEARED) == 0) {
 			if (verbose)
 				printf("forcing magic on %s\n", device);
-			memcpy(kdhl.magic, KERNELDUMPMAGIC,
-			    sizeof kdhl.magic);
+			memcpy(kdhl.magic, KERNELDUMPMAGIC, sizeof kdhl.magic);
 		} else {
 			syslog(LOG_ERR, "unable to force dump - bad magic");
 			goto closefd;
@@ -567,8 +588,9 @@ DoFile(const char *savedir, const char *device)
 		if (force == 0)
 			goto closefd;
 	}
-	dumpsize = dtoh64(kdhl.dumplength);
-	firsthd = lasthd - dumpsize - sizeof kdhf;
+	dumpextent = dtoh64(kdhl.dumpextent);
+	dumplength = dtoh64(kdhl.dumplength);
+	firsthd = lasthd - dumpextent - sizeof kdhf;
 	lseek(fd, firsthd, SEEK_SET);
 	error = read(fd, &kdhf, sizeof kdhf);
 	if (error != sizeof kdhf) {
@@ -613,7 +635,7 @@ DoFile(const char *savedir, const char *device)
 	if (verbose)
 		printf("Checking for available free space\n");
 
-	if (!check_space(savedir, dumpsize, bounds)) {
+	if (!check_space(savedir, dumplength, bounds)) {
 		nerr++;
 		goto closefd;
 	}
@@ -639,6 +661,9 @@ DoFile(const char *savedir, const char *device)
 		snprintf(corename, sizeof(corename), "%s.%d.gz",
 		    istextdump ? "textdump.tar" : "vmcore", bounds);
 		fp = zopen(corename, "w");
+	} else if (isgzipdump) {
+		snprintf(corename, sizeof(corename), "vmcore.%d.gz", bounds);
+		fp = fopen(corename, "w");
 	} else {
 		snprintf(corename, sizeof(corename), "%s.%d",
 		    istextdump ? "textdump.tar" : "vmcore", bounds);
@@ -679,15 +704,15 @@ DoFile(const char *savedir, const char *device)
 	fclose(info);
 
 	syslog(LOG_NOTICE, "writing %score to %s/%s",
-	    compress ? "compressed " : "", savedir, corename);
+	    compress || isgzipdump ? "compressed " : "", savedir, corename);
 
 	if (istextdump) {
-		if (DoTextdumpFile(fd, dumpsize, lasthd, buf, device,
+		if (DoTextdumpFile(fd, dumplength, lasthd, buf, device,
 		    corename, fp) < 0)
 			goto closeall;
 	} else {
-		if (DoRegularFile(fd, dumpsize, buf, device, corename, fp)
-		    < 0)
+		if (DoRegularFile(fd, dumplength, sectorsize,
+		    !(compress || isgzipdump), buf, device, corename, fp) < 0)
 			goto closeall;
 	}
 	if (verbose)
@@ -704,7 +729,7 @@ DoFile(const char *savedir, const char *device)
 		syslog(LOG_WARNING, "unable to create symlink %s/%s: %m",
 		    savedir, "info.last");
 	}
-	if (compress) {
+	if (compress || isgzipdump) {
 		snprintf(linkname, sizeof(linkname), "%s.last.gz",
 		    istextdump ? "textdump.tar" : "vmcore");
 	} else {

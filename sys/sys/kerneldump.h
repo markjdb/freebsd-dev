@@ -61,10 +61,11 @@ struct kerneldumpheader {
 	char		magic[20];
 #define	KERNELDUMPMAGIC		"FreeBSD Kernel Dump"
 #define	TEXTDUMPMAGIC		"FreeBSD Text Dump"
+#define	GZDUMPMAGIC		"FreeBSD GZIP Dump"
 #define	KERNELDUMPMAGIC_CLEARED	"Cleared Kernel Dump"
 	char		architecture[12];
 	uint32_t	version;
-#define	KERNELDUMPVERSION	1
+#define	KERNELDUMPVERSION	2
 	uint32_t	architectureversion;
 #define	KERNELDUMP_AARCH64_VERSION	1
 #define	KERNELDUMP_AMD64_VERSION	2
@@ -75,10 +76,11 @@ struct kerneldumpheader {
 #define	KERNELDUMP_SPARC64_VERSION	1
 #define	KERNELDUMP_TEXT_VERSION		1
 	uint64_t	dumplength;		/* excl headers */
+	uint64_t	dumpextent;		/* space between headers */
 	uint64_t	dumptime;
 	uint32_t	blocksize;
 	char		hostname[64];
-	char		versionstring[192];
+	char		versionstring[184];
 	char		panicstring[192];
 	uint32_t	parity;
 };
@@ -105,23 +107,31 @@ struct dump_pa {
 	vm_paddr_t pa_size;
 };
 
-void mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
-    uint64_t dumplen, uint32_t blksz);
+int	dumpsys_generic(struct dumperinfo *);
 
-int dumpsys_generic(struct dumperinfo *);
-
-void dumpsys_map_chunk(vm_paddr_t, size_t, void **);
+void	dumpsys_map_chunk(vm_paddr_t, size_t, void **);
 typedef int dumpsys_callback_t(struct dump_pa *, int, void *);
-int dumpsys_foreach_chunk(dumpsys_callback_t, void *);
-int dumpsys_cb_dumpdata(struct dump_pa *, int, void *);
-int dumpsys_buf_write(struct dumperinfo *, char *, size_t);
-int dumpsys_buf_flush(struct dumperinfo *);
+int	dumpsys_foreach_chunk(dumpsys_callback_t, void *);
+int	dumpsys_cb_dumpdata(struct dump_pa *, int, void *);
+int	dumpsys_buf_write(struct dumperinfo *, char *, size_t);
+int	dumpsys_buf_flush(struct dumperinfo *);
 
-void dumpsys_gen_pa_init(void);
+void	dumpsys_gen_pa_init(void);
 struct dump_pa *dumpsys_gen_pa_next(struct dump_pa *);
-void dumpsys_gen_wbinv_all(void);
-void dumpsys_gen_unmap_chunk(vm_paddr_t, size_t, void *);
-int dumpsys_gen_write_aux_headers(struct dumperinfo *);
+void	dumpsys_gen_wbinv_all(void);
+void	dumpsys_gen_unmap_chunk(vm_paddr_t, size_t, void *);
+int	dumpsys_gen_write_aux_headers(struct dumperinfo *);
+
+int	dump_start(struct dumperinfo *, struct kerneldumpheader *);
+int	dump_finish(struct dumperinfo *, struct kerneldumpheader *);
+int	dump_append(struct dumperinfo *, void *, vm_offset_t, size_t);
+int	dump_skip(struct dumperinfo *, size_t);
+int	dump_write_raw(struct dumperinfo *, void *, vm_offset_t, off_t, size_t);
+
+int	doadump(boolean_t);
+int	set_dumper(struct dumperinfo *, const char *, struct thread *);
+void	mkdumpheader(struct kerneldumpheader *, char *, uint32_t, uint64_t,
+	    uint32_t);
 
 extern int do_minidump;
 

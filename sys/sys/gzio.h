@@ -42,6 +42,7 @@ struct gzio_stream;
 struct gzio_stream *gzio_init(gzio_cb cb, enum gzio_mode, size_t, int, void *);
 int		gzio_write(struct gzio_stream *, void *, u_int);
 int		gzio_flush(struct gzio_stream *);
+void		gzio_reset(struct gzio_stream *);
 void		gzio_fini(struct gzio_stream *);
 
 #endif /* _KERNEL */
