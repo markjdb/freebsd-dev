@@ -132,6 +132,11 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o ${MFS_IMAGE}
 .if !defined(DEBUG)
 	${OBJCOPY} --strip-debug ${.TARGET}
 .endif
+.if defined(OBJCOPY_DOESNT_SUCK_NOW)
+	${NM} -g ${.TARGET} | \
+	    ${AWK} '$$3~/^__dtrace_sdt_[a-zA-Z0-9]+$$/{print $$3}' | \
+	    ${OBJCOPY} --strip-symbols=/dev/stdin ${.TARGET}
+.endif
 	${SYSTEM_LD_TAIL}
 .if defined(MFS_IMAGE)
 	sh ${S}/tools/embed_mfs.sh ${FULLKERNEL} ${MFS_IMAGE}
@@ -183,8 +188,7 @@ genassym.o: $S/$M/$M/genassym.c
 	${CC} -c ${CFLAGS:N-fno-common} $S/$M/$M/genassym.c
 
 sdtstubs.c: ${SYSTEM_OBJS:Nsdtstubs.o}
-	AWK='${AWK}' NM='${NM}' OBJDUMP='${OBJDUMP}' \
-	   sh ${SYSDIR}/conf/sdt_fixup.sh ${.ALLSRC:M*.o} > ${.TARGET}
+	sdtpatch -o ${.TARGET} ${.ALLSRC}
 
 ${SYSTEM_OBJS} genassym.o vers.o: opt_global.h
 

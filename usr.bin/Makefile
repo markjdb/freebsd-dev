@@ -145,6 +145,7 @@ SUBDIR=	${_addr2line} \
 	rusers \
 	rwall \
 	script \
+	sdtpatch \
 	sed \
 	send-pr \
 	seq \

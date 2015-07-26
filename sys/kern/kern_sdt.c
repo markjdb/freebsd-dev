@@ -21,35 +21,14 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
+
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/kdb.h>
+#include <sys/queue.h>
 #include <sys/sdt.h>
 
 SDT_PROVIDER_DEFINE(sdt);
-
-#if 0
-/*
- * Hook for the DTrace probe function. The SDT provider will set this to
- * dtrace_probe() when it loads.
- */
-sdt_probe_func_t sdt_probe_func = sdt_probe_stub;
-
-/*
- * This is a stub for probe calls in case kernel DTrace support isn't
- * enabled. It should never get called because there is no DTrace support
- * to enable it.
- */
-void
-sdt_probe_stub(uint32_t id, uintptr_t arg0, uintptr_t arg1,
-    uintptr_t arg2, uintptr_t arg3, uintptr_t arg4)
-{
-
-	printf("sdt_probe_stub: unexpectedly called\n");
-	kdb_backtrace();
-}
-#endif

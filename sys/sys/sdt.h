@@ -1,4 +1,5 @@
 /*-
+ * Copyright 2015 Mark Johnston <markj@FreeBSD.org>
  * Copyright 2006-2008 John Birrell <jb@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -150,14 +151,14 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	extern struct sdt_provider sdt_provider_##prov[1]
 
 #define	SDT_PROBE_DEFINE(prov, mod, func, name)				\
-	struct sdt_probe sdt_##prov##_##mod##_##func##_##name[1] = {	\
+	struct sdt_probe sdtp_##prov##_##mod##_##func##_##name[1] = {	\
 	    { sizeof(struct sdt_probe), sdt_provider_##prov,		\
 	    { NULL, NULL }, { NULL, NULL }, #mod, #func, #name, 0, 0, NULL } \
 	};								\
-	DATA_SET(sdt_probes_set, sdt_##prov##_##mod##_##func##_##name);
+	DATA_SET(sdt_probes_set, sdtp_##prov##_##mod##_##func##_##name);
 
 #define	SDT_PROBE_DECLARE(prov, mod, func, name)			\
-	extern struct sdt_probe sdt_##prov##_##mod##_##func##_##name[1]
+	extern struct sdt_probe sdtp_##prov##_##mod##_##func##_##name[1]
 
 #define	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)	\
 	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
@@ -165,7 +166,7 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 #define	SDT_PROBE_ARGTYPE(prov, mod, func, name, num, type, xtype)	\
 	static struct sdt_argtype sdta_##prov##_##mod##_##func##_##name##num[1] \
 	    = { { num, type, xtype, { NULL, NULL },			\
-	    sdt_##prov##_##mod##_##func##_##name }			\
+	    sdtp_##prov##_##mod##_##func##_##name }			\
 	};								\
 	DATA_SET(sdt_argtypes_set, sdta_##prov##_##mod##_##func##_##name##num);
 
@@ -421,8 +422,14 @@ struct sdt_provider {
 	int		sdt_refs;	/* Number of module references. */
 };
 
+struct sdt_site {
+	struct sdt_probe *sdts_probe;
+	uint64_t	sdts_offset;
+};
+
 SDT_PROVIDER_DECLARE(sdt);
 
-#endif /* _KERNEL */
+void	sdt_probe_nop(void);
 
+#endif /* _KERNEL */
 #endif /* _SYS_SDT_H */
