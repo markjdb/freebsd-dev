@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2012 Damjan Marion <dmarion@FreeBSD.org>
+ * Copyright (c) 2015 Michael Gmelin <freebsd@grem.de>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,20 +26,38 @@
  * $FreeBSD$
  */
 
-#ifndef AM335X_SCM_PADCONF_H
-#define AM335X_SCM_PADCONF_H
+#ifndef _ISL_H_
+#define _ISL_H_
 
-#define SLEWCTRL	(0x01 << 6) /* faster(0) or slower(1) slew rate. */
-#define RXACTIVE	(0x01 << 5) /* Input enable value for the Pad */
-#define PULLTYPESEL	(0x01 << 4) /* Pad pullup/pulldown type selection */
-#define PULLUDEN	(0x01 << 3) /* Pullup/pulldown disabled */
+/* Command register 1  (bits 7-5) */
+#define REG_CMD1		0x00
+#define CMD1_MASK_POWER_DOWN	0x00      /* 00000000 */
+#define CMD1_MASK_ALS_ONCE	0x01 << 5 /* 00100000 */
+#define CMD1_MASK_IR_ONCE	0x02 << 5 /* 01000000 */
+#define CMD1_MASK_PROX_ONCE	0x03 << 5 /* 01100000 */
+/* RESERVED */                            /* 10000000 */
+#define CMD1_MASK_ALS_CONT	0x05 << 5 /* 10100000 */
+#define CMD1_MASK_IR_CONT	0x06 << 5 /* 11000000 */
+#define CMD1_MASK_PROX_CONT	0x07 << 5 /* 11100000 */
 
-#define PADCONF_OUTPUT			(PULLUDEN)
-#define PADCONF_OUTPUT_PULLUP		(PULLTYPESEL)
-#define PADCONF_OUTPUT_PULLDOWN		(0)
-#define PADCONF_INPUT			(RXACTIVE | PULLUDEN)
-#define PADCONF_INPUT_PULLUP		(RXACTIVE | PULLTYPESEL)
-#define PADCONF_INPUT_PULLDOWN		(RXACTIVE)
-#define PADCONF_INPUT_PULLUP_SLOW	(PADCONF_INPUT_PULLUP | SLEWCTRL)
+/* Command register 2 (bits) */
+#define REG_CMD2		0x01
 
-#endif /* AM335X_SCM_PADCONF_H */
+/* data registers */
+#define REG_DATA1		0x02
+#define REG_DATA2		0x03
+#define CMD2_SHIFT_RANGE	0x00
+#define CMD2_MASK_RANGE		(0x03 << CMD2_SHIFT_RANGE)
+#define CMD2_SHIFT_RESOLUTION	0x02
+#define CMD2_MASK_RESOLUTION	(0x03 << CMD2_SHIFT_RESOLUTION)
+
+/* Interrupt registers */
+#define REG_INT_LO_LSB		0x04
+#define REG_INT_LO_MSB		0x05
+#define REG_INT_HI_LSB		0x06
+#define REG_INT_HI_MSB		0x07
+
+/* Test register (should hold 0x00 at all times */
+#define REG_TEST		0x08
+
+#endif
