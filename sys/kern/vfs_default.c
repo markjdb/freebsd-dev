@@ -59,7 +59,6 @@ __FBSDID("$FreeBSD$");
 #include <security/mac/mac_framework.h>
 
 #include <vm/vm.h>
-#include <vm/vm_param.h>
 #include <vm/vm_object.h>
 #include <vm/vm_extern.h>
 #include <vm/pmap.h>
@@ -1037,8 +1036,6 @@ int
 vop_stdadvise(struct vop_advise_args *ap)
 {
 	struct vnode *vp;
-	vm_object_t obj;
-	vm_page_t m;
 	off_t start, end;
 	int error;
 
@@ -1067,19 +1064,13 @@ vop_stdadvise(struct vop_advise_args *ap)
 			break;
 		}
 		vinvalbuf(vp, V_CLEANONLY, 0, 0);
-		obj = vp->v_object;
-		if (obj != NULL) {
+		if (vp->v_object != NULL) {
 			start = trunc_page(ap->a_start);
 			end = round_page(ap->a_end);
-			VM_OBJECT_WLOCK(obj);
-			for (m = vm_page_find_least(obj, OFF_TO_IDX(start));
-			    m != NULL && m->pindex < OFF_TO_IDX(end);
-			    m = vm_page_next(m)) {
-				vm_page_lock(m);
-				vm_page_advise(m, MADV_DONTNEED);
-				vm_page_unlock(m);
-			}
-			VM_OBJECT_WUNLOCK(obj);
+			VM_OBJECT_WLOCK(vp->v_object);
+			vm_object_page_advise(vp->v_object, OFF_TO_IDX(start),
+			    OFF_TO_IDX(end), MADV_DONTNEED);
+			VM_OBJECT_WUNLOCK(vp->v_object);
 		}
 		VOP_UNLOCK(vp, 0);
 		break;
