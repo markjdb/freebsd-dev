@@ -1963,15 +1963,13 @@ skipmemq:
 }
 
 /*
- *	vm_object_page_cache:
+ *	vm_object_page_advise:
  *
- *	For the given object, attempt to move the specified clean
- *	pages to the cache queue.  If a page is wired for any reason,
- *	then it will not be changed.  Pages are specified by the given
- *	range ["start", "end").  As a special case, if "end" is zero,
- *	then the range extends from "start" to the end of the object.
- *	Any mappings to the specified pages are removed before the
- *	pages are moved to the cache queue.
+ *	For the given object, pass the specified advice through to pages
+ *	in the given range ["start", "end").  As a special case, if
+ *	"end" is zero, then the range extends from "start" to the end of
+ *	the object.  This operation currently has no effect when
+ *	"advice" is not MADV_FREE or MADV_DONTNEED.
  *
  *	This operation should only be performed on objects that
  *	contain non-fictitious, managed pages.
@@ -1979,24 +1977,23 @@ skipmemq:
  *	The object must be locked.
  */
 void
-vm_object_page_cache(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
+vm_object_page_advise(vm_object_t object, vm_pindex_t start, vm_pindex_t end,
+    int advice)
 {
 	struct mtx *mtx, *new_mtx;
 	vm_page_t p, next;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT((object->flags & (OBJ_FICTITIOUS | OBJ_UNMANAGED)) == 0,
-	    ("vm_object_page_cache: illegal object %p", object));
-	if (object->resident_page_count == 0)
-		return;
-	p = vm_page_find_least(object, start);
+	    ("vm_object_page_advise: illegal object %p", object));
 
 	/*
 	 * Here, the variable "p" is either (1) the page with the least pindex
 	 * greater than or equal to the parameter "start" or (2) NULL. 
 	 */
 	mtx = NULL;
-	for (; p != NULL && (p->pindex < end || end == 0); p = next) {
+	for (p = vm_page_find_least(object, start);
+	    p != NULL && (p->pindex < end || end == 0); p = next) {
 		next = TAILQ_NEXT(p, listq);
 
 		/*
@@ -2009,7 +2006,7 @@ vm_object_page_cache(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
 			mtx = new_mtx;
 			mtx_lock(mtx);
 		}
-		vm_page_try_to_cache(p);
+		vm_page_advise(p, advice);
 	}
 	if (mtx != NULL)
 		mtx_unlock(mtx);
