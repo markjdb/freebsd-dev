@@ -24,7 +24,7 @@ CFLAGS+=	-I${.CURDIR}/../../../sys/cddl/compat/opensolaris \
 
 LIBADD=	dtrace
 
-.if ${MK_TESTS} != "no" && ${MK_DTRACE_TESTS} != "no"
+.if ${MK_DTRACE_TESTS} != "no"
 SUBDIR+=	tests
 .endif
 
