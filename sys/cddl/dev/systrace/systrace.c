@@ -172,12 +172,15 @@ static void
 systrace_probe(struct syscall_args *sa, enum systrace_probe_t type, int retval)
 {
 	uint64_t uargs[nitems(sa->args)];
+	dtrace_id_t id;
 	int n_args, sysnum;
 
 	sysnum = sa->code;
 	memset(uargs, 0, sizeof(uargs));
 
 	if (type == SYSTRACE_ENTRY) {
+		id = sa->callp->sy_entry;
+
 		if (sa->callp->sy_systrace_args_func != NULL)
 			/*
 			 * Convert the syscall parameters using the registered
@@ -198,6 +201,8 @@ systrace_probe(struct syscall_args *sa, enum systrace_probe_t type, int retval)
 		 */
 		curthread->t_dtrace_systrace_args = uargs;
 	} else {
+		id = sa->callp->sy_return;
+
 		curthread->t_dtrace_systrace_args = NULL;
 		/* Set arg0 and arg1 as the return value of this syscall. */
 		uargs[0] = uargs[1] = retval;
