@@ -1987,14 +1987,13 @@ vm_object_page_advise(vm_object_t object, vm_pindex_t start, vm_pindex_t end,
 	KASSERT((object->flags & (OBJ_FICTITIOUS | OBJ_UNMANAGED)) == 0,
 	    ("vm_object_page_advise: illegal object %p", object));
 
-	/*
-	 * Here, the variable "p" is either (1) the page with the least pindex
-	 * greater than or equal to the parameter "start" or (2) NULL. 
-	 */
 	mtx = NULL;
 	for (p = vm_page_find_least(object, start);
 	    p != NULL && (p->pindex < end || end == 0); p = next) {
 		next = TAILQ_NEXT(p, listq);
+
+		if (p->hold_count != 0 || p->wire_count != 0)
+			continue;
 
 		/*
 		 * Avoid releasing and reacquiring the same page lock.
