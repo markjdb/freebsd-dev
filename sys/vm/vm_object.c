@@ -1992,9 +1992,6 @@ vm_object_page_advise(vm_object_t object, vm_pindex_t start, vm_pindex_t end,
 	    p != NULL && (p->pindex < end || end == 0); p = next) {
 		next = TAILQ_NEXT(p, listq);
 
-		if (p->hold_count != 0 || p->wire_count != 0)
-			continue;
-
 		/*
 		 * Avoid releasing and reacquiring the same page lock.
 		 */
@@ -2005,7 +2002,8 @@ vm_object_page_advise(vm_object_t object, vm_pindex_t start, vm_pindex_t end,
 			mtx = new_mtx;
 			mtx_lock(mtx);
 		}
-		vm_page_advise(p, advice);
+		if (p->hold_count == 0 && p->wire_count == 0)
+			vm_page_advise(p, advice);
 	}
 	if (mtx != NULL)
 		mtx_unlock(mtx);
