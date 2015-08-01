@@ -64,6 +64,7 @@ static bool g_verbose = false;
 
 struct probe_site {
 	const char	*symname;
+	const char	*funcname;
 	uint64_t	symndx;
 	uint64_t	offset;
 	SLIST_ENTRY(probe_site) next;
@@ -115,6 +116,7 @@ emit_site(struct sbuf *s, struct probe_site *site)
 	sbuf_printf(s, "static struct sdt_site sdts_%s%d = {\n", probe,
 	    uniquifier);
 	sbuf_printf(s, "\t.sdts_probe = &sdtp_%s,\n", probe);
+	sbuf_printf(s, "\t.sdts_func = \"%s\",\n", site->funcname);
 	sbuf_printf(s, "\t.sdts_offset = 0x%jx,\n", (uintptr_t)site->offset);
 	sbuf_printf(s, "};\n");
 	sbuf_printf(s, "DATA_SET(sdt_sites_set, sdts_%s%d);\n", probe,
@@ -169,13 +171,14 @@ get_section_name(Elf *e, Elf_Scn *scn)
  */
 static int
 process_reloc(Elf *e, GElf_Ehdr *ehdr, GElf_Shdr *symshdr, Elf_Scn *symscn,
-    uint8_t *target, GElf_Addr offset, GElf_Xword *info,
-    struct probe_list *plist)
+    uint8_t *target, GElf_Addr off, GElf_Xword *info, struct probe_list *plist)
 {
 	GElf_Sym funcsym;
 	struct probe_site *siteinfo;
 	GElf_Sym *sym;
-	const char *symname;
+	const char *funcname, *symname;
+	GElf_Addr opcoff;
+	uint64_t symndx;
 	uint8_t opc;
 
 	sym = symbol_by_index(symscn, GELF_R_SYM(*info));
@@ -207,24 +210,25 @@ process_reloc(Elf *e, GElf_Ehdr *ehdr, GElf_Shdr *symshdr, Elf_Scn *symscn,
 			/* We've presumably already processed this file. */
 			return (1);
 		}
-		opc = target[offset - 1];
+		opcoff = off - 1;
+		opc = target[opcoff];
 		if (opc != AMD64_CALL && opc != AMD64_JMP32)
 			errx(1, "unexpected opcode 0x%x for %s at offset 0x%lx",
-			    opc, symname, offset);
+			    opc, symname, off);
 
-		if (target[offset + 0] != 0 ||
-		    target[offset + 1] != 0 ||
-		    target[offset + 2] != 0 ||
-		    target[offset + 3] != 0)
+		if (target[off + 0] != 0 ||
+		    target[off + 1] != 0 ||
+		    target[off + 2] != 0 ||
+		    target[off + 3] != 0)
 			errx(1, "unexpected addr for %s at offset 0x%lx",
-			    symname, offset);
+			    symname, off);
 
 		/* Overwrite the call with NOPs. */
-		memset(&target[offset - 1], AMD64_NOP, 5);
+		memset(&target[opcoff], AMD64_NOP, 5);
 
 		/* If this was a tail call, we need to return instead. */
 		if (opc == AMD64_JMP32)
-			target[offset] = AMD64_RETQ;
+			target[opcoff] = AMD64_RETQ;
 
 		/* Make sure the linker ignores this relocation. */
 		*info &= ~GELF_R_TYPE(*info);
@@ -234,13 +238,20 @@ process_reloc(Elf *e, GElf_Ehdr *ehdr, GElf_Shdr *symshdr, Elf_Scn *symscn,
 		errx(1, "unhandled machine type 0x%x", ehdr->e_machine);
 	}
 
-	LOG("updated relocation for %s at 0x%lx", symname, offset - 1);
+	LOG("updated relocation for %s at 0x%lx", symname, opcoff);
+
+	if (symbol_by_offset(symscn, off, &funcsym, &symndx) != 1)
+		errx(1, "failed to look up function for probe %s", symname);
+	funcname = elf_strptr(e, symshdr->sh_link, funcsym.st_name);
+	if (funcname == NULL)
+		errx(1, "failed to look up function name for probe %s",
+		    symname);
 
 	siteinfo = xmalloc(sizeof(*siteinfo));
 	siteinfo->symname = symname;
-	if (symbol_by_offset(symscn, offset, &funcsym, &siteinfo->symndx) != 1)
-		errx(1, "failed to look up function for probe %s", symname);
-	siteinfo->offset = offset - funcsym.st_value;
+	siteinfo->funcname = funcname;
+	siteinfo->symndx = symndx;
+	siteinfo->offset = off - funcsym.st_value;
 
 	SLIST_INSERT_HEAD(plist, siteinfo, next);
 
@@ -327,9 +338,9 @@ process_reloc_section(Elf *e, GElf_Ehdr *ehdr, GElf_Shdr *shdr, Elf_Scn *scn,
 /*
  * Process an input object file. This function choreographs the work done by
  * sdtpatch: it first processes all the relocations against the DTrace probe
- * stubs and uses the information from those relocations to build up a list
- * (plist) of probe sites. Then it generates C code to define structs containing
- * probe site information.
+ * stubs and uses the information from those relocations over write probe call
+ * sites with NOPs, and to build up a list (plist) of probe sites. Then it
+ * generates C code to define structs containing probe site information.
  */
 static void
 process_obj(const char *obj, struct sbuf *s)
@@ -359,7 +370,10 @@ process_obj(const char *obj, struct sbuf *s)
 
 	SLIST_INIT(&plist);
 
-	/* Hijack relocations for DTrace probe stub calls. */
+	/*
+	 * Step 1:
+	 *   Hijack relocations for DTrace probe stub calls.
+	 */
 
 	for (scn = NULL; (scn = elf_nextscn(e, scn)) != NULL; ) {
 		if (gelf_getshdr(scn, &shdr) == NULL)
@@ -375,12 +389,25 @@ process_obj(const char *obj, struct sbuf *s)
 		return;
 	}
 
-	/* Now record all of the instance sites. */
+	/*
+	 * Step 2:
+	 *   Record all of the instance sites. Don't close the ELF file before
+	 *   we've logged everything we need, since we hold references into its
+	 *   string table.
+	 */
 
-	SLIST_FOREACH(site, &plist, next) {
-		LOG("emitting site definition for %s", site->symname);
+	while ((site = SLIST_FIRST(&plist)) != NULL) {
+		LOG("emitting site definition for %s:%s",
+		    site->funcname, site->symname);
+		SLIST_REMOVE_HEAD(&plist, next);
 		emit_site(s, site);
+		free(site);
 	}
+
+	/*
+	 * Step 3:
+	 *   Write out the modified ELF file.
+	 */
 
 	if (elf_update(e, ELF_C_WRITE) == -1)
 		errx(1, "elf_update: %s", ELF_ERR());

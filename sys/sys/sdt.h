@@ -426,6 +426,7 @@ struct sdt_provider {
 
 struct sdt_site {
 	struct sdt_probe *sdts_probe;
+	const char 	*sdts_func;
 	uint64_t	sdts_offset;
 };
 
