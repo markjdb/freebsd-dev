@@ -196,7 +196,6 @@ sdt_enable(void *arg __unused, dtrace_id_t id, void *parg)
 {
 	struct sdt_probe *probe = parg;
 
-	probe->id = id;
 	probe->sdtp_lf->nenabled++;
 	if (strcmp(probe->prov->name, "lockstat") == 0)
 		lockstat_enabled++;
@@ -211,7 +210,6 @@ sdt_disable(void *arg __unused, dtrace_id_t id, void *parg)
 
 	if (strcmp(probe->prov->name, "lockstat") == 0)
 		lockstat_enabled--;
-	probe->id = 0;
 	probe->sdtp_lf->nenabled--;
 }
 
@@ -226,7 +224,7 @@ sdt_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
 		return;
 	}
 
-	TAILQ_FOREACH(argtype, &probe->argtype_list, argtype_entry) {
+	SLIST_FOREACH(argtype, &probe->argtype_list, argtype_entry) {
 		if (desc->dtargd_ndx == argtype->ndx) {
 			desc->dtargd_mapping = desc->dtargd_ndx;
 			if (argtype->type == NULL) {
@@ -273,7 +271,7 @@ sdt_kld_load(void *arg __unused, struct linker_file *lf)
 		for (probe = p_begin; probe < p_end; probe++) {
 			(*probe)->sdtp_lf = lf;
 			sdt_create_probe(*probe);
-			TAILQ_INIT(&(*probe)->argtype_list);
+			SLIST_INIT(&(*probe)->argtype_list);
 		}
 	}
 
@@ -281,7 +279,7 @@ sdt_kld_load(void *arg __unused, struct linker_file *lf)
 	    NULL) == 0) {
 		for (argtype = a_begin; argtype < a_end; argtype++) {
 			(*argtype)->probe->n_args++;
-			TAILQ_INSERT_TAIL(&(*argtype)->probe->argtype_list,
+			SLIST_INSERT_HEAD(&(*argtype)->probe->argtype_list,
 			    *argtype, argtype_entry);
 		}
 	}

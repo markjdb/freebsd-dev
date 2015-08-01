@@ -152,8 +152,8 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #define	SDT_PROBE_DEFINE(prov, mod, func, name)				\
 	struct sdt_probe sdtp_##prov##_##mod##_##func##_##name[1] = {	\
-	    { sizeof(struct sdt_probe), sdt_provider_##prov,		\
-	    { NULL, NULL }, { NULL, NULL }, #mod, #func, #name, 0, 0, NULL } \
+	    { sdt_provider_##prov, { NULL },				\
+	      #mod, #func, #name, sizeof(struct sdt_probe), 0, NULL }	\
 	};								\
 	DATA_SET(sdt_probes_set, sdtp_##prov##_##mod##_##func##_##name);
 
@@ -165,7 +165,7 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 
 #define	SDT_PROBE_ARGTYPE(prov, mod, func, name, num, type, xtype)	\
 	static struct sdt_argtype sdta_##prov##_##mod##_##func##_##name##num[1] \
-	    = { { num, type, xtype, { NULL, NULL },			\
+	    = { { num, type, xtype, { NULL },				\
 	    sdtp_##prov##_##mod##_##func##_##name }			\
 	};								\
 	DATA_SET(sdt_argtypes_set, sdta_##prov##_##mod##_##func##_##name##num);
@@ -400,21 +400,19 @@ struct sdt_argtype {
 	int		ndx;		/* Argument index. */
 	const char	*type;		/* Argument type string. */
 	const char	*xtype;		/* Translated argument type. */
-	TAILQ_ENTRY(sdt_argtype) argtype_entry; /* Argument type list entry. */
+	SLIST_ENTRY(sdt_argtype) argtype_entry; /* Argument type list entry. */
 	struct sdt_probe *probe;	/* Ptr to the probe structure. */
 };
 
 struct sdt_probe {
-	int		version;	/* Set to sizeof(struct sdt_probe). */
-	struct sdt_provider *prov;	/* Ptr to the provider structure. */
-	TAILQ_ENTRY(sdt_probe) probe_entry; /* SDT probe list entry. */
-	TAILQ_HEAD(, sdt_argtype)	argtype_list;
+	struct sdt_provider *prov;
+	SLIST_HEAD(, sdt_argtype) argtype_list;
 	const char	*mod;
 	const char	*func;
 	const char	*name;
-	id_t		id;		/* DTrace probe ID. */
-	int		n_args;		/* Number of arguments. */
-	struct linker_file *sdtp_lf;	/* Module in which we're defined. */
+	int		version;
+	int		n_args;
+	struct linker_file *sdtp_lf;
 };
 
 struct sdt_provider {
