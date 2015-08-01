@@ -36,6 +36,7 @@ __FBSDID("$FreeBSD$");
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,7 +55,12 @@ __FBSDID("$FreeBSD$");
 #define	AMD64_CALL	0xe8
 #define	AMD64_JMP32	0xe9
 #define	AMD64_NOP	0x90
-#define	AMD64_RETQ	0xc3
+#define	AMD64_RET	0xc3
+
+#define	I386_CALL	0xe8
+#define	I386_JMP	0xe9
+#define	I386_NOP	0x90
+#define	I386_RET	0xc3
 
 /* XXX these should come from sdt.h. */
 static const char probe_prefix[] = "__dtrace_sdt_";
@@ -83,7 +89,7 @@ static void	process_reloc_section(Elf *, GElf_Ehdr *, GElf_Shdr *,
 static void	process_obj(const char *, struct sbuf *);
 static int	symbol_by_offset(Elf_Scn *scn, uint64_t offset, GElf_Sym *sym,
 		    uint64_t *ndx);
-static GElf_Sym	*symbol_by_index(Elf_Scn *, int);
+static void	symbol_by_index(Elf_Scn *, int, GElf_Sym *);
 static void	usage(void);
 static void	*xmalloc(size_t);
 
@@ -117,7 +123,7 @@ emit_site(struct sbuf *s, struct probe_site *site)
 	    uniquifier);
 	sbuf_printf(s, "\t.sdts_probe = &sdtp_%s,\n", probe);
 	sbuf_printf(s, "\t.sdts_func = \"%s\",\n", site->funcname);
-	sbuf_printf(s, "\t.sdts_offset = 0x%jx,\n", (uintptr_t)site->offset);
+	sbuf_printf(s, "\t.sdts_offset = 0x%jx,\n", (uintmax_t)site->offset);
 	sbuf_printf(s, "};\n");
 	sbuf_printf(s, "DATA_SET(sdt_sites_set, sdts_%s%d);\n", probe,
 	    uniquifier);
@@ -173,16 +179,17 @@ static int
 process_reloc(Elf *e, GElf_Ehdr *ehdr, GElf_Shdr *symshdr, Elf_Scn *symscn,
     uint8_t *target, GElf_Addr off, GElf_Xword *info, struct probe_list *plist)
 {
-	GElf_Sym funcsym;
+	GElf_Sym funcsym, sym;
 	struct probe_site *siteinfo;
-	GElf_Sym *sym;
 	const char *funcname, *symname;
+	GElf_Xword nulreloc;
 	GElf_Addr opcoff;
 	uint64_t symndx;
 	uint8_t opc;
 
-	sym = symbol_by_index(symscn, GELF_R_SYM(*info));
-	symname = elf_strptr(e, symshdr->sh_link, sym->st_name);
+	symbol_by_index(symscn, GELF_R_SYM(*info), &sym);
+
+	symname = elf_strptr(e, symshdr->sh_link, sym.st_name);
 	if (symname == NULL)
 		errx(1, "couldn't find symbol name for relocation");
 
@@ -191,54 +198,90 @@ process_reloc(Elf *e, GElf_Ehdr *ehdr, GElf_Shdr *symshdr, Elf_Scn *symscn,
 		return (1);
 
 	/* Sanity checks. */
-	if (GELF_ST_TYPE(sym->st_info) != STT_NOTYPE)
+	if (GELF_ST_TYPE(sym.st_info) != STT_NOTYPE)
 		errx(1, "unexpected symbol type %d for %s",
-		    GELF_ST_TYPE(sym->st_info), symname);
-	if (GELF_ST_BIND(sym->st_info) != STB_GLOBAL)
+		    GELF_ST_TYPE(sym.st_info), symname);
+	if (GELF_ST_BIND(sym.st_info) != STB_GLOBAL)
 		errx(1, "unexpected binding %d for %s",
-		    GELF_ST_BIND(sym->st_info), symname);
+		    GELF_ST_BIND(sym.st_info), symname);
 
 	switch (ehdr->e_machine) {
-	case EM_X86_64:
+	case EM_386:
+		nulreloc = R_386_NONE;
+
+		/* Sanity checks. */
+		if (GELF_R_TYPE(*info) != R_386_32 &&
+		    GELF_R_TYPE(*info) != R_386_PC32) {
+			if (GELF_R_TYPE(*info) != R_386_NONE)
+				errx(1,
+			    "unexpected relocation type 0x%jx against %s",
+				    (uintmax_t)GELF_R_TYPE(*info), symname);
+			/* We've presumably already processed this file. */
+			return (1);
+		}
+
+		opcoff = off - 1;
+		opc = target[opcoff];
+		if (opc != I386_CALL && opc != I386_JMP)
+			errx(1, "unexpected opcode 0x%x for %s at offset 0x%jx",
+			    opc, symname, (uintmax_t)off);
+		/* XXX why does the compiler emit these numbers? */
+		if (target[off + 0] != 0xfc ||
+		    target[off + 1] != 0xff ||
+		    target[off + 2] != 0xff ||
+		    target[off + 3] != 0xff)
+			errx(1, "unexpected addr for %s at offset 0x%jx",
+			    symname, (uintmax_t)off);
+
+		/* Overwrite the call site with NOPs. */
+		memset(&target[opcoff], I386_NOP, 5);
+
+		/* If this was a tail call, we need to return instead. */
+		if (opc == I386_JMP)
+			target[opcoff] = I386_RET;
+		break;
+	case EM_AMD64:
+		nulreloc = R_X86_64_NONE;
+
 		/* Sanity checks. */
 		if (GELF_R_TYPE(*info) != R_X86_64_64 &&
 		    GELF_R_TYPE(*info) != R_X86_64_PC32) {
 			if (GELF_R_TYPE(*info) != R_X86_64_NONE)
 				errx(1,
-			    "unexpected relocation type 0x%lx against %s",
-				    GELF_R_TYPE(*info), symname);
+			    "unexpected relocation type 0x%jx against %s",
+				    (uintmax_t)GELF_R_TYPE(*info), symname);
 			/* We've presumably already processed this file. */
 			return (1);
 		}
+
 		opcoff = off - 1;
 		opc = target[opcoff];
 		if (opc != AMD64_CALL && opc != AMD64_JMP32)
-			errx(1, "unexpected opcode 0x%x for %s at offset 0x%lx",
-			    opc, symname, off);
-
+			errx(1, "unexpected opcode 0x%x for %s at offset 0x%jx",
+			    opc, symname, (uintmax_t)off);
 		if (target[off + 0] != 0 ||
 		    target[off + 1] != 0 ||
 		    target[off + 2] != 0 ||
 		    target[off + 3] != 0)
-			errx(1, "unexpected addr for %s at offset 0x%lx",
-			    symname, off);
+			errx(1, "unexpected addr for %s at offset 0x%jx",
+			    symname, (uintmax_t)off);
 
-		/* Overwrite the call with NOPs. */
+		/* Overwrite the call site with NOPs. */
 		memset(&target[opcoff], AMD64_NOP, 5);
 
 		/* If this was a tail call, we need to return instead. */
 		if (opc == AMD64_JMP32)
-			target[opcoff] = AMD64_RETQ;
-
-		/* Make sure the linker ignores this relocation. */
-		*info &= ~GELF_R_TYPE(*info);
-		*info |= R_X86_64_NONE;
+			target[opcoff] = AMD64_RET;
 		break;
 	default:
 		errx(1, "unhandled machine type 0x%x", ehdr->e_machine);
 	}
 
-	LOG("updated relocation for %s at 0x%lx", symname, opcoff);
+	/* Make sure the linker ignores this relocation. */
+	*info &= ~GELF_R_TYPE(*info);
+	*info |= nulreloc;
+
+	LOG("updated relocation for %s at 0x%jx", symname, (uintmax_t)opcoff);
 
 	if (symbol_by_offset(symscn, off, &funcsym, &symndx) != 1)
 		errx(1, "failed to look up function for probe %s", symname);
@@ -445,19 +488,17 @@ symbol_by_offset(Elf_Scn *scn, uint64_t offset, GElf_Sym *sym, uint64_t *ndx)
 }
 
 /*
- * Retrieve the symbol at index ndx in the specified symbol table, with bounds
- * checking.
+ * Retrieve the symbol at index ndx in the specified symbol table.
  */
-static GElf_Sym *
-symbol_by_index(Elf_Scn *symtab, int ndx)
+static void
+symbol_by_index(Elf_Scn *symtab, int ndx, GElf_Sym *sym)
 {
 	Elf_Data *symdata;
 
 	if ((symdata = elf_getdata(symtab, NULL)) == NULL)
 		errx(1, "couldn't find symbol table data: %s", ELF_ERR());
-	if (symdata->d_size < (ndx + 1) * sizeof(GElf_Sym))
-		errx(1, "invalid symbol index %d", ndx);
-	return (&((GElf_Sym *)symdata->d_buf)[ndx]);
+	if (gelf_getsym(symdata, ndx, sym) == NULL)
+		errx(1, "couldn't read symbol at index %d: %s", ndx, ELF_ERR());
 }
 
 static void *
