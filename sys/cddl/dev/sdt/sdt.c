@@ -99,8 +99,8 @@ static dtrace_pops_t sdt_pops = {
 
 static TAILQ_HEAD(, sdt_provider) sdt_prov_list;
 
-eventhandler_tag	sdt_kld_load_tag;
-eventhandler_tag	sdt_kld_unload_try_tag;
+static eventhandler_tag sdt_kld_load_tag;
+static eventhandler_tag sdt_kld_unload_try_tag;
 
 static void
 sdt_create_provider(struct sdt_provider *prov)
@@ -295,8 +295,7 @@ sdt_kld_unload_try(void *arg __unused, struct linker_file *lf, int *error)
 	if (*error != 0)
 		/* We already have an error, so don't do anything. */
 		return;
-	else if (linker_file_lookup_set(lf, "sdt_providers_set", &begin, &end,
-	    NULL))
+	if (linker_file_lookup_set(lf, "sdt_providers_set", &begin, &end, NULL))
 		/* No DTrace providers are declared in this file. */
 		return;
 
@@ -405,4 +404,3 @@ sdt_modevent(module_t mod __unused, int type, void *data __unused)
 DEV_MODULE(sdt, sdt_modevent, NULL);
 MODULE_VERSION(sdt, 1);
 MODULE_DEPEND(sdt, dtrace, 1, 1, 1);
-MODULE_DEPEND(sdt, opensolaris, 1, 1, 1);
