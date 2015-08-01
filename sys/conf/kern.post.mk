@@ -187,7 +187,7 @@ assym.s: $S/kern/genassym.sh genassym.o
 genassym.o: $S/$M/$M/genassym.c
 	${CC} -c ${CFLAGS:N-fno-common} $S/$M/$M/genassym.c
 
-sdtstubs.c: ${SYSTEM_OBJS:Nsdtstubs.o}
+sdtstubs.c: ${SYSTEM_OBJS:M*.o:Nsdtstubs.o}
 	sdtpatch -o ${.TARGET} ${.ALLSRC}
 
 ${SYSTEM_OBJS} genassym.o vers.o: opt_global.h
