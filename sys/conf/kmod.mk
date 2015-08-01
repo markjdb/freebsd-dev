@@ -162,6 +162,8 @@ OBJS+=	${_firmw:C/\:.*$/.fwo/}
 .for _o in ${KERN_OPTS}
 SRCS+=${SRCS.${_o}}
 .endfor
+# XXX use KERN_OPTS?
+SRCS+= sdtstubs.c
 
 OBJS+=	${SRCS:N*.h:R:S/$/.o/g}
 
@@ -335,6 +337,9 @@ ${_src}:
 
 # Respect configuration-specific C flags.
 CFLAGS+=	${CONF_CFLAGS}
+
+sdtstubs.c: ${OBJS:M*.o:Nsdtstubs.o}
+	sdtpatch -o ${.TARGET} ${.ALLSRC}
 
 .if !empty(SRCS:Mvnode_if.c)
 CLEANFILES+=	vnode_if.c
