@@ -256,33 +256,38 @@ sdt_destroy(void *arg, dtrace_id_t id, void *parg)
 static void
 sdt_kld_load(void *arg __unused, struct linker_file *lf)
 {
-	struct sdt_provider **prov, **begin, **end;
-	struct sdt_probe **probe, **p_begin, **p_end;
-	struct sdt_argtype **argtype, **a_begin, **a_end;
+	struct sdt_provider **provp;
+	struct sdt_probe **probep, *probe;
+	struct sdt_argtype **argtypep;
+	int error, pcount;
 
-	if (linker_file_lookup_set(lf, "sdt_providers_set", &begin, &end,
-	    NULL) == 0) {
-		for (prov = begin; prov < end; prov++)
-			sdt_create_provider(*prov);
+#define	SDT_SET_FOREACH(i, set)						\
+	__typeof(i) i##_begin, i##_end;					\
+	error = linker_file_lookup_set(lf, set, &i##_begin, &i##_end, NULL); \
+	if (error == 0)							\
+		for (i = i##_begin; i < i##_end; i++)
+
+	SDT_SET_FOREACH(provp, "sdt_providers_set")
+		sdt_create_provider(*provp);
+
+	pcount = 0;
+	SDT_SET_FOREACH(probep, "sdt_probes_set") {
+		(*probep)->sdtp_lf = lf;
+		sdt_create_probe(*probep);
+		SLIST_INIT(&(*probep)->argtype_list);
+		pcount++;
+	}
+	/* No probes, so we're done. */
+	if (pcount == 0)
+		return;
+
+	SDT_SET_FOREACH(argtypep, "sdt_argtypes_set") {
+		(*argtypep)->probe->n_args++;
+		SLIST_INSERT_HEAD(&(*argtypep)->probe->argtype_list, *argtypep,
+		    argtype_entry);
 	}
 
-	if (linker_file_lookup_set(lf, "sdt_probes_set", &p_begin, &p_end,
-	    NULL) == 0) {
-		for (probe = p_begin; probe < p_end; probe++) {
-			(*probe)->sdtp_lf = lf;
-			sdt_create_probe(*probe);
-			SLIST_INIT(&(*probe)->argtype_list);
-		}
-	}
-
-	if (linker_file_lookup_set(lf, "sdt_argtypes_set", &a_begin, &a_end,
-	    NULL) == 0) {
-		for (argtype = a_begin; argtype < a_end; argtype++) {
-			(*argtype)->probe->n_args++;
-			SLIST_INSERT_HEAD(&(*argtype)->probe->argtype_list,
-			    *argtype, argtype_entry);
-		}
-	}
+#undef SDT_SET_FOREACH
 }
 
 static void
