@@ -140,10 +140,6 @@ sdt_create_probe(struct sdt_probe *probe)
 	char *to;
 	size_t len;
 
-	/* We will create probes using probe sites. */
-	if (strlen(probe->func) == 0)
-		return;
-
 	TAILQ_FOREACH(prov, &sdt_prov_list, prov_entry)
 		if (strcmp(prov->name, probe->prov->name) == 0)
 			break;
@@ -275,10 +271,12 @@ sdt_kld_load(void *arg __unused, struct linker_file *lf)
 
 	pcount = 0;
 	SDT_SET_FOREACH(probep, "sdt_probes_set") {
-		(*probep)->sdtp_lf = lf;
-		sdt_create_probe(*probep);
-		SLIST_INIT(&(*probep)->argtype_list);
 		pcount++;
+		(*probep)->sdtp_lf = lf;
+		SLIST_INIT(&(*probep)->argtype_list);
+
+		if (strlen((*probep)->func) != 0)
+			sdt_create_probe(*probep);
 	}
 	/* No probes, so we're done. */
 	if (pcount == 0)
