@@ -235,8 +235,10 @@ sdt_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
 			if (argtype->xtype != NULL)
 				strlcpy(desc->dtargd_xlate, argtype->xtype,
 				    sizeof(desc->dtargd_xlate));
+			break;
 		}
 	}
+	KASSERT(argtype != NULL, ("didn't find arg type %d", desc->dtargd_ndx));
 }
 
 static void
@@ -250,6 +252,8 @@ sdt_destroy(void *arg, dtrace_id_t id, void *parg)
  * register new providers when modules are loaded. The DTrace framework
  * explicitly disallows calling into the framework from the provide_module
  * provider method, so we cannot do this there.
+ *
+ * This handler is called with the exclusive linker lock held.
  */
 static void
 sdt_kld_load(void *arg __unused, struct linker_file *lf)
