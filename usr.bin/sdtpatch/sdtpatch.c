@@ -71,7 +71,6 @@ static bool g_verbose = false;
 struct probe_site {
 	const char	*symname;
 	const char	*funcname;
-	uint64_t	symndx;
 	uint64_t	offset;
 	SLIST_ENTRY(probe_site) next;
 };
@@ -293,7 +292,6 @@ process_reloc(Elf *e, GElf_Ehdr *ehdr, GElf_Shdr *symshdr, Elf_Scn *symscn,
 	siteinfo = xmalloc(sizeof(*siteinfo));
 	siteinfo->symname = symname;
 	siteinfo->funcname = funcname;
-	siteinfo->symndx = symndx;
 	siteinfo->offset = off - funcsym.st_value;
 
 	SLIST_INSERT_HEAD(plist, siteinfo, next);
@@ -568,6 +566,7 @@ main(int argc, char **argv)
 
 	if (sbuf_finish(&s) != 0)
 		errx(1, "sbuf_finish failed");
+	sbuf_delete(&s);
 
 	if (outfile != NULL)
 		close(fd);
