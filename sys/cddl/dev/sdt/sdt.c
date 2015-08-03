@@ -19,9 +19,6 @@
  * CDDL HEADER END
  *
  * Portions Copyright 2006-2008 John Birrell jb@freebsd.org
- *
- * $FreeBSD$
- *
  */
 
 /*
@@ -40,6 +37,8 @@
  */
 
 #include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 
@@ -141,10 +140,13 @@ sdt_create_probe(struct sdt_probe *probe)
 	char *to;
 	size_t len;
 
+	/* We will create probes using probe sites. */
+	if (strlen(probe->func) == 0)
+		return;
+
 	TAILQ_FOREACH(prov, &sdt_prov_list, prov_entry)
 		if (strcmp(prov->name, probe->prov->name) == 0)
 			break;
-
 	KASSERT(prov != NULL, ("probe defined without a provider"));
 
 	/* If no module name was specified, use the module filename. */
@@ -178,7 +180,7 @@ sdt_create_probe(struct sdt_probe *probe)
 	if (dtrace_probe_lookup(prov->id, mod, func, name) != DTRACE_IDNONE)
 		return;
 
-	(void)dtrace_probe_create(prov->id, mod, func, name, 1, probe);
+	probe->id = dtrace_probe_create(prov->id, mod, func, name, 1, probe);
 }
 
 /*
@@ -259,6 +261,7 @@ sdt_kld_load(void *arg __unused, struct linker_file *lf)
 	struct sdt_provider **provp;
 	struct sdt_probe **probep, *probe;
 	struct sdt_argtype **argtypep;
+	struct sdt_site **sitep;
 	int error, pcount;
 
 #define	SDT_SET_FOREACH(i, set)						\
@@ -287,6 +290,19 @@ sdt_kld_load(void *arg __unused, struct linker_file *lf)
 		    argtype_entry);
 	}
 
+	SDT_SET_FOREACH(sitep, "sdt_sites_set") {
+		if (strlen((*sitep)->sdts_probe->func) != 0)
+			continue;
+		/* XXX when do we free this? */
+		probe = malloc(sizeof(*probe), M_SDT, M_WAITOK);
+		memcpy(probe, (*sitep)->sdts_probe, sizeof(*probe));
+
+		probe->func = (*sitep)->sdts_func;
+		probe->sdtp_lf = lf;
+		sdt_create_probe(probe);
+		(*sitep)->sdts_probe = probe;
+	}
+
 #undef SDT_SET_FOREACH
 }
 
@@ -307,21 +323,22 @@ sdt_kld_unload_try(void *arg __unused, struct linker_file *lf, int *error)
 	 * unregister any that aren't declared in another loaded file.
 	 */
 	for (curr = begin; curr < end; curr++) {
-		TAILQ_FOREACH_SAFE(prov, &sdt_prov_list, prov_entry, tmp) {
-			if (strcmp(prov->name, (*curr)->name) != 0)
-				continue;
+		TAILQ_FOREACH_SAFE(prov, &sdt_prov_list, prov_entry, tmp)
+			if (strcmp(prov->name, (*curr)->name) == 0)
+				break;
 
-			if (prov->sdt_refs == 1) {
-				if (dtrace_unregister(prov->id) != 0) {
-					*error = 1;
-					return;
-				}
-				TAILQ_REMOVE(&sdt_prov_list, prov, prov_entry);
-				free(prov->name, M_SDT);
-				free(prov, M_SDT);
-			} else
-				prov->sdt_refs--;
-			break;
+		KASSERT(prov != NULL,
+		    ("%s provider not registered", (*curr)->name));
+		if (prov->sdt_refs == 1) {
+			if (dtrace_unregister(prov->id) != 0) {
+				*error = 1;
+				return;
+			}
+			TAILQ_REMOVE(&sdt_prov_list, prov, prov_entry);
+			free(prov->name, M_SDT);
+			free(prov, M_SDT);
+		} else {
+			prov->sdt_refs--;
 		}
 	}
 }
@@ -331,19 +348,14 @@ sdt_linker_file_cb(linker_file_t lf, void *arg __unused)
 {
 
 	sdt_kld_load(NULL, lf);
-
 	return (0);
 }
 
 static void
-sdt_load()
+sdt_load(void)
 {
 
 	TAILQ_INIT(&sdt_prov_list);
-
-#if 0
-	sdt_probe_func = dtrace_probe;
-#endif
 
 	sdt_kld_load_tag = EVENTHANDLER_REGISTER(kld_load, sdt_kld_load, NULL,
 	    EVENTHANDLER_PRI_ANY);
@@ -355,17 +367,13 @@ sdt_load()
 }
 
 static int
-sdt_unload()
+sdt_unload(void)
 {
 	struct sdt_provider *prov, *tmp;
 	int ret;
 
 	EVENTHANDLER_DEREGISTER(kld_load, sdt_kld_load_tag);
 	EVENTHANDLER_DEREGISTER(kld_unload_try, sdt_kld_unload_try_tag);
-
-#if 0
-	sdt_probe_func = sdt_probe_stub;
-#endif
 
 	TAILQ_FOREACH_SAFE(prov, &sdt_prov_list, prov_entry, tmp) {
 		ret = dtrace_unregister(prov->id);
@@ -375,15 +383,15 @@ sdt_unload()
 		free(prov->name, M_SDT);
 		free(prov, M_SDT);
 	}
-
 	return (0);
 }
 
 static int
 sdt_modevent(module_t mod __unused, int type, void *data __unused)
 {
-	int error = 0;
+	int error;
 
+	error = 0;
 	switch (type) {
 	case MOD_LOAD:
 		sdt_load();
@@ -393,14 +401,10 @@ sdt_modevent(module_t mod __unused, int type, void *data __unused)
 		error = sdt_unload();
 		break;
 
-	case MOD_SHUTDOWN:
-		break;
-
 	default:
 		error = EOPNOTSUPP;
 		break;
 	}
-
 	return (error);
 }
 

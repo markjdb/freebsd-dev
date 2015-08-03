@@ -153,7 +153,8 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 #define	SDT_PROBE_DEFINE(prov, mod, func, name)				\
 	struct sdt_probe sdtp_##prov##_##mod##_##func##_##name[1] = {	\
 	    { sdt_provider_##prov, { NULL },				\
-	      #mod, #func, #name, sizeof(struct sdt_probe), 0, NULL }	\
+	      #mod, #func, #name, 0, sizeof(struct sdt_probe), 0,	\
+	      NULL }							\
 	};								\
 	DATA_SET(sdt_probes_set, sdtp_##prov##_##mod##_##func##_##name);
 
@@ -410,6 +411,7 @@ struct sdt_probe {
 	const char	*mod;
 	const char	*func;
 	const char	*name;
+	uintptr_t	id;
 	int		version;
 	int		n_args;
 	struct linker_file *sdtp_lf;
@@ -424,7 +426,10 @@ struct sdt_provider {
 
 struct sdt_site {
 	struct sdt_probe *sdts_probe;
-	const char 	*sdts_func;
+	union {
+		const char *sdts_func;
+		SLIST_ENTRY(sdt_site) sdts_next;
+	};
 	uint32_t	sdts_offset;
 };
 
