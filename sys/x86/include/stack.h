@@ -33,6 +33,15 @@
  * Stack trace.
  */
 
+#ifdef __i386__
+struct i386_frame {
+	struct i386_frame	*f_frame;
+	int			f_retaddr;
+	int			f_arg0;
+};
+#endif
+
+#ifdef __amd64__
 struct amd64_frame {
 	struct amd64_frame	*f_frame;
 	long			f_retaddr;
@@ -40,13 +49,10 @@ struct amd64_frame {
 };
 
 struct i386_frame {
-	struct i386_frame	*f_frame;
-	long			f_retaddr;
-	long			f_arg0;
+	uint32_t		f_frame;
+	uint32_t		f_retaddr;
+	uint32_t		f_arg0;
 };
-
-#ifdef _KERNEL
-void	stack_nmi_capture(struct trapframe *);
-#endif
+#endif /* __amd64__ */
 
 #endif /* !_X86_STACK_H */

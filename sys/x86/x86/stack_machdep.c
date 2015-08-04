@@ -41,15 +41,15 @@ __FBSDID("$FreeBSD$");
 #include <vm/pmap.h>
 
 #ifdef __i386__
-#define	TF_IP(tf)	((tf)->tf_eip)
-#define	TF_FP(tf)	((tf)->tf_ebp)
 #define	PCB_FP(pcb)	((pcb)->pcb_ebp)
+#define	TF_FP(tf)	((tf)->tf_ebp)
+#define	TF_PC(tf)	((tf)->tf_eip)
 
 typedef struct i386_frame *x86_frame_t;
 #else
-#define	TF_IP(tf)	((tf)->tf_rip)
-#define	TF_FP(tf)	((tf)->tf_rbp)
 #define	PCB_FP(pcb)	((pcb)->pcb_rbp)
+#define	TF_FP(tf)	((tf)->tf_rbp)
+#define	TF_PC(tf)	((tf)->tf_rip)
 
 typedef struct amd64_frame *x86_frame_t;
 #endif
