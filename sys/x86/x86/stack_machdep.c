@@ -155,9 +155,9 @@ stack_save(struct stack *st)
 	register_t fp;
 
 #ifdef __i386__
-	__asm __volatile("movl %%ebp,%0" : "=r" (fp));
+	__asm __volatile("movl %%ebp,%0" : "=g" (fp));
 #else
-	__asm __volatile("movq %%rbp,%0" : "=r" (fp));
+	__asm __volatile("movq %%rbp,%0" : "=g" (fp));
 #endif
 	stack_capture(curthread, st, fp);
 }
