@@ -104,6 +104,9 @@ cloudabi_sys_fd_create1(struct thread *td,
 	};
 
 	switch (uap->type) {
+	case CLOUDABI_FILETYPE_POLL:
+		cap_rights_init(&fcaps.fc_rights, CAP_FSTAT, CAP_KQUEUE);
+		return (kern_kqueue(td, 0, &fcaps));
 	case CLOUDABI_FILETYPE_SHARED_MEMORY:
 		cap_rights_init(&fcaps.fc_rights, CAP_FSTAT, CAP_FTRUNCATE,
 		    CAP_MMAP_RWX);
@@ -287,7 +290,7 @@ cloudabi_convert_filetype(const struct file *fp)
 }
 
 /* Removes rights that conflict with the file descriptor type. */
-static void
+void
 cloudabi_remove_conflicting_rights(cloudabi_filetype_t filetype,
     cloudabi_rights_t *base, cloudabi_rights_t *inheriting)
 {
@@ -496,13 +499,49 @@ cloudabi_sys_fd_stat_get(struct thread *td,
 	return (copyout(&fsb, (void *)uap->buf, sizeof(fsb)));
 }
 
+/* Converts CloudABI rights to a set of Capsicum capabilities. */
+int
+cloudabi_convert_rights(cloudabi_rights_t in, cap_rights_t *out)
+{
+
+	cap_rights_init(out);
+#define MAPPING(cloudabi, ...) do {			\
+	if (in & (cloudabi)) {				\
+		cap_rights_set(out, ##__VA_ARGS__);	\
+		in &= ~(cloudabi);			\
+	}						\
+} while (0);
+	RIGHTS_MAPPINGS
+#undef MAPPING
+	if (in != 0)
+		return (ENOTCAPABLE);
+	return (0);
+}
+
 int
 cloudabi_sys_fd_stat_put(struct thread *td,
     struct cloudabi_sys_fd_stat_put_args *uap)
 {
+	cloudabi_fdstat_t fsb;
+	int error, oflags;
 
-	/* Not implemented. */
-	return (ENOSYS);
+	error = copyin(uap->buf, &fsb, sizeof(fsb));
+	if (error != 0)
+		return (error);
+
+	if (uap->flags == CLOUDABI_FDSTAT_FLAGS) {
+		/* Convert flags. */
+		oflags = 0;
+		if (fsb.fs_flags & CLOUDABI_FDFLAG_APPEND)
+			oflags |= O_APPEND;
+		if (fsb.fs_flags & CLOUDABI_FDFLAG_NONBLOCK)
+			oflags |= O_NONBLOCK;
+		if (fsb.fs_flags & (CLOUDABI_FDFLAG_SYNC |
+		    CLOUDABI_FDFLAG_DSYNC | CLOUDABI_FDFLAG_RSYNC))
+			oflags |= O_SYNC;
+		return (kern_fcntl(td, uap->fd, F_SETFL, oflags));
+	}
+	return (EINVAL);
 }
 
 int
