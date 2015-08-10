@@ -277,8 +277,7 @@ process_reloc(Elf *e, GElf_Ehdr *ehdr, GElf_Shdr *symshdr, Elf_Scn *symscn,
 	}
 
 	/* Make sure the linker ignores this relocation. */
-	*info &= ~GELF_R_TYPE(*info);
-	*info |= nulreloc;
+	*info = GELF_R_INFO(0UL, nulreloc);
 
 	LOG("updated relocation for %s at 0x%jx", symname, (uintmax_t)opcoff);
 
