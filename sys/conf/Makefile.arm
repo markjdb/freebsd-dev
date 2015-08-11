@@ -59,7 +59,7 @@ genassym.o: bus_if.h device_if.h
 SYSTEM_LD_ = ${LD} -m ${LD_EMULATION} -Bdynamic -T ldscript.$M.noheader \
 	${_LDFLAGS} --no-warn-mismatch --warn-common -export-dynamic \
 	-dynamic-linker /red/herring \
-	-o ${FULLKERNEL}.noheader -X ${SYSTEM_OBJS} vers.o hack.pico
+	-o ${FULLKERNEL}.noheader -X ${FULLKERNEL}.reloc vers.o hack.pico
 SYSTEM_LD_TAIL +=;sed s/" + SIZEOF_HEADERS"// ldscript.$M\
 		>ldscript.$M.noheader; \
 		${SYSTEM_LD_}; \
