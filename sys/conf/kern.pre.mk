@@ -183,9 +183,10 @@ MD_ROOT_SIZE_CONFIGURED!=	grep MD_ROOT_SIZE opt_md.h || true ; echo
 SYSTEM_OBJS+= embedfs_${MFS_IMAGE:T:R}.o
 .endif
 .endif
+SYSTEM_LD_HEAD= @${LD} --relocatable -o ${.TARGET}.reloc ${SYSTEM_OBJS}
 SYSTEM_LD= @${LD} -Bdynamic -T ${LDSCRIPT} ${_LDFLAGS} --no-warn-mismatch \
 	--warn-common --export-dynamic --dynamic-linker /red/herring \
-	-o ${.TARGET} -X ${SYSTEM_OBJS} vers.o hack.So
+	-o ${.TARGET} -X ${.TARGET}.reloc vers.o hack.So
 SYSTEM_LD_TAIL= @${OBJCOPY} --strip-symbol gcc2_compiled. ${.TARGET} ; \
 	${SIZE} ${.TARGET} ; chmod 755 ${.TARGET}
 SYSTEM_DEP+= ${LDSCRIPT}
