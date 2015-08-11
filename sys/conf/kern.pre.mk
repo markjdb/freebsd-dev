@@ -173,10 +173,9 @@ OFED_C=		${OFED_C_NOIMP} ${.IMPSRC}
 
 GEN_CFILES= $S/$M/$M/genassym.c ${MFILES:T:S/.m$/.c/}
 SYSTEM_CFILES= config.c env.c hints.c vnode_if.c
-SYSTEM_DEP= Makefile ${SYSTEM_OBJS}
+SYSTEM_DEP= Makefile ${SYSTEM_OBJS} hack.pico
 SYSTEM_OBJS= locore.o ${MDOBJS} ${OBJS}
 SYSTEM_OBJS+= ${SYSTEM_CFILES:.c=.o}
-SYSTEM_OBJS+= hack.pico
 
 MD_ROOT_SIZE_CONFIGURED!=	grep MD_ROOT_SIZE opt_md.h || true ; echo
 .if ${MFS_IMAGE:Uno} != "no"
@@ -187,7 +186,7 @@ SYSTEM_OBJS+= embedfs_${MFS_IMAGE:T:R}.o
 SYSTEM_LD= @${LD} -m ${LD_EMULATION} -Bdynamic -T ${LDSCRIPT} ${_LDFLAGS} \
 	--no-warn-mismatch --warn-common --export-dynamic \
 	--dynamic-linker /red/herring \
-	-o ${.TARGET} -X ${SYSTEM_OBJS} vers.o
+	-o ${.TARGET} -X ${SYSTEM_OBJS} vers.o hack.pico
 SYSTEM_LD_TAIL= @${OBJCOPY} --strip-symbol gcc2_compiled. ${.TARGET} ; \
 	${SIZE} ${.TARGET} ; chmod 755 ${.TARGET}
 SYSTEM_DEP+= ${LDSCRIPT}
