@@ -124,6 +124,7 @@ gdbinit:
 ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 	@rm -f ${.TARGET}
 	@echo linking ${.TARGET}
+	${SYSTEM_LD_HEAD}
 	${SYSTEM_LD}
 .if ${MK_CTF} != "no"
 	@echo ${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ...
