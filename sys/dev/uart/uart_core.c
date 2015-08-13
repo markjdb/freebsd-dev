@@ -78,8 +78,7 @@ static inline int
 uart_pps_signal(int pps_mode)
 {
 
-	switch(pps_mode)
-	{
+	switch(pps_mode) {
 	case PPS_MODE_CTS:
 		return (SER_CTS);
 	case PPS_MODE_DCD:
@@ -91,8 +90,7 @@ static inline int
 uart_pps_mode_valid(int pps_mode)
 {
 
-	switch(pps_mode)
-	{
+	switch(pps_mode) {
 	case PPS_MODE_DISABLED:
 	case PPS_MODE_CTS:
 	case PPS_MODE_DCD:
@@ -104,8 +102,7 @@ uart_pps_mode_valid(int pps_mode)
 static const char *
 uart_pps_mode_name(int pps_mode)
 {
-	switch(pps_mode)
-	{
+	switch(pps_mode) {
 	case PPS_MODE_DISABLED:
 		return ("disabled");
 	case PPS_MODE_CTS:
@@ -477,14 +474,13 @@ uart_bus_probe(device_t dev, int regshft, int rclk, int rid, int chan)
 	 */
 	sc->sc_rrid = rid;
 	sc->sc_rtype = SYS_RES_IOPORT;
-	sc->sc_rres = bus_alloc_resource(dev, sc->sc_rtype, &sc->sc_rrid,
-	    0, ~0, uart_getrange(sc->sc_class), RF_ACTIVE);
+	sc->sc_rres = bus_alloc_resource_any(dev, sc->sc_rtype, &sc->sc_rrid,
+	    RF_ACTIVE);
 	if (sc->sc_rres == NULL) {
 		sc->sc_rrid = rid;
 		sc->sc_rtype = SYS_RES_MEMORY;
-		sc->sc_rres = bus_alloc_resource(dev, sc->sc_rtype,
-		    &sc->sc_rrid, 0, ~0, uart_getrange(sc->sc_class),
-		    RF_ACTIVE);
+		sc->sc_rres = bus_alloc_resource_any(dev, sc->sc_rtype,
+		    &sc->sc_rrid, RF_ACTIVE);
 		if (sc->sc_rres == NULL)
 			return (ENXIO);
 	}
@@ -559,8 +555,8 @@ uart_bus_attach(device_t dev)
 	 * Re-allocate. We expect that the softc contains the information
 	 * collected by uart_bus_probe() intact.
 	 */
-	sc->sc_rres = bus_alloc_resource(dev, sc->sc_rtype, &sc->sc_rrid,
-	    0, ~0, uart_getrange(sc->sc_class), RF_ACTIVE);
+	sc->sc_rres = bus_alloc_resource_any(dev, sc->sc_rtype, &sc->sc_rrid,
+	    RF_ACTIVE);
 	if (sc->sc_rres == NULL) {
 		mtx_destroy(&sc->sc_hwmtx_s);
 		return (ENXIO);
