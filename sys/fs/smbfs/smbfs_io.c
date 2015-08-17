@@ -481,7 +481,7 @@ smbfs_getpages(ap)
 
 	kva = (vm_offset_t) bp->b_data;
 	pmap_qenter(kva, pages, npages);
-	PCPU_INC(cnt.v_vnodein);
+	VM_STATS_PCPU_INC(vnodein);
 	PCPU_ADD(cnt.v_vnodepgsin, npages);
 
 	iov.iov_base = (caddr_t) kva;
@@ -611,7 +611,7 @@ smbfs_putpages(ap)
 
 	kva = (vm_offset_t) bp->b_data;
 	pmap_qenter(kva, pages, npages);
-	PCPU_INC(cnt.v_vnodeout);
+	VM_STATS_PCPU_INC(vnodeout);
 	PCPU_ADD(cnt.v_vnodepgsout, count);
 
 	iov.iov_base = (caddr_t) kva;

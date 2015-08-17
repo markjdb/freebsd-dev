@@ -333,7 +333,7 @@ abort_handler(struct trapframe *tf, int prefetch)
 	 *
 	 */
 
-	PCPU_INC(cnt.v_trap);
+	VM_STATS_PCPU_INC(trap);
 
 #ifdef KDB
 	if (kdb_active) {

@@ -1193,7 +1193,7 @@ swap_pager_getpages(vm_object_t object, vm_page_t *m, int count, int reqpage)
 	}
 	bp->b_npages = j - i;
 
-	PCPU_INC(cnt.v_swapin);
+	VM_STATS_PCPU_INC(swapin);
 	PCPU_ADD(cnt.v_swappgsin, bp->b_npages);
 
 	/*
@@ -1225,7 +1225,7 @@ swap_pager_getpages(vm_object_t object, vm_page_t *m, int count, int reqpage)
 	VM_OBJECT_WLOCK(object);
 	while ((mreq->oflags & VPO_SWAPINPROG) != 0) {
 		mreq->oflags |= VPO_SWAPSLEEP;
-		PCPU_INC(cnt.v_intrans);
+		VM_STATS_PCPU_INC(intrans);
 		if (VM_OBJECT_SLEEP(object, &object->paging_in_progress, PSWP,
 		    "swread", hz * 20)) {
 			printf(
@@ -1417,7 +1417,7 @@ swap_pager_putpages(vm_object_t object, vm_page_t *m, int count,
 		bp->b_dirtyoff = 0;
 		bp->b_dirtyend = bp->b_bcount;
 
-		PCPU_INC(cnt.v_swapout);
+		VM_STATS_PCPU_INC(swapout);
 		PCPU_ADD(cnt.v_swappgsout, bp->b_npages);
 
 		/*

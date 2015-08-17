@@ -204,7 +204,7 @@ undefinedinstruction(struct trapframe *frame)
 	if (__predict_true(frame->tf_spsr & PSR_F) == 0)
 		enable_interrupts(PSR_F);
 
-	PCPU_INC(cnt.v_trap);
+	VM_STATS_PCPU_INC(trap);
 
 #if __ARM_ARCH >= 7
 	if ((frame->tf_spsr & PSR_T) != 0)

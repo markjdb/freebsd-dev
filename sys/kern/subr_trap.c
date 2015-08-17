@@ -218,7 +218,7 @@ ast(struct trapframe *framep)
 	td->td_flags &= ~(TDF_ASTPENDING | TDF_NEEDSIGCHK | TDF_NEEDSUSPCHK |
 	    TDF_NEEDRESCHED | TDF_ALRMPEND | TDF_PROFPEND | TDF_MACPEND);
 	thread_unlock(td);
-	PCPU_INC(cnt.v_trap);
+	VM_STATS_PCPU_INC(trap);
 
 	if (td->td_cowgen != p->p_cowgen)
 		thread_cow_update(td);

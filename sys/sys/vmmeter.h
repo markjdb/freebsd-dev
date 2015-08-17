@@ -190,6 +190,9 @@ vm_paging_needed(void)
         vm_pageout_wakeup_thresh);
 }
 
+#define	VM_STATS_INC(stat)	(vm_cnt. v_ ## stat++ )
+#define	VM_STATS_PCPU_INC(stat)	PCPU_INC(cnt. v_ ## stat )
+
 #endif
 
 /* systemwide totals computed every five seconds */

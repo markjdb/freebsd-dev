@@ -247,7 +247,7 @@ intr_execute_handlers(struct intsrc *isrc, struct trapframe *frame)
 	 * processed too.
 	 */
 	(*isrc->is_count)++;
-	PCPU_INC(cnt.v_intr);
+	VM_STATS_PCPU_INC(intr);
 
 	ie = isrc->is_event;
 

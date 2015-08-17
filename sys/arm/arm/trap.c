@@ -208,7 +208,7 @@ abort_handler(struct trapframe *tf, int type)
 	td = curthread;
 	p = td->td_proc;
 
-	PCPU_INC(cnt.v_trap);
+	VM_STATS_PCPU_INC(trap);
 	/* Data abort came from user mode? */
 	user = TRAP_USERMODE(tf);
 
@@ -641,7 +641,7 @@ prefetch_abort_handler(struct trapframe *tf)
 
  	td = curthread;
 	p = td->td_proc;
-	PCPU_INC(cnt.v_trap);
+	VM_STATS_PCPU_INC(trap);
 
 	if (TRAP_USERMODE(tf)) {
 		td->td_frame = tf;

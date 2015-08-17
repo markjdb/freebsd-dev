@@ -775,7 +775,7 @@ vm_pageout_object_deactivate_pages(pmap_t pmap, vm_object_t first_object,
 				goto unlock_return;
 			if (vm_page_busied(p))
 				continue;
-			PCPU_INC(cnt.v_pdpages);
+			VM_STATS_PCPU_INC(pdpages);
 			vm_page_lock(p);
 			if (p->wire_count != 0 || p->hold_count != 0 ||
 			    !pmap_page_exists_quick(pmap, p)) {
@@ -1099,7 +1099,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 		KASSERT(queues_locked, ("unlocked queues"));
 		KASSERT(m->queue == PQ_INACTIVE, ("Inactive queue %p", m));
 
-		PCPU_INC(cnt.v_pdpages);
+		VM_STATS_PCPU_INC(pdpages);
 		next = TAILQ_NEXT(m, plinks.q);
 
 		/*
@@ -1160,7 +1160,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 		 */
 		if (m->valid == 0 && m->hold_count == 0) {
 			vm_page_free(m);
-			PCPU_INC(cnt.v_dfree);
+			VM_STATS_PCPU_INC(dfree);
 			--page_shortage;
 			goto drop_page;
 		}
@@ -1233,7 +1233,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 			 * Clean pages can be freed.
 			 */
 			vm_page_free(m);
-			PCPU_INC(cnt.v_dfree);
+			VM_STATS_PCPU_INC(dfree);
 			--page_shortage;
 		} else if ((m->flags & PG_WINATCFLS) == 0 && pass < 2) {
 			/*
@@ -1385,7 +1385,7 @@ relock_queues:
 		 * The count for pagedaemon pages is done after checking the
 		 * page for eligibility...
 		 */
-		PCPU_INC(cnt.v_pdpages);
+		VM_STATS_PCPU_INC(pdpages);
 
 		/*
 		 * Check to see "how much" the page has been used.
@@ -1658,7 +1658,7 @@ vm_pageout_worker(void *arg)
 
 		}
 		if (vm_pages_needed) {
-			vm_cnt.v_pdwakeups++;
+			VM_STATS_INC(pdwakeups);
 			domain->vmd_pass++;
 		}
 		mtx_unlock(&vm_page_queue_free_mtx);

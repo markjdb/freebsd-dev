@@ -1700,7 +1700,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		KASSERT(m->valid != 0,
 		    ("vm_page_alloc: cached page %p is invalid", m));
 		if (m->object == object && m->pindex == pindex)
-			vm_cnt.v_reactivated++;
+			VM_STATS_INC(reactivated);
 		else
 			m->valid = 0;
 		m_object = m->object;
@@ -2375,7 +2375,7 @@ vm_page_free_toq(vm_page_t m)
 	} else
 		KASSERT(m->queue == PQ_NONE,
 		    ("vm_page_free_toq: unmanaged page %p is queued", m));
-	PCPU_INC(cnt.v_tfree);
+	VM_STATS_PCPU_INC(tfree);
 
 	if (vm_page_sbusied(m))
 		panic("vm_page_free: freeing busy page %p", m);
@@ -2701,8 +2701,8 @@ vm_page_cache(vm_page_t m)
 		cache_was_empty = vm_radix_is_singleton(&object->cache);
 
 	m->flags |= PG_CACHED;
-	vm_cnt.v_cache_count++;
-	PCPU_INC(cnt.v_tcached);
+	VM_STATS_INC(cache_count);
+	VM_STATS_PCPU_INC(tcached);
 #if VM_NRESERVLEVEL > 0
 	if (!vm_reserv_free_page(m)) {
 #else

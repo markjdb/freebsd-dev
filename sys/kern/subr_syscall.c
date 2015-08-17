@@ -57,7 +57,7 @@ syscallenter(struct thread *td, struct syscall_args *sa)
 	struct proc *p;
 	int error, traced;
 
-	PCPU_INC(cnt.v_syscall);
+	VM_STATS_PCPU_INC(syscall);
 	p = td->td_proc;
 
 	td->td_pticks = 0;

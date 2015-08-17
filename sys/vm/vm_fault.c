@@ -301,7 +301,7 @@ vm_fault_hold(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 
 	hardfault = 0;
 	growstack = TRUE;
-	PCPU_INC(cnt.v_vm_faults);
+	VM_STATS_PCPU_INC(vm_faults);
 	fs.vp = NULL;
 	faultcount = reqpage = 0;
 
@@ -482,7 +482,7 @@ fast_failed:
 				}
 				vm_object_pip_wakeup(fs.object);
 				VM_OBJECT_WUNLOCK(fs.object);
-				PCPU_INC(cnt.v_intrans);
+				VM_STATS_PCPU_INC(intrans);
 				vm_object_deallocate(fs.first_object);
 				goto RetryFault;
 			}
@@ -765,9 +765,9 @@ vnode_locked:
 			if ((fs.m->flags & PG_ZERO) == 0) {
 				pmap_zero_page(fs.m);
 			} else {
-				PCPU_INC(cnt.v_ozfod);
+				VM_STATS_PCPU_INC(ozfod);
 			}
-			PCPU_INC(cnt.v_zfod);
+			VM_STATS_PCPU_INC(zfod);
 			fs.m->valid = VM_PAGE_BITS_ALL;
 			/* Don't try to prefault neighboring pages. */
 			faultcount = 1;
@@ -862,7 +862,7 @@ vnode_locked:
 				vm_page_xbusy(fs.m);
 				fs.first_m = fs.m;
 				fs.m = NULL;
-				PCPU_INC(cnt.v_cow_optim);
+				VM_STATS_PCPU_INC(cow_optim);
 			} else {
 				/*
 				 * Oh, well, lets copy it.
@@ -898,7 +898,7 @@ vnode_locked:
 			fs.m = fs.first_m;
 			if (!is_first_object_locked)
 				VM_OBJECT_WLOCK(fs.object);
-			PCPU_INC(cnt.v_cow_faults);
+			VM_STATS_PCPU_INC(cow_faults);
 			curthread->td_cow++;
 		} else {
 			prot &= ~VM_PROT_WRITE;
@@ -1018,7 +1018,7 @@ vnode_locked:
 	 */
 	unlock_and_deallocate(&fs);
 	if (hardfault) {
-		PCPU_INC(cnt.v_io_faults);
+		VM_STATS_PCPU_INC(io_faults);
 		curthread->td_ru.ru_majflt++;
 	} else 
 		curthread->td_ru.ru_minflt++;

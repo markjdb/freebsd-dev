@@ -179,7 +179,7 @@ trap(struct trapframe *frame)
 	register_t addr = 0;
 	ksiginfo_t ksi;
 
-	PCPU_INC(cnt.v_trap);
+	VM_STATS_PCPU_INC(trap);
 	type = frame->tf_trapno;
 
 #ifdef SMP

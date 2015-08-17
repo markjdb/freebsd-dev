@@ -5778,7 +5778,7 @@ zfs_getpages(struct vnode *vp, vm_page_t *m, int count, int reqpage)
 		return (zfs_vm_pagerret_ok);
 	}
 
-	PCPU_INC(cnt.v_vnodein);
+	VM_STATS_PCPU_INC(vnodein);
 	PCPU_ADD(cnt.v_vnodepgsin, reqsize);
 
 	if (IDX_TO_OFF(mreq->pindex) >= object->un_pager.vnp.vnp_size) {
@@ -5977,7 +5977,7 @@ top:
 			vm_page_undirty(ma[i]);
 		}
 		zfs_vmobject_wunlock(object);
-		PCPU_INC(cnt.v_vnodeout);
+		VM_STATS_PCPU_INC(vnodeout);
 		PCPU_ADD(cnt.v_vnodepgsout, ncount);
 	}
 	dmu_tx_commit(tx);

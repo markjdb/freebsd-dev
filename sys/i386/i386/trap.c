@@ -196,7 +196,7 @@ trap(struct trapframe *frame)
 	static int lastalert = 0;
 #endif
 
-	PCPU_INC(cnt.v_trap);
+	VM_STATS_PCPU_INC(trap);
 	type = frame->tf_trapno;
 
 #ifdef SMP
