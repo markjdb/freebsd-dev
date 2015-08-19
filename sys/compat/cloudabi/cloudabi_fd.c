@@ -30,6 +30,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/capsicum.h>
 #include <sys/filedesc.h>
 #include <sys/proc.h>
+#include <sys/mman.h>
 #include <sys/socketvar.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysproto.h>
@@ -73,7 +74,7 @@ __FBSDID("$FreeBSD$");
 	MAPPING(CLOUDABI_RIGHT_MEM_MAP_EXEC, CAP_MMAP_X)		\
 	MAPPING(CLOUDABI_RIGHT_POLL_FD_READWRITE, CAP_EVENT)		\
 	MAPPING(CLOUDABI_RIGHT_POLL_MODIFY, CAP_KQUEUE_CHANGE)		\
-	MAPPING(CLOUDABI_RIGHT_POLL_PROC_TERMINATE, CAP_PDWAIT)		\
+	MAPPING(CLOUDABI_RIGHT_POLL_PROC_TERMINATE, CAP_EVENT)		\
 	MAPPING(CLOUDABI_RIGHT_POLL_WAIT, CAP_KQUEUE_EVENT)		\
 	MAPPING(CLOUDABI_RIGHT_PROC_EXEC, CAP_FEXECVE)			\
 	MAPPING(CLOUDABI_RIGHT_SOCK_ACCEPT, CAP_ACCEPT)			\
@@ -97,11 +98,19 @@ int
 cloudabi_sys_fd_create1(struct thread *td,
     struct cloudabi_sys_fd_create1_args *uap)
 {
+	struct filecaps fcaps = {};
 	struct socket_args socket_args = {
 		.domain = AF_UNIX,
 	};
 
 	switch (uap->type) {
+	case CLOUDABI_FILETYPE_POLL:
+		cap_rights_init(&fcaps.fc_rights, CAP_FSTAT, CAP_KQUEUE);
+		return (kern_kqueue(td, 0, &fcaps));
+	case CLOUDABI_FILETYPE_SHARED_MEMORY:
+		cap_rights_init(&fcaps.fc_rights, CAP_FSTAT, CAP_FTRUNCATE,
+		    CAP_MMAP_RWX);
+		return (kern_shm_open(td, SHM_ANON, O_RDWR, 0, &fcaps));
 	case CLOUDABI_FILETYPE_SOCKET_DGRAM:
 		socket_args.type = SOCK_DGRAM;
 		return (sys_socket(td, &socket_args));
@@ -120,10 +129,24 @@ int
 cloudabi_sys_fd_create2(struct thread *td,
     struct cloudabi_sys_fd_create2_args *uap)
 {
+	struct filecaps fcaps1 = {}, fcaps2 = {};
 	int fds[2];
 	int error;
 
 	switch (uap->type) {
+	case CLOUDABI_FILETYPE_FIFO:
+		/*
+		 * CloudABI pipes are unidirectional. Restrict rights on
+		 * the pipe to simulate this.
+		 */
+		cap_rights_init(&fcaps1.fc_rights, CAP_EVENT, CAP_FCNTL,
+		    CAP_FSTAT, CAP_READ);
+		fcaps1.fc_fcntls = CAP_FCNTL_SETFL;
+		cap_rights_init(&fcaps2.fc_rights, CAP_EVENT, CAP_FCNTL,
+		    CAP_FSTAT, CAP_WRITE);
+		fcaps2.fc_fcntls = CAP_FCNTL_SETFL;
+		error = kern_pipe(td, fds, 0, &fcaps1, &fcaps2);
+		break;
 	case CLOUDABI_FILETYPE_SOCKET_DGRAM:
 		error = kern_socketpair(td, AF_UNIX, SOCK_DGRAM, 0, fds);
 		break;
@@ -266,24 +289,11 @@ cloudabi_convert_filetype(const struct file *fp)
 	}
 }
 
-/*
- * Converts FreeBSD's Capsicum rights to CloudABI's set of rights.
- */
-static void
-convert_capabilities(const cap_rights_t *capabilities,
-    cloudabi_filetype_t filetype, cloudabi_rights_t *base,
-    cloudabi_rights_t *inheriting)
+/* Removes rights that conflict with the file descriptor type. */
+void
+cloudabi_remove_conflicting_rights(cloudabi_filetype_t filetype,
+    cloudabi_rights_t *base, cloudabi_rights_t *inheriting)
 {
-	cloudabi_rights_t rights;
-
-	/* Convert FreeBSD bits to CloudABI bits. */
-	rights = 0;
-#define MAPPING(cloudabi, ...) do {				\
-	if (cap_rights_is_set(capabilities, ##__VA_ARGS__))	\
-		rights |= (cloudabi);				\
-} while (0);
-	RIGHTS_MAPPINGS
-#undef MAPPING
 
 	/*
 	 * CloudABI has a small number of additional rights bits to
@@ -303,7 +313,7 @@ convert_capabilities(const cap_rights_t *capabilities,
 	 */
 	switch (filetype) {
 	case CLOUDABI_FILETYPE_DIRECTORY:
-		*base = rights & (CLOUDABI_RIGHT_FD_STAT_PUT_FLAGS |
+		*base &= CLOUDABI_RIGHT_FD_STAT_PUT_FLAGS |
 		    CLOUDABI_RIGHT_FD_SYNC | CLOUDABI_RIGHT_FILE_ADVISE |
 		    CLOUDABI_RIGHT_FILE_CREATE_DIRECTORY |
 		    CLOUDABI_RIGHT_FILE_CREATE_FILE |
@@ -323,29 +333,78 @@ convert_capabilities(const cap_rights_t *capabilities,
 		    CLOUDABI_RIGHT_FILE_UNLINK |
 		    CLOUDABI_RIGHT_POLL_FD_READWRITE |
 		    CLOUDABI_RIGHT_SOCK_BIND_DIRECTORY |
-		    CLOUDABI_RIGHT_SOCK_CONNECT_DIRECTORY);
-		*inheriting = rights;
+		    CLOUDABI_RIGHT_SOCK_CONNECT_DIRECTORY;
+		*inheriting &= CLOUDABI_RIGHT_FD_DATASYNC |
+		    CLOUDABI_RIGHT_FD_READ |
+		    CLOUDABI_RIGHT_FD_SEEK |
+		    CLOUDABI_RIGHT_FD_STAT_PUT_FLAGS |
+		    CLOUDABI_RIGHT_FD_SYNC |
+		    CLOUDABI_RIGHT_FD_TELL |
+		    CLOUDABI_RIGHT_FD_WRITE |
+		    CLOUDABI_RIGHT_FILE_ADVISE |
+		    CLOUDABI_RIGHT_FILE_ALLOCATE |
+		    CLOUDABI_RIGHT_FILE_CREATE_DIRECTORY |
+		    CLOUDABI_RIGHT_FILE_CREATE_FILE |
+		    CLOUDABI_RIGHT_FILE_CREATE_FIFO |
+		    CLOUDABI_RIGHT_FILE_LINK_SOURCE |
+		    CLOUDABI_RIGHT_FILE_LINK_TARGET |
+		    CLOUDABI_RIGHT_FILE_OPEN |
+		    CLOUDABI_RIGHT_FILE_READDIR |
+		    CLOUDABI_RIGHT_FILE_READLINK |
+		    CLOUDABI_RIGHT_FILE_RENAME_SOURCE |
+		    CLOUDABI_RIGHT_FILE_RENAME_TARGET |
+		    CLOUDABI_RIGHT_FILE_STAT_FGET |
+		    CLOUDABI_RIGHT_FILE_STAT_FPUT_SIZE |
+		    CLOUDABI_RIGHT_FILE_STAT_FPUT_TIMES |
+		    CLOUDABI_RIGHT_FILE_STAT_GET |
+		    CLOUDABI_RIGHT_FILE_STAT_PUT_TIMES |
+		    CLOUDABI_RIGHT_FILE_SYMLINK |
+		    CLOUDABI_RIGHT_FILE_UNLINK |
+		    CLOUDABI_RIGHT_MEM_MAP |
+		    CLOUDABI_RIGHT_MEM_MAP_EXEC |
+		    CLOUDABI_RIGHT_POLL_FD_READWRITE |
+		    CLOUDABI_RIGHT_PROC_EXEC |
+		    CLOUDABI_RIGHT_SOCK_BIND_DIRECTORY |
+		    CLOUDABI_RIGHT_SOCK_CONNECT_DIRECTORY;
 		break;
 	case CLOUDABI_FILETYPE_FIFO:
-		*base = rights & ~(CLOUDABI_RIGHT_FILE_ADVISE |
-		    CLOUDABI_RIGHT_FILE_ALLOCATE |
-		    CLOUDABI_RIGHT_FILE_READDIR);
+		*base &= CLOUDABI_RIGHT_FD_READ |
+		    CLOUDABI_RIGHT_FD_STAT_PUT_FLAGS |
+		    CLOUDABI_RIGHT_FD_WRITE |
+		    CLOUDABI_RIGHT_FILE_STAT_FGET |
+		    CLOUDABI_RIGHT_POLL_FD_READWRITE;
 		*inheriting = 0;
 		break;
 	case CLOUDABI_FILETYPE_POLL:
-		*base = rights & ~CLOUDABI_RIGHT_FILE_ADVISE;
+		*base &= ~CLOUDABI_RIGHT_FILE_ADVISE;
 		*inheriting = 0;
 		break;
 	case CLOUDABI_FILETYPE_PROCESS:
-		*base = rights & ~CLOUDABI_RIGHT_FILE_ADVISE;
+		*base &= ~(CLOUDABI_RIGHT_FILE_ADVISE |
+		    CLOUDABI_RIGHT_POLL_FD_READWRITE);
 		*inheriting = 0;
 		break;
 	case CLOUDABI_FILETYPE_REGULAR_FILE:
-		*base = rights & ~CLOUDABI_RIGHT_FILE_READDIR;
+		*base &= CLOUDABI_RIGHT_FD_DATASYNC |
+		    CLOUDABI_RIGHT_FD_READ |
+		    CLOUDABI_RIGHT_FD_SEEK |
+		    CLOUDABI_RIGHT_FD_STAT_PUT_FLAGS |
+		    CLOUDABI_RIGHT_FD_SYNC |
+		    CLOUDABI_RIGHT_FD_TELL |
+		    CLOUDABI_RIGHT_FD_WRITE |
+		    CLOUDABI_RIGHT_FILE_ADVISE |
+		    CLOUDABI_RIGHT_FILE_ALLOCATE |
+		    CLOUDABI_RIGHT_FILE_STAT_FGET |
+		    CLOUDABI_RIGHT_FILE_STAT_FPUT_SIZE |
+		    CLOUDABI_RIGHT_FILE_STAT_FPUT_TIMES |
+		    CLOUDABI_RIGHT_MEM_MAP |
+		    CLOUDABI_RIGHT_MEM_MAP_EXEC |
+		    CLOUDABI_RIGHT_POLL_FD_READWRITE |
+		    CLOUDABI_RIGHT_PROC_EXEC;
 		*inheriting = 0;
 		break;
 	case CLOUDABI_FILETYPE_SHARED_MEMORY:
-		*base = rights & ~(CLOUDABI_RIGHT_FD_SEEK |
+		*base &= ~(CLOUDABI_RIGHT_FD_SEEK |
 		    CLOUDABI_RIGHT_FD_TELL |
 		    CLOUDABI_RIGHT_FILE_ADVISE |
 		    CLOUDABI_RIGHT_FILE_ALLOCATE |
@@ -355,7 +414,7 @@ convert_capabilities(const cap_rights_t *capabilities,
 	case CLOUDABI_FILETYPE_SOCKET_DGRAM:
 	case CLOUDABI_FILETYPE_SOCKET_SEQPACKET:
 	case CLOUDABI_FILETYPE_SOCKET_STREAM:
-		*base = rights & (CLOUDABI_RIGHT_FD_READ |
+		*base &= CLOUDABI_RIGHT_FD_READ |
 		    CLOUDABI_RIGHT_FD_STAT_PUT_FLAGS |
 		    CLOUDABI_RIGHT_FD_WRITE |
 		    CLOUDABI_RIGHT_FILE_STAT_FGET |
@@ -365,14 +424,34 @@ convert_capabilities(const cap_rights_t *capabilities,
 		    CLOUDABI_RIGHT_SOCK_CONNECT_SOCKET |
 		    CLOUDABI_RIGHT_SOCK_LISTEN |
 		    CLOUDABI_RIGHT_SOCK_SHUTDOWN |
-		    CLOUDABI_RIGHT_SOCK_STAT_GET);
-		*inheriting = rights;
+		    CLOUDABI_RIGHT_SOCK_STAT_GET;
 		break;
 	default:
-		*base = rights;
 		*inheriting = 0;
 		break;
 	}
+}
+
+/* Converts FreeBSD's Capsicum rights to CloudABI's set of rights. */
+static void
+convert_capabilities(const cap_rights_t *capabilities,
+    cloudabi_filetype_t filetype, cloudabi_rights_t *base,
+    cloudabi_rights_t *inheriting)
+{
+	cloudabi_rights_t rights;
+
+	/* Convert FreeBSD bits to CloudABI bits. */
+	rights = 0;
+#define MAPPING(cloudabi, ...) do {				\
+	if (cap_rights_is_set(capabilities, ##__VA_ARGS__))	\
+		rights |= (cloudabi);				\
+} while (0);
+	RIGHTS_MAPPINGS
+#undef MAPPING
+
+	*base = rights;
+	*inheriting = rights;
+	cloudabi_remove_conflicting_rights(filetype, base, inheriting);
 }
 
 int
@@ -421,13 +500,57 @@ cloudabi_sys_fd_stat_get(struct thread *td,
 	return (copyout(&fsb, (void *)uap->buf, sizeof(fsb)));
 }
 
+/* Converts CloudABI rights to a set of Capsicum capabilities. */
+int
+cloudabi_convert_rights(cloudabi_rights_t in, cap_rights_t *out)
+{
+
+	cap_rights_init(out);
+#define MAPPING(cloudabi, ...) do {			\
+	if (in & (cloudabi)) {				\
+		cap_rights_set(out, ##__VA_ARGS__);	\
+		in &= ~(cloudabi);			\
+	}						\
+} while (0);
+	RIGHTS_MAPPINGS
+#undef MAPPING
+	if (in != 0)
+		return (ENOTCAPABLE);
+	return (0);
+}
+
 int
 cloudabi_sys_fd_stat_put(struct thread *td,
     struct cloudabi_sys_fd_stat_put_args *uap)
 {
+	cloudabi_fdstat_t fsb;
+	cap_rights_t rights;
+	int error, oflags;
 
-	/* Not implemented. */
-	return (ENOSYS);
+	error = copyin(uap->buf, &fsb, sizeof(fsb));
+	if (error != 0)
+		return (error);
+
+	if (uap->flags == CLOUDABI_FDSTAT_FLAGS) {
+		/* Convert flags. */
+		oflags = 0;
+		if (fsb.fs_flags & CLOUDABI_FDFLAG_APPEND)
+			oflags |= O_APPEND;
+		if (fsb.fs_flags & CLOUDABI_FDFLAG_NONBLOCK)
+			oflags |= O_NONBLOCK;
+		if (fsb.fs_flags & (CLOUDABI_FDFLAG_SYNC |
+		    CLOUDABI_FDFLAG_DSYNC | CLOUDABI_FDFLAG_RSYNC))
+			oflags |= O_SYNC;
+		return (kern_fcntl(td, uap->fd, F_SETFL, oflags));
+	} else if (uap->flags == CLOUDABI_FDSTAT_RIGHTS) {
+		/* Convert rights. */
+		error = cloudabi_convert_rights(
+		    fsb.fs_rights_base | fsb.fs_rights_inheriting, &rights);
+		if (error != 0)
+			return (error);
+		return (kern_cap_rights_limit(td, uap->fd, &rights));
+	}
+	return (EINVAL);
 }
 
 int
