@@ -56,6 +56,7 @@ static const char rcsid[] =
 #include <sys/event.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
+#include <machine/sysarch.h>
 
 #include <ctype.h>
 #include <err.h>
@@ -113,6 +114,7 @@ static struct syscall syscalls[] = {
 	{ .name = "getsid", .ret_type = 1, .nargs = 1,
 	  .args = { { Int, 0 } } },
 	{ .name = "getuid", .ret_type = 1, .nargs = 0 },
+	{ .name = "issetugid", .ret_type = 1, .nargs = 0 },
 	{ .name = "readlink", .ret_type = 1, .nargs = 3,
 	  .args = { { Name, 0 }, { Readlinkres | OUT, 1 }, { Int, 2 } } },
 	{ .name = "readlinkat", .ret_type = 1, .nargs = 4,
@@ -280,8 +282,22 @@ static struct syscall syscalls[] = {
 	{ .name = "kevent", .ret_type = 0, .nargs = 6,
 	  .args = { { Int, 0 }, { Kevent, 1 }, { Int, 2 }, { Kevent | OUT, 3 },
 		    { Int, 4 }, { Timespec, 5 } } },
+	{ .name = "sigpending", .ret_type = 0, .nargs = 1,
+	  .args = { { Sigset | OUT, 0 } } },
 	{ .name = "sigprocmask", .ret_type = 0, .nargs = 3,
 	  .args = { { Sigprocmask, 0 }, { Sigset, 1 }, { Sigset | OUT, 2 } } },
+	{ .name = "sigqueue", .ret_type = 0, .nargs = 3,
+	  .args = { { Int, 0 }, { Signal, 1 }, { LongHex, 2 } } },
+	{ .name = "sigreturn", .ret_type = 0, .nargs = 1,
+	  .args = { { Ptr, 0 } } },
+	{ .name = "sigsuspend", .ret_type = 0, .nargs = 1,
+	  .args = { { Sigset | IN, 0 } } },
+	{ .name = "sigtimedwait", .ret_type = 1, .nargs = 3,
+	  .args = { { Sigset | IN, 0 }, { Ptr, 1 }, { Timespec | IN, 2 } } },
+	{ .name = "sigwait", .ret_type = 1, .nargs = 2,
+	  .args = { { Sigset | IN, 0 }, { Ptr, 1 } } },
+	{ .name = "sigwaitinfo", .ret_type = 1, .nargs = 2,
+	  .args = { { Sigset | IN, 0 }, { Ptr, 1 } } },
 	{ .name = "unmount", .ret_type = 1, .nargs = 2,
 	  .args = { { Name, 0 }, { Int, 1 } } },
 	{ .name = "socket", .ret_type = 1, .nargs = 3,
@@ -317,6 +333,8 @@ static struct syscall syscalls[] = {
 	  .args = { { Name | IN, 0 }, { Pathconf, 1 } } },
 	{ .name = "pipe", .ret_type = 1, .nargs = 1,
 	  .args = { { Ptr, 0 } } },
+	{ .name = "pipe2", .ret_type = 1, .nargs = 2,
+	  .args = { { Ptr, 0 }, { Open, 1 } } },
 	{ .name = "truncate", .ret_type = 1, .nargs = 3,
 	  .args = { { Name | IN, 0 }, { Int | IN, 1 }, { Quad | IN, 2 } } },
 	{ .name = "ftruncate", .ret_type = 1, .nargs = 3,
@@ -345,9 +363,15 @@ static struct syscall syscalls[] = {
 		    { Waitoptions, 3 }, { Rusage | OUT, 4 }, { Ptr, 5 } } },
 	{ .name = "procctl", .ret_type = 1, .nargs = 4,
 	  .args = { { Idtype, 0 }, { Int, 1 }, { Procctl, 2 }, { Ptr, 3 } } },
+	{ .name = "sysarch", .ret_type = 1, .nargs = 2,
+	  .args = { { Sysarch, 0 }, { Ptr, 1 } } },
 	{ .name = "_umtx_op", .ret_type = 1, .nargs = 5,
 	  .args = { { Ptr, 0 }, { Umtxop, 1 }, { LongHex, 2 }, { Ptr, 3 },
 		    { Ptr, 4 } } },
+	{ .name = "thr_kill", .ret_type = 0, .nargs = 2,
+	  .args = { { Long, 0 }, { Signal, 1 } } },
+	{ .name = "thr_self", .ret_type = 0, .nargs = 1,
+	  .args = { { Ptr, 0 } } },
 	{ .name = 0 },
 };
 
@@ -371,6 +395,30 @@ static struct xlat kevent_flags[] = {
 	X(EV_ADD) X(EV_DELETE) X(EV_ENABLE) X(EV_DISABLE) X(EV_ONESHOT)
 	X(EV_CLEAR) X(EV_RECEIPT) X(EV_DISPATCH) X(EV_FORCEONESHOT)
 	X(EV_DROP) X(EV_FLAG1) X(EV_ERROR) X(EV_EOF) XEND
+};
+
+static struct xlat kevent_user_ffctrl[] = {
+	X(NOTE_FFNOP) X(NOTE_FFAND) X(NOTE_FFOR) X(NOTE_FFCOPY)
+	XEND
+};
+
+static struct xlat kevent_rdwr_fflags[] = {
+	X(NOTE_LOWAT) X(NOTE_FILE_POLL) XEND
+};
+
+static struct xlat kevent_vnode_fflags[] = {
+	X(NOTE_DELETE) X(NOTE_WRITE) X(NOTE_EXTEND) X(NOTE_ATTRIB)
+	X(NOTE_LINK) X(NOTE_RENAME) X(NOTE_REVOKE) XEND
+};
+
+static struct xlat kevent_proc_fflags[] = {
+	X(NOTE_EXIT) X(NOTE_FORK) X(NOTE_EXEC) X(NOTE_TRACK) X(NOTE_TRACKERR)
+	X(NOTE_CHILD) XEND
+};
+
+static struct xlat kevent_timer_fflags[] = {
+	X(NOTE_SECONDS) X(NOTE_MSECONDS) X(NOTE_USECONDS) X(NOTE_NSECONDS)
+	XEND
 };
 
 static struct xlat poll_flags[] = {
@@ -509,6 +557,31 @@ static struct xlat at_flags[] = {
 
 static struct xlat access_modes[] = {
 	X(R_OK) X(W_OK) X(X_OK) XEND
+};
+
+static struct xlat sysarch_ops[] = {
+#if defined(__i386__) || defined(__amd64__)
+	X(I386_GET_LDT) X(I386_SET_LDT) X(I386_GET_IOPERM) X(I386_SET_IOPERM)
+	X(I386_VM86) X(I386_GET_FSBASE) X(I386_SET_FSBASE) X(I386_GET_GSBASE)
+	X(I386_SET_GSBASE) X(I386_GET_XFPUSTATE) X(AMD64_GET_FSBASE)
+	X(AMD64_SET_FSBASE) X(AMD64_GET_GSBASE) X(AMD64_SET_GSBASE)
+	X(AMD64_GET_XFPUSTATE)
+#endif
+	XEND
+};
+
+static struct xlat linux_socketcall_ops[] = {
+	X(LINUX_SOCKET) X(LINUX_BIND) X(LINUX_CONNECT) X(LINUX_LISTEN)
+	X(LINUX_ACCEPT) X(LINUX_GETSOCKNAME) X(LINUX_GETPEERNAME)
+	X(LINUX_SOCKETPAIR) X(LINUX_SEND) X(LINUX_RECV) X(LINUX_SENDTO)
+	X(LINUX_RECVFROM) X(LINUX_SHUTDOWN) X(LINUX_SETSOCKOPT)
+	X(LINUX_GETSOCKOPT) X(LINUX_SENDMSG) X(LINUX_RECVMSG)
+	XEND
+};
+
+static struct xlat sigprocmask_ops[] = {
+	X(SIG_BLOCK) X(SIG_UNBLOCK) X(SIG_SETMASK)
+	XEND
 };
 
 #undef X
@@ -682,12 +755,73 @@ get_string(pid_t pid, void *addr, int max)
 static char *
 strsig2(int sig)
 {
-	char *tmp;
+	static char tmp[sizeof(int) * 3 + 1];
+	char *ret;
 
-	tmp = strsig(sig);
-	if (tmp == NULL)
-		asprintf(&tmp, "%d", sig);
-	return (tmp);
+	ret = strsig(sig);
+	if (ret == NULL) {
+		snprintf(tmp, sizeof(tmp), "%d", sig);
+		ret = tmp;
+	}
+	return (ret);
+}
+
+static void
+print_kevent(FILE *fp, struct kevent *ke, int input)
+{
+
+	switch (ke->filter) {
+	case EVFILT_READ:
+	case EVFILT_WRITE:
+	case EVFILT_VNODE:
+	case EVFILT_PROC:
+	case EVFILT_TIMER:
+	case EVFILT_PROCDESC:
+		fprintf(fp, "%ju", (uintmax_t)ke->ident);
+		break;
+	case EVFILT_SIGNAL:
+		fputs(strsig2(ke->ident), fp);
+		break;
+	default:
+		fprintf(fp, "%p", (void *)ke->ident);
+	}
+	fprintf(fp, ",%s,%s,", xlookup(kevent_filters, ke->filter),
+	    xlookup_bits(kevent_flags, ke->flags));
+	switch (ke->filter) {
+	case EVFILT_READ:
+	case EVFILT_WRITE:
+		fputs(xlookup_bits(kevent_rdwr_fflags, ke->fflags), fp);
+		break;
+	case EVFILT_VNODE:
+		fputs(xlookup_bits(kevent_vnode_fflags, ke->fflags), fp);
+		break;
+	case EVFILT_PROC:
+	case EVFILT_PROCDESC:
+		fputs(xlookup_bits(kevent_proc_fflags, ke->fflags), fp);
+		break;
+	case EVFILT_TIMER:
+		fputs(xlookup_bits(kevent_timer_fflags, ke->fflags), fp);
+		break;
+	case EVFILT_USER: {
+		int ctrl, data;
+
+		ctrl = ke->fflags & NOTE_FFCTRLMASK;
+		data = ke->fflags & NOTE_FFLAGSMASK; 
+		if (input) {
+			fputs(xlookup(kevent_user_ffctrl, ctrl), fp);
+			if (ke->fflags & NOTE_TRIGGER)
+				fputs("|NOTE_TRIGGER", fp);
+			if (data != 0)
+				fprintf(fp, "|%#x", data);
+		} else {
+			fprintf(fp, "%#x", data);
+		}
+		break;
+	}
+	default:
+		fprintf(fp, "%#x", ke->fflags);
+	}
+	fprintf(fp, ",%p,%p", (void *)ke->data, (void *)ke->udata);
 }
 
 /*
@@ -704,29 +838,34 @@ char *
 print_arg(struct syscall_args *sc, unsigned long *args, long retval,
     struct trussinfo *trussinfo)
 {
+	FILE *fp;
 	char *tmp;
+	size_t tmplen;
 	pid_t pid;
 
-	tmp = NULL;
+	fp = open_memstream(&tmp, &tmplen);
 	pid = trussinfo->pid;
 	switch (sc->type & ARG_MASK) {
 	case Hex:
-		asprintf(&tmp, "0x%x", (int)args[sc->offset]);
+		fprintf(fp, "0x%x", (int)args[sc->offset]);
 		break;
 	case Octal:
-		asprintf(&tmp, "0%o", (int)args[sc->offset]);
+		fprintf(fp, "0%o", (int)args[sc->offset]);
 		break;
 	case Int:
-		asprintf(&tmp, "%d", (int)args[sc->offset]);
+		fprintf(fp, "%d", (int)args[sc->offset]);
 		break;
 	case LongHex:
-		asprintf(&tmp, "0x%lx", args[sc->offset]);
-		break;		
+		fprintf(fp, "0x%lx", args[sc->offset]);
+		break;
+	case Long:
+		fprintf(fp, "%ld", args[sc->offset]);
+		break;
 	case Name: {
 		/* NULL-terminated string. */
 		char *tmp2;
 		tmp2 = get_string(pid, (void*)args[sc->offset], 0);
-		asprintf(&tmp, "\"%s\"", tmp2);
+		fprintf(fp, "\"%s\"", tmp2);
 		free(tmp2);
 		break;
 	}
@@ -762,11 +901,11 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 				len--;
 				truncated = 1;
 			};
-			asprintf(&tmp, "\"%s\"%s", tmp3, truncated ?
+			fprintf(fp, "\"%s\"%s", tmp3, truncated ?
 			    "..." : "");
 			free(tmp3);
 		} else {
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		}
 		break;
 	}
@@ -805,37 +944,35 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 	}
 #ifdef __LP64__
 	case Quad:
-		asprintf(&tmp, "0x%lx", args[sc->offset]);
+		fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 #else
 	case Quad: {
 		unsigned long long ll;
 		ll = *(unsigned long long *)(args + sc->offset);
-		asprintf(&tmp, "0x%llx", ll);
+		fprintf(fp, "0x%llx", ll);
 		break;
 	}
 #endif
 	case Ptr:
-		asprintf(&tmp, "0x%lx", args[sc->offset]);
+		fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	case Readlinkres: {
 		char *tmp2;
-		if (retval == -1) {
-			tmp = strdup("");
+		if (retval == -1)
 			break;
-		}
 		tmp2 = get_string(pid, (void*)args[sc->offset], retval);
-		asprintf(&tmp, "\"%s\"", tmp2);
+		fprintf(fp, "\"%s\"", tmp2);
 		free(tmp2);
 		break;
 	}
 	case Ioctl: {
 		const char *temp = ioctlname(args[sc->offset]);
 		if (temp)
-			tmp = strdup(temp);
+			fputs(temp, fp);
 		else {
 			unsigned long arg = args[sc->offset];
-			asprintf(&tmp, "0x%lx { IO%s%s 0x%lx('%c'), %lu, %lu }",
+			fprintf(fp, "0x%lx { IO%s%s 0x%lx('%c'), %lu, %lu }",
 			    arg, arg & IOC_OUT ? "R" : "",
 			    arg & IOC_IN ? "W" : "", IOCGROUP(arg),
 			    isprint(IOCGROUP(arg)) ? (char)IOCGROUP(arg) : '?',
@@ -847,22 +984,19 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 		struct timespec ts;
 		if (get_struct(pid, (void *)args[sc->offset], &ts,
 		    sizeof(ts)) != -1)
-			asprintf(&tmp, "{ %ld.%09ld }", (long)ts.tv_sec,
+			fprintf(fp, "{ %ld.%09ld }", (long)ts.tv_sec,
 			    ts.tv_nsec);
 		else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case Timespec2: {
 		struct timespec ts[2];
-		FILE *fp;
-		size_t len;
 		const char *sep;
 		unsigned int i;
 
 		if (get_struct(pid, (void *)args[sc->offset], &ts, sizeof(ts))
 		    != -1) {
-			fp = open_memstream(&tmp, &len);
 			fputs("{ ", fp);
 			sep = "";
 			for (i = 0; i < nitems(ts); i++) {
@@ -882,114 +1016,54 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 				}
 			}
 			fputs(" }", fp);
-			fclose(fp);
 		} else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case Timeval: {
 		struct timeval tv;
 		if (get_struct(pid, (void *)args[sc->offset], &tv, sizeof(tv))
 		    != -1)
-			asprintf(&tmp, "{ %ld.%06ld }", (long)tv.tv_sec,
+			fprintf(fp, "{ %ld.%06ld }", (long)tv.tv_sec,
 			    tv.tv_usec);
 		else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case Timeval2: {
 		struct timeval tv[2];
 		if (get_struct(pid, (void *)args[sc->offset], &tv, sizeof(tv))
 		    != -1)
-			asprintf(&tmp, "{ %ld.%06ld, %ld.%06ld }",
+			fprintf(fp, "{ %ld.%06ld, %ld.%06ld }",
 			    (long)tv[0].tv_sec, tv[0].tv_usec,
 			    (long)tv[1].tv_sec, tv[1].tv_usec);
 		else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case Itimerval: {
 		struct itimerval itv;
 		if (get_struct(pid, (void *)args[sc->offset], &itv,
 		    sizeof(itv)) != -1)
-			asprintf(&tmp, "{ %ld.%06ld, %ld.%06ld }",
+			fprintf(fp, "{ %ld.%06ld, %ld.%06ld }",
 			    (long)itv.it_interval.tv_sec,
 			    itv.it_interval.tv_usec,
 			    (long)itv.it_value.tv_sec,
 			    itv.it_value.tv_usec);
 		else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case LinuxSockArgs:
 	{
 		struct linux_socketcall_args largs;
 		if (get_struct(pid, (void *)args[sc->offset], (void *)&largs,
-		    sizeof(largs)) == -1) {
-			err(1, "get_struct %p", (void *)args[sc->offset]);
-		}
-		const char *what;
-		char buf[30];
-
-		switch (largs.what) {
-		case LINUX_SOCKET:
-			what = "LINUX_SOCKET";
-			break;
-		case LINUX_BIND:
-			what = "LINUX_BIND";
-			break;
-		case LINUX_CONNECT:
-			what = "LINUX_CONNECT";
-			break;
-		case LINUX_LISTEN:
-			what = "LINUX_LISTEN";
-			break;
-		case LINUX_ACCEPT:
-			what = "LINUX_ACCEPT";
-			break;
-		case LINUX_GETSOCKNAME:
-			what = "LINUX_GETSOCKNAME";
-			break;
-		case LINUX_GETPEERNAME:
-			what = "LINUX_GETPEERNAME";
-			break;
-		case LINUX_SOCKETPAIR:
-			what = "LINUX_SOCKETPAIR";
-			break;
-		case LINUX_SEND:   
-			what = "LINUX_SEND";
-			break;
-		case LINUX_RECV: 
-			what = "LINUX_RECV";
-			break;
-		case LINUX_SENDTO:
-			what = "LINUX_SENDTO";
-			break;
-		case LINUX_RECVFROM:
-			what = "LINUX_RECVFROM";
-			break;
-		case LINUX_SHUTDOWN:
-			what = "LINUX_SHUTDOWN";
-			break;
-		case LINUX_SETSOCKOPT:
-			what = "LINUX_SETSOCKOPT";
-			break;
-		case LINUX_GETSOCKOPT:
-			what = "LINUX_GETSOCKOPT";
-			break;
-		case LINUX_SENDMSG:
-			what = "LINUX_SENDMSG";
-			break;
-		case LINUX_RECVMSG:
-			what = "LINUX_RECVMSG";
-			break;
-		default:
-			sprintf(buf, "%d", largs.what);
-			what = buf;
-			break;
-		}
-		asprintf(&tmp, "(0x%lx)%s, 0x%lx", args[sc->offset], what,
-		    (long unsigned int)largs.args);
+		    sizeof(largs)) != -1)
+			fprintf(fp, "{ %s, 0x%lx }",
+			    lookup(linux_socketcall_ops, largs.what, 10),
+			    (long unsigned int)largs.args);
+		else
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case Pollfd: {
@@ -999,37 +1073,23 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 		 * syscall.
 		 */
 		struct pollfd *pfd;
-		int numfds = args[sc->offset+1];
-		int bytes = sizeof(struct pollfd) * numfds;
-		int i, tmpsize, u, used;
-		const int per_fd = 100;
+		int numfds = args[sc->offset + 1];
+		size_t bytes = sizeof(struct pollfd) * numfds;
+		int i;
 
 		if ((pfd = malloc(bytes)) == NULL)
-			err(1, "Cannot malloc %d bytes for pollfd array",
+			err(1, "Cannot malloc %zu bytes for pollfd array",
 			    bytes);
 		if (get_struct(pid, (void *)args[sc->offset], pfd, bytes)
 		    != -1) {
-			used = 0;
-			tmpsize = 1 + per_fd * numfds + 2;
-			if ((tmp = malloc(tmpsize)) == NULL)
-				err(1, "Cannot alloc %d bytes for poll output",
-				    tmpsize);
-
-			tmp[used++] = '{';
-			tmp[used++] = ' ';
+			fputs("{", fp);
 			for (i = 0; i < numfds; i++) {
-
-				u = snprintf(tmp + used, per_fd, "%s%d/%s",
-				    i > 0 ? " " : "", pfd[i].fd,
+				fprintf(fp, " %d/%s", pfd[i].fd,
 				    xlookup_bits(poll_flags, pfd[i].events));
-				if (u > 0)
-					used += u < per_fd ? u : per_fd;
 			}
-			tmp[used++] = ' ';
-			tmp[used++] = '}';
-			tmp[used++] = '\0';
+			fputs(" }", fp);
 		} else {
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		}
 		free(pfd);
 		break;
@@ -1042,113 +1102,86 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 		 */
 		fd_set *fds;
 		int numfds = args[0];
-		int bytes = _howmany(numfds, _NFDBITS) * _NFDBITS;
-		int i, tmpsize, u, used;
-		const int per_fd = 20;
+		size_t bytes = _howmany(numfds, _NFDBITS) * _NFDBITS;
+		int i;
 
 		if ((fds = malloc(bytes)) == NULL)
-			err(1, "Cannot malloc %d bytes for fd_set array",
+			err(1, "Cannot malloc %zu bytes for fd_set array",
 			    bytes);
 		if (get_struct(pid, (void *)args[sc->offset], fds, bytes)
 		    != -1) {
-			used = 0;
-			tmpsize = 1 + numfds * per_fd + 2;
-			if ((tmp = malloc(tmpsize)) == NULL)
-				err(1, "Cannot alloc %d bytes for fd_set "
-				    "output", tmpsize);
-
-			tmp[used++] = '{';
-			tmp[used++] = ' ';
+			fputs("{", fp);
 			for (i = 0; i < numfds; i++) {
-				if (FD_ISSET(i, fds)) {
-					u = snprintf(tmp + used, per_fd, "%d ",
-					    i);
-					if (u > 0)
-						used += u < per_fd ? u : per_fd;
-				}
+				if (FD_ISSET(i, fds))
+					fprintf(fp, " %d", i);
 			}
-			tmp[used++] = '}';
-			tmp[used++] = '\0';
+			fputs(" }", fp);
 		} else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		free(fds);
 		break;
 	}
 	case Signal:
-		tmp = strsig2(args[sc->offset]);
+		fputs(strsig2(args[sc->offset]), fp);
 		break;
 	case Sigset: {
 		long sig;
 		sigset_t ss;
-		int i, used;
-		char *signame;
+		int i, first;
 
 		sig = args[sc->offset];
 		if (get_struct(pid, (void *)args[sc->offset], (void *)&ss,
 		    sizeof(ss)) == -1) {
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 			break;
 		}
-		tmp = malloc(sys_nsig * 8); /* 7 bytes avg per signal name */
-		used = 0;
+		fputs("{ ", fp);
+		first = 1;
 		for (i = 1; i < sys_nsig; i++) {
 			if (sigismember(&ss, i)) {
-				signame = strsig(i);
-				used += sprintf(tmp + used, "%s|", signame);
-				free(signame);
+				fprintf(fp, "%s%s", !first ? "|" : "",
+				    strsig(i));
+				first = 0;
 			}
 		}
-		if (used)
-			tmp[used-1] = 0;
-		else
-			strcpy(tmp, "0x0");
+		if (!first)
+			fputc(' ', fp);
+		fputc('}', fp);
 		break;
 	}
 	case Sigprocmask: {
-		switch (args[sc->offset]) {
-#define	S(a)	case a: tmp = strdup(#a); break;
-			S(SIG_BLOCK);
-			S(SIG_UNBLOCK);
-			S(SIG_SETMASK);
-#undef S
-		}
-		if (tmp == NULL)
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+		fputs(xlookup(sigprocmask_ops, args[sc->offset]), fp);
 		break;
 	}
 	case Fcntlflag: {
 		/* XXX output depends on the value of the previous argument */
 		switch (args[sc->offset-1]) {
 		case F_SETFD:
-			tmp = strdup(xlookup_bits(fcntlfd_arg,
-			    args[sc->offset]));
+			fputs(xlookup_bits(fcntlfd_arg, args[sc->offset]), fp);
 			break;
 		case F_SETFL:
-			tmp = strdup(xlookup_bits(fcntlfl_arg,
-			    args[sc->offset]));
+			fputs(xlookup_bits(fcntlfl_arg, args[sc->offset]), fp);
 			break;
 		case F_GETFD:
 		case F_GETFL:
 		case F_GETOWN:
-			tmp = strdup("");
 			break;
 		default:
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 			break;
 		}
 		break;
 	}
 	case Open:
-		tmp = strdup(xlookup_bits(open_flags, args[sc->offset]));
+		fputs(xlookup_bits(open_flags, args[sc->offset]), fp);
 		break;
 	case Fcntl:
-		tmp = strdup(xlookup(fcntl_arg, args[sc->offset]));
+		fputs(xlookup(fcntl_arg, args[sc->offset]), fp);
 		break;
 	case Mprot:
-		tmp = strdup(xlookup_bits(mprot_flags, args[sc->offset]));
+		fputs(xlookup_bits(mprot_flags, args[sc->offset]), fp);
 		break;
 	case Mmapflags: {
-		char *base, *alignstr;
 		int align, flags;
 
 		/*
@@ -1162,46 +1195,46 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 		align = args[sc->offset] & MAP_ALIGNMENT_MASK;
 		if (align != 0) {
 			if (align == MAP_ALIGNED_SUPER)
-				alignstr = strdup("MAP_ALIGNED_SUPER");
+				fputs("MAP_ALIGNED_SUPER", fp);
 			else
-				asprintf(&alignstr, "MAP_ALIGNED(%d)",
+				fprintf(fp, "MAP_ALIGNED(%d)",
 				    align >> MAP_ALIGNMENT_SHIFT);
-			if (flags == 0) {
-				tmp = alignstr;
+			if (flags == 0)
 				break;
-			}
-		} else
-			alignstr = NULL;
-		base = strdup(xlookup_bits(mmap_flags, flags));
-		if (alignstr == NULL) {
-			tmp = base;
-			break;
+			fputc('|', fp);
 		}
-		asprintf(&tmp, "%s|%s", alignstr, base);
-		free(alignstr);
-		free(base);
+		fputs(xlookup_bits(mmap_flags, flags), fp);
 		break;
 	}
 	case Whence:
-		tmp = strdup(xlookup(whence_arg, args[sc->offset]));
+		fputs(xlookup(whence_arg, args[sc->offset]), fp);
 		break;
 	case Sockdomain:
-		tmp = strdup(xlookup(sockdomain_arg, args[sc->offset]));
+		fputs(xlookup(sockdomain_arg, args[sc->offset]), fp);
 		break;
-	case Socktype:
-		tmp = strdup(xlookup(socktype_arg, args[sc->offset]));
+	case Socktype: {
+		int type, flags;
+
+		flags = args[sc->offset] & (SOCK_CLOEXEC | SOCK_NONBLOCK);
+		type = args[sc->offset] & ~flags;
+		fputs(xlookup(socktype_arg, type), fp);
+		if (flags & SOCK_CLOEXEC)
+			fprintf(fp, "|SOCK_CLOEXEC");
+		if (flags & SOCK_NONBLOCK)
+			fprintf(fp, "|SOCK_NONBLOCK");
 		break;
+	}
 	case Shutdown:
-		tmp = strdup(xlookup(shutdown_arg, args[sc->offset]));
+		fputs(xlookup(shutdown_arg, args[sc->offset]), fp);
 		break;
 	case Resource:
-		tmp = strdup(xlookup(resource_arg, args[sc->offset]));
+		fputs(xlookup(resource_arg, args[sc->offset]), fp);
 		break;
 	case Pathconf:
-		tmp = strdup(xlookup(pathconf_arg, args[sc->offset]));
+		fputs(xlookup(pathconf_arg, args[sc->offset]), fp);
 		break;
 	case Rforkflags:
-		tmp = strdup(xlookup_bits(rfork_flags, args[sc->offset]));
+		fputs(xlookup_bits(rfork_flags, args[sc->offset]), fp);
 		break;
 	case Sockaddr: {
 		struct sockaddr_storage ss;
@@ -1210,19 +1243,20 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 		struct sockaddr_in6 *lsin6;
 		struct sockaddr_un *sun;
 		struct sockaddr *sa;
-		char *p;
 		u_char *q;
-		int i;
 
 		if (args[sc->offset] == 0) {
-			asprintf(&tmp, "NULL");
+			fputs("NULL", fp);
 			break;
 		}
 
 		/* yuck: get ss_len */
 		if (get_struct(pid, (void *)args[sc->offset], (void *)&ss,
-		    sizeof(ss.ss_len) + sizeof(ss.ss_family)) == -1)
-			err(1, "get_struct %p", (void *)args[sc->offset]);
+		    sizeof(ss.ss_len) + sizeof(ss.ss_family)) == -1) {
+			fprintf(fp, "0x%lx", args[sc->offset]);
+			break;
+		}
+
 		/*
 		 * If ss_len is 0, then try to guess from the sockaddr type.
 		 * AF_UNIX may be initialized incorrectly, so always frob
@@ -1233,73 +1267,71 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 			case AF_INET:
 				ss.ss_len = sizeof(*lsin);
 				break;
+			case AF_INET6:
+				ss.ss_len = sizeof(*lsin6);
+				break;
 			case AF_UNIX:
 				ss.ss_len = sizeof(*sun);
 				break;
 			default:
-				/* hurrrr */
 				break;
 			}
 		}
-		if (get_struct(pid, (void *)args[sc->offset], (void *)&ss,
+		if (ss.ss_len != 0 &&
+		    get_struct(pid, (void *)args[sc->offset], (void *)&ss,
 		    ss.ss_len) == -1) {
-			err(2, "get_struct %p", (void *)args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
+			break;
 		}
 
 		switch (ss.ss_family) {
 		case AF_INET:
 			lsin = (struct sockaddr_in *)&ss;
 			inet_ntop(AF_INET, &lsin->sin_addr, addr, sizeof addr);
-			asprintf(&tmp, "{ AF_INET %s:%d }", addr,
+			fprintf(fp, "{ AF_INET %s:%d }", addr,
 			    htons(lsin->sin_port));
 			break;
 		case AF_INET6:
 			lsin6 = (struct sockaddr_in6 *)&ss;
 			inet_ntop(AF_INET6, &lsin6->sin6_addr, addr,
 			    sizeof addr);
-			asprintf(&tmp, "{ AF_INET6 [%s]:%d }", addr,
+			fprintf(fp, "{ AF_INET6 [%s]:%d }", addr,
 			    htons(lsin6->sin6_port));
 			break;
 		case AF_UNIX:
 			sun = (struct sockaddr_un *)&ss;
-			asprintf(&tmp, "{ AF_UNIX \"%s\" }", sun->sun_path);
+			fprintf(fp, "{ AF_UNIX \"%s\" }", sun->sun_path);
 			break;
 		default:
 			sa = (struct sockaddr *)&ss;
-			asprintf(&tmp, "{ sa_len = %d, sa_family = %d, sa_data "
-			    "= { %n%*s } }", (int)sa->sa_len,
-			    (int)sa->sa_family, &i,
-			    6 * (int)(sa->sa_len - ((char *)&sa->sa_data -
-			    (char *)sa)), "");
-			if (tmp != NULL) {
-				p = tmp + i;
-				for (q = (u_char *)&sa->sa_data;
-				    q < (u_char *)sa + sa->sa_len; q++)
-					p += sprintf(p, " %#02x,", *q);
-			}
+			fprintf(fp,
+			    "{ sa_len = %d, sa_family = %d, sa_data = {",
+			    (int)sa->sa_len, (int)sa->sa_family);
+			for (q = (u_char *)sa->sa_data;
+			     q < (u_char *)sa + sa->sa_len; q++)
+				fprintf(fp, "%s 0x%02x",
+				    q == (u_char *)sa->sa_data ? "" : ",",
+				    *q);
+			fputs(" } }", fp);
 		}
 		break;
 	}
 	case Sigaction: {
 		struct sigaction sa;
-		char *hand;
-		const char *h;
 
 		if (get_struct(pid, (void *)args[sc->offset], &sa, sizeof(sa))
 		    != -1) {
-			asprintf(&hand, "%p", sa.sa_handler);
+			fputs("{ ", fp);
 			if (sa.sa_handler == SIG_DFL)
-				h = "SIG_DFL";
+				fputs("SIG_DFL", fp);
 			else if (sa.sa_handler == SIG_IGN)
-				h = "SIG_IGN";
+				fputs("SIG_IGN", fp);
 			else
-				h = hand;
-
-			asprintf(&tmp, "{ %s %s ss_t }", h,
+				fprintf(fp, "%p", sa.sa_handler);
+			fprintf(fp, " %s ss_t }",
 			    xlookup_bits(sigaction_flags, sa.sa_flags));
-			free(hand);
 		} else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case Kevent: {
@@ -1312,48 +1344,32 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 		 */
 		struct kevent *ke;
 		int numevents = -1;
-		int bytes = 0;
-		int i, tmpsize, u, used;
-		const int per_ke = 100;
+		size_t bytes;
+		int i;
 
 		if (sc->offset == 1)
 			numevents = args[sc->offset+1];
 		else if (sc->offset == 3 && retval != -1)
 			numevents = retval;
 
-		if (numevents >= 0)
+		if (numevents >= 0) {
 			bytes = sizeof(struct kevent) * numevents;
-		if ((ke = malloc(bytes)) == NULL)
-			err(1, "Cannot malloc %d bytes for kevent array",
-			    bytes);
+			if ((ke = malloc(bytes)) == NULL)
+				err(1,
+				    "Cannot malloc %zu bytes for kevent array",
+				    bytes);
+		} else
+			ke = NULL;
 		if (numevents >= 0 && get_struct(pid, (void *)args[sc->offset],
 		    ke, bytes) != -1) {
-			used = 0;
-			tmpsize = 1 + per_ke * numevents + 2;
-			if ((tmp = malloc(tmpsize)) == NULL)
-				err(1, "Cannot alloc %d bytes for kevent "
-				    "output", tmpsize);
-
-			tmp[used++] = '{';
-			tmp[used++] = ' ';
+			fputc('{', fp);
 			for (i = 0; i < numevents; i++) {
-				u = snprintf(tmp + used, per_ke,
-				    "%s%p,%s,%s,%d,%p,%p",
-				    i > 0 ? " " : "",
-				    (void *)ke[i].ident,
-				    xlookup(kevent_filters, ke[i].filter),
-				    xlookup_bits(kevent_flags, ke[i].flags),
-				    ke[i].fflags,
-				    (void *)ke[i].data,
-				    (void *)ke[i].udata);
-				if (u > 0)
-					used += u < per_ke ? u : per_ke;
+				fputc(' ', fp);
+				print_kevent(fp, &ke[i], sc->offset == 1);
 			}
-			tmp[used++] = ' ';
-			tmp[used++] = '}';
-			tmp[used++] = '\0';
+			fputs(" }", fp);
 		} else {
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		}
 		free(ke);
 		break;
@@ -1364,12 +1380,12 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 		    != -1) {
 			char mode[12];
 			strmode(st.st_mode, mode);
-			asprintf(&tmp,
+			fprintf(fp,
 			    "{ mode=%s,inode=%jd,size=%jd,blksize=%ld }", mode,
 			    (intmax_t)st.st_ino, (intmax_t)st.st_size,
 			    (long)st.st_blksize);
 		} else {
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		}
 		break;
 	}
@@ -1377,79 +1393,82 @@ print_arg(struct syscall_args *sc, unsigned long *args, long retval,
 		struct rusage ru;
 		if (get_struct(pid, (void *)args[sc->offset], &ru, sizeof(ru))
 		    != -1) {
-			asprintf(&tmp,
+			fprintf(fp,
 			    "{ u=%ld.%06ld,s=%ld.%06ld,in=%ld,out=%ld }",
 			    (long)ru.ru_utime.tv_sec, ru.ru_utime.tv_usec,
 			    (long)ru.ru_stime.tv_sec, ru.ru_stime.tv_usec,
 			    ru.ru_inblock, ru.ru_oublock);
 		} else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case Rlimit: {
 		struct rlimit rl;
 		if (get_struct(pid, (void *)args[sc->offset], &rl, sizeof(rl))
 		    != -1) {
-			asprintf(&tmp, "{ cur=%ju,max=%ju }",
+			fprintf(fp, "{ cur=%ju,max=%ju }",
 			    rl.rlim_cur, rl.rlim_max);
 		} else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case ExitStatus: {
-		char *signame;
 		int status;
-		signame = NULL;
+
 		if (get_struct(pid, (void *)args[sc->offset], &status,
 		    sizeof(status)) != -1) {
+			fputs("{ ", fp);
 			if (WIFCONTINUED(status))
-				tmp = strdup("{ CONTINUED }");
+				fputs("CONTINUED", fp);
 			else if (WIFEXITED(status))
-				asprintf(&tmp, "{ EXITED,val=%d }",
+				fprintf(fp, "EXITED,val=%d",
 				    WEXITSTATUS(status));
 			else if (WIFSIGNALED(status))
-				asprintf(&tmp, "{ SIGNALED,sig=%s%s }",
-				    signame = strsig2(WTERMSIG(status)),
+				fprintf(fp, "SIGNALED,sig=%s%s",
+				    strsig2(WTERMSIG(status)),
 				    WCOREDUMP(status) ? ",cored" : "");
 			else
-				asprintf(&tmp, "{ STOPPED,sig=%s }",
-				    signame = strsig2(WTERMSIG(status)));
+				fprintf(fp, "STOPPED,sig=%s",
+				    strsig2(WTERMSIG(status)));
+			fputs(" }", fp);
 		} else
-			asprintf(&tmp, "0x%lx", args[sc->offset]);
-		free(signame);
+			fprintf(fp, "0x%lx", args[sc->offset]);
 		break;
 	}
 	case Waitoptions:
-		tmp = strdup(xlookup_bits(wait_options, args[sc->offset]));
+		fputs(xlookup_bits(wait_options, args[sc->offset]), fp);
 		break;
 	case Idtype:
-		tmp = strdup(xlookup(idtype_arg, args[sc->offset]));
+		fputs(xlookup(idtype_arg, args[sc->offset]), fp);
 		break;
 	case Procctl:
-		tmp = strdup(xlookup(procctl_arg, args[sc->offset]));
+		fputs(xlookup(procctl_arg, args[sc->offset]), fp);
 		break;
 	case Umtxop:
-		tmp = strdup(xlookup(umtx_ops, args[sc->offset]));
+		fputs(xlookup(umtx_ops, args[sc->offset]), fp);
 		break;
 	case Atfd:
 		if ((int)args[sc->offset] == AT_FDCWD)
-			tmp = strdup("AT_FDCWD");
+			fputs("AT_FDCWD", fp);
 		else
-			asprintf(&tmp, "%d", (int)args[sc->offset]);
+			fprintf(fp, "%d", (int)args[sc->offset]);
 		break;
 	case Atflags:
-		tmp = strdup(xlookup_bits(at_flags, args[sc->offset]));
+		fputs(xlookup_bits(at_flags, args[sc->offset]), fp);
 		break;
 	case Accessmode:
 		if (args[sc->offset] == F_OK)
-			tmp = strdup("F_OK");
+			fputs("F_OK", fp);
 		else
-			tmp = strdup(xlookup_bits(access_modes,
-				args[sc->offset]));
+			fputs(xlookup_bits(access_modes, args[sc->offset]), fp);
+		break;
+	case Sysarch:
+		fputs(xlookup(sysarch_ops, args[sc->offset]), fp);
 		break;
 	default:
 		errx(1, "Invalid argument type %d\n", sc->type & ARG_MASK);
 	}
+	fclose(fp);
 	return (tmp);
 }
 
