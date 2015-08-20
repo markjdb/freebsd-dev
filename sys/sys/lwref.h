@@ -27,15 +27,15 @@
  */
 
 #ifndef __SYS_LWREF_H__
-#define __SYS_LWREF_H__
+#define	__SYS_LWREF_H__
 
 #include <sys/counter.h>
 
 struct lwref;
-typedef struct lwref * lwref_t;
+typedef struct lwref *lwref_t;
 
 lwref_t	lwref_alloc(void *, int);
-int lwref_change(lwref_t, void *, void(*)(void *, void *), void *);
+int	lwref_change(lwref_t, void *, void(*)(void *, void *), void *);
 
 /* asm */
 void *lwref_acquire(lwref_t, counter_u64_t *);
@@ -52,12 +52,12 @@ extern char apic_isr7_ret[];
 extern char ipi_intr_bitmap_handler_ret[];
 
 #ifdef INVARIANTS
-#define lwref_release(p, c)	do {	\
+#define	lwref_release(p, c)	do {	\
 	p = NULL;			\
 	counter_u64_add(c, -1);		\
 } while (0)
 #else
-#define lwref_release(p, c)	counter_u64_add(c, -1)
+#define	lwref_release(p, c)	counter_u64_add(c, -1)
 #endif
 
 #endif	/* ! __SYS_LWREF_H__ */
