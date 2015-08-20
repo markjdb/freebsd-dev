@@ -64,8 +64,7 @@ static const char rcsid[] =
 
 #include "freebsd32_syscalls.h"
 
-static int nsyscalls = sizeof(freebsd32_syscallnames) /
-    sizeof(freebsd32_syscallnames[0]);
+static int nsyscalls = nitems(freebsd32_syscallnames);
 
 /*
  * This is what this particular file uses to keep track of a system call.
@@ -165,6 +164,7 @@ amd64_fbsd32_syscall_entry(struct trussinfo *trussinfo, int nargs)
 
 	if (fsc->name && (trussinfo->flags & FOLLOWFORKS) &&
 	    (strcmp(fsc->name, "fork") == 0 ||
+	    strcmp(fsc->name, "pdfork") == 0 ||
 	    strcmp(fsc->name, "rfork") == 0 ||
 	    strcmp(fsc->name, "vfork") == 0))
 		trussinfo->curthread->in_fork = 1;
@@ -305,6 +305,7 @@ amd64_fbsd32_syscall_exit(struct trussinfo *trussinfo, int syscall_num __unused)
 		 */
 		for (i = 0; i < sc->nargs; i++) {
 			char *temp;
+
 			if (sc->args[i].type & OUT) {
 				/*
 				 * If an error occurred, then don't bother

@@ -42,6 +42,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/namei.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/random.h>
 #include <sys/rwlock.h>
 #include <sys/stat.h>
 #include <sys/systm.h>
@@ -1031,6 +1032,7 @@ tmpfs_dir_detach(struct vnode *vp, struct tmpfs_dirent *de)
 				tmpfs_free_dirent(tmp, xde);
 			}
 		}
+		de->td_cookie = de->td_hash;
 	} else
 		RB_REMOVE(tmpfs_dir, head, de);
 
@@ -1707,20 +1709,18 @@ tmpfs_chtimes(struct vnode *vp, struct vattr *vap,
 	if (error != 0)
 		return (error);
 
-	if (vap->va_atime.tv_sec != VNOVAL && vap->va_atime.tv_nsec != VNOVAL)
+	if (vap->va_atime.tv_sec != VNOVAL)
 		node->tn_status |= TMPFS_NODE_ACCESSED;
 
-	if (vap->va_mtime.tv_sec != VNOVAL && vap->va_mtime.tv_nsec != VNOVAL)
+	if (vap->va_mtime.tv_sec != VNOVAL)
 		node->tn_status |= TMPFS_NODE_MODIFIED;
 
-	if (vap->va_birthtime.tv_nsec != VNOVAL &&
-	    vap->va_birthtime.tv_nsec != VNOVAL)
+	if (vap->va_birthtime.tv_sec != VNOVAL)
 		node->tn_status |= TMPFS_NODE_MODIFIED;
 
 	tmpfs_itimes(vp, &vap->va_atime, &vap->va_mtime);
 
-	if (vap->va_birthtime.tv_nsec != VNOVAL &&
-	    vap->va_birthtime.tv_nsec != VNOVAL)
+	if (vap->va_birthtime.tv_sec != VNOVAL)
 		node->tn_birthtime = vap->va_birthtime;
 	MPASS(VOP_ISLOCKED(vp));
 
@@ -1757,6 +1757,8 @@ tmpfs_itimes(struct vnode *vp, const struct timespec *acc,
 	}
 	node->tn_status &=
 	    ~(TMPFS_NODE_ACCESSED | TMPFS_NODE_MODIFIED | TMPFS_NODE_CHANGED);
+	/* XXX: FIX? The entropy here is desirable, but the harvesting may be expensive */
+	random_harvest_queue(node, sizeof(*node), 1, RANDOM_FS_ATIME);
 }
 
 void
