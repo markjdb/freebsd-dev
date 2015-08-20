@@ -32,10 +32,13 @@
 #include <sys/counter.h>
 
 struct lwref;
+struct thread;
+
 typedef struct lwref *lwref_t;
 
 lwref_t	lwref_alloc(void *, int);
-int	lwref_change(lwref_t, void *, void(*)(void *, void *), void *);
+int	lwref_change(lwref_t, void *, void (*)(struct thread *, void *),
+	    void *);
 
 /* asm */
 void *lwref_acquire(lwref_t, counter_u64_t *);

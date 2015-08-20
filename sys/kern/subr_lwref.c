@@ -94,9 +94,8 @@ lwref_fixup_rip(register_t *rip, const char *p)
 }
 
 static void
-lwref_fixup_td(void *arg)
+lwref_fixup_td(struct thread *td, void *arg __unused)
 {
-	struct thread *td = arg;
 	register_t *rbp;
 
 	/*
@@ -150,7 +149,7 @@ lwref_change_action(void *v)
 	lwr->ptr = ctx->newptr;
 	lwr->refcnt = ctx->newcnt;
 
-	sched_foreach_on_runq(lwref_fixup_td);
+	sched_foreach_on_runq(lwref_fixup_td, NULL);
 
 	if (ctx->cpu == curcpu)
 		/* We are not in IPI. */
@@ -177,7 +176,7 @@ lwref_change_action(void *v)
 }
 
 int
-lwref_change(lwref_t lwr, void *newptr, void (*freefn)(void *, void *),
+lwref_change(lwref_t lwr, void *newptr, void (*freefn)(struct thread *, void *),
     void *freearg)
 {
 	struct lwref_change_ctx ctx;

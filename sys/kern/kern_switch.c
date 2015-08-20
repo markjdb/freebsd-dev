@@ -478,6 +478,24 @@ runq_choose_from(struct runq *rq, u_char idx)
 
 	return (NULL);
 }
+
+void
+runq_foreach(struct runq *rq, void (*func)(struct thread *, void *), void *arg)
+{
+	struct rqbits *rqb;
+	struct thread *td;
+	rqb_word_t s;
+	int i, n;
+
+	rqb = &rq->rq_status;
+	for (i = 0; i < RQB_LEN; i++) {
+		for (s = rqb->rqb_bits[i], n = RQB_FFS(s) + 1; s != 0;
+		    s >>= n, n = RQB_FFS(s) + 1)
+			TAILQ_FOREACH(td, &rq->rq_queues[n], td_runq)
+				(func)(td, arg);
+	}
+}
+
 /*
  * Remove the thread from the queue specified by its priority, and clear the
  * corresponding status bit if the queue becomes empty.
