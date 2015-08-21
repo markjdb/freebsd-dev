@@ -2747,7 +2747,7 @@ vm_page_advise(vm_page_t m, int advice)
 
 	vm_page_assert_locked(m);
 	VM_OBJECT_ASSERT_WLOCKED(m->object);
-	if (advice == MADV_FREE) {
+	if (advice == MADV_FREE)
 		/*
 		 * Mark the page clean.  This will allow the page to be freed
 		 * up by the system.  However, such pages are often reused
@@ -2762,8 +2762,7 @@ vm_page_advise(vm_page_t m, int advice)
 		 * actually taking the step of unmapping it.
 		 */
 		m->dirty = 0;
-		m->act_count = 0;
-	} else if (advice != MADV_DONTNEED)
+	else if (advice != MADV_DONTNEED)
 		return;
 
 	/*
