@@ -2542,7 +2542,7 @@ _vm_page_deactivate(vm_page_t m, int athead)
 	struct vm_pagequeue *pq;
 	int queue;
 
-	vm_page_lock_assert(m, MA_OWNED);
+	vm_page_assert_locked(m);
 
 	/*
 	 * Ignore if the page is already inactive, unless it is unlikely to be
@@ -2559,9 +2559,9 @@ _vm_page_deactivate(vm_page_t m, int athead)
 		} else {
 			if (queue != PQ_NONE)
 				vm_page_dequeue(m);
+			m->flags &= ~PG_WINATCFLS;
 			vm_pagequeue_lock(pq);
 		}
-		m->flags &= ~PG_WINATCFLS;
 		m->queue = PQ_INACTIVE;
 		if (athead)
 			TAILQ_INSERT_HEAD(&pq->pq_pl, m, plinks.q);
@@ -2747,7 +2747,7 @@ vm_page_advise(vm_page_t m, int advice)
 
 	vm_page_assert_locked(m);
 	VM_OBJECT_ASSERT_WLOCKED(m->object);
-	if (advice == MADV_FREE) {
+	if (advice == MADV_FREE)
 		/*
 		 * Mark the page clean.  This will allow the page to be freed
 		 * up by the system.  However, such pages are often reused
@@ -2762,14 +2762,8 @@ vm_page_advise(vm_page_t m, int advice)
 		 * actually taking the step of unmapping it.
 		 */
 		m->dirty = 0;
-		m->act_count = 0;
-	} else if (advice != MADV_DONTNEED)
+	else if (advice != MADV_DONTNEED)
 		return;
-
-	if (m->act_count >= ACT_INIT) {
-		m->act_count--;
-		return;
-	}
 
 	/*
 	 * Clear any references to the page.  Otherwise, the page daemon will
@@ -2781,11 +2775,11 @@ vm_page_advise(vm_page_t m, int advice)
 		vm_page_dirty(m);
 
 	/*
-	 * Place the page at the head of the inactive queue rather than the
+	 * Place clean pages at the head of the inactive queue rather than the
 	 * tail, thus defeating the queue's LRU operation and ensuring that the
 	 * page will be reused quickly.
 	 */
-	_vm_page_deactivate(m, 1);
+	_vm_page_deactivate(m, m->dirty == 0);
 }
 
 /*
