@@ -564,6 +564,15 @@ options 	COMPILING_LINT
 #
 options 	STACK
 
+#
+# KDTRACE_HOOKS provides the support necessary for loading and using the
+# DTrace kernel modules.  KDTRACE_FRAMES ensures that kernel functions
+# preserve the frame pointer, which is required for some DTrace
+# functionality.
+#
+options 	KDTRACE_FRAMES
+options 	KDTRACE_HOOKS
+
 
 #####################################################################
 # PERFORMANCE MONITORING OPTIONS
