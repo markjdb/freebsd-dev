@@ -338,7 +338,7 @@ mbpr(void *kvmd, u_long mbaddr)
 	xo_emit("{:sfbufs-io-count/%ju} "
 	    "{N:requests for I\\/O initiated by sendfile}\n",
 	    (uintmax_t)sfstat.sf_iocnt);
-out:
 	xo_close_container("mbuf-statistics");
+out:
 	memstat_mtl_free(mtlp);
 }
