@@ -39,11 +39,13 @@ __FBSDID("$FreeBSD$");
 #include <sys/systm.h>
 #include <sys/malloc.h>
 #include <sys/bus.h>
+#include <sys/conf.h>
 #include <sys/rman.h>
 #include <sys/endian.h>
 #include <sys/firmware.h>
 #include <sys/limits.h>
 #include <sys/module.h>
+#include <sys/priv.h>
 #include <sys/queue.h>
 #include <sys/taskqueue.h>
 
@@ -54,20 +56,13 @@ __FBSDID("$FreeBSD$");
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
 
-#include <net/bpf.h>
 #include <net/if.h>
 #include <net/if_var.h>
-#include <net/if_arp.h>
-#include <net/ethernet.h>
 #include <net/if_dl.h>
 #include <net/if_media.h>
-#include <net/if_types.h>
 
 #include <netinet/in.h>
-#include <netinet/in_systm.h>
-#include <netinet/in_var.h>
 #include <netinet/if_ether.h>
-#include <netinet/ip.h>
 
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_radiotap.h>
@@ -377,6 +372,19 @@ MODULE_VERSION(iwn, 1);
 MODULE_DEPEND(iwn, firmware, 1, 1, 1);
 MODULE_DEPEND(iwn, pci, 1, 1, 1);
 MODULE_DEPEND(iwn, wlan, 1, 1, 1);
+
+static d_ioctl_t iwn_cdev_ioctl;
+static d_open_t iwn_cdev_open;
+static d_close_t iwn_cdev_close;
+
+static struct cdevsw iwn_cdevsw = {
+	.d_version = D_VERSION,
+	.d_flags = 0,
+	.d_open = iwn_cdev_open,
+	.d_close = iwn_cdev_close,
+	.d_ioctl = iwn_cdev_ioctl,
+	.d_name = "iwn",
+};
 
 static int
 iwn_probe(device_t dev)
@@ -704,6 +712,15 @@ iwn_attach(device_t dev)
 	if (bootverbose)
 		ieee80211_announce(ic);
 	DPRINTF(sc, IWN_DEBUG_TRACE, "->%s: end\n",__func__);
+
+	/* Add debug ioctl right at the end */
+	sc->sc_cdev = make_dev(&iwn_cdevsw, device_get_unit(dev),
+	    UID_ROOT, GID_WHEEL, 0600, "%s", device_get_nameunit(dev));
+	if (sc->sc_cdev == NULL) {
+		device_printf(dev, "failed to create debug character device\n");
+	} else {
+		sc->sc_cdev->si_drv1 = sc;
+	}
 	return 0;
 fail:
 	iwn_detach(dev);
@@ -1415,6 +1432,11 @@ iwn_detach(device_t dev)
 	if (sc->mem != NULL)
 		bus_release_resource(dev, SYS_RES_MEMORY,
 		    rman_get_rid(sc->mem), sc->mem);
+
+	if (sc->sc_cdev) {
+		destroy_dev(sc->sc_cdev);
+		sc->sc_cdev = NULL;
+	}
 
 	DPRINTF(sc, IWN_DEBUG_TRACE, "->%s: end\n", __func__);
 	IWN_LOCK_DESTROY(sc);
@@ -4999,18 +5021,37 @@ iwn_watchdog(void *arg)
 }
 
 static int
-iwn_ioctl(struct ieee80211com *ic, u_long cmd, void *data)
+iwn_cdev_open(struct cdev *dev, int flags, int type, struct thread *td)
 {
-	struct ifreq *ifr = data;
-	struct iwn_softc *sc = ic->ic_softc;
-	int error = 0;
- 
+
+	return (0);
+}
+
+static int
+iwn_cdev_close(struct cdev *dev, int flags, int type, struct thread *td)
+{
+
+	return (0);
+}
+
+static int
+iwn_cdev_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data, int fflag,
+    struct thread *td)
+{
+	int rc;
+	struct iwn_softc *sc = dev->si_drv1;
+	struct iwn_ioctl_data *d;
+
+	rc = priv_check(td, PRIV_DRIVER);
+	if (rc != 0)
+		return (0);
+
 	switch (cmd) {
 	case SIOCGIWNSTATS:
+		d = (struct iwn_ioctl_data *) data;
 		IWN_LOCK(sc);
 		/* XXX validate permissions/memory/etc? */
-		error = copyout(&sc->last_stat, ifr->ifr_data,
-		    sizeof(struct iwn_stats));
+		rc = copyout(&sc->last_stat, d->dst_addr, sizeof(struct iwn_stats));
 		IWN_UNLOCK(sc);
 		break;
 	case SIOCZIWNSTATS:
@@ -5019,10 +5060,17 @@ iwn_ioctl(struct ieee80211com *ic, u_long cmd, void *data)
 		IWN_UNLOCK(sc);
 		break;
 	default:
-		error = ENOTTY;
+		rc = EINVAL;
 		break;
 	}
-	return (error);
+	return (rc);
+}
+
+static int
+iwn_ioctl(struct ieee80211com *ic, u_long cmd, void *data)
+{
+
+	return (ENOTTY);
 }
 
 static void
@@ -8979,3 +9027,5 @@ iwn_debug_register(struct iwn_softc *sc)
 	DPRINTF(sc, IWN_DEBUG_REGISTER,"%s","\n");
 }
 #endif
+
+
