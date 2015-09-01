@@ -666,8 +666,8 @@ struct gate_descriptor *idt = &idt0[0];	/* interrupt descriptor table */
 
 static char dblfault_stack[PAGE_SIZE] __aligned(16);
 
-static char nmi0_stack[PAGE_SIZE] __aligned(16);
-CTASSERT(sizeof(struct nmi_pcpu) == 16);
+static char nmi0_stack[NMI_STACK_SIZE] __aligned(16);
+CTASSERT(sizeof(struct nmi_pcpu) % 16 == 0);
 
 struct amd64tss common_tss[MAXCPU];
 

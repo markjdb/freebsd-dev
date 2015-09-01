@@ -208,7 +208,7 @@ init_secondary(void)
 	common_tss[cpu].tss_ist1 = (long)&doublefault_stack[PAGE_SIZE];
 
 	/* The NMI stack runs on IST2. */
-	np = ((struct nmi_pcpu *) &nmi_stack[PAGE_SIZE]) - 1;
+	np = ((struct nmi_pcpu *)&nmi_stack[NMI_STACK_SIZE]) - 1;
 	common_tss[cpu].tss_ist2 = (long) np;
 
 	/* Prepare private GDT */
@@ -351,7 +351,7 @@ native_start_all_aps(void)
 		    kstack_pages * PAGE_SIZE, M_WAITOK | M_ZERO);
 		doublefault_stack = (char *)kmem_malloc(kernel_arena,
 		    PAGE_SIZE, M_WAITOK | M_ZERO);
-		nmi_stack = (char *)kmem_malloc(kernel_arena, PAGE_SIZE,
+		nmi_stack = (char *)kmem_malloc(kernel_arena, NMI_STACK_SIZE,
 		    M_WAITOK | M_ZERO);
 		dpcpu = (void *)kmem_malloc(kernel_arena, DPCPU_SIZE,
 		    M_WAITOK | M_ZERO);

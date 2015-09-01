@@ -223,7 +223,8 @@ start_xen_ap(int cpu)
 	doublefault_stack =
 	    (char *)kmem_malloc(kernel_arena, PAGE_SIZE, M_WAITOK | M_ZERO);
 	nmi_stack =
-	    (char *)kmem_malloc(kernel_arena, PAGE_SIZE, M_WAITOK | M_ZERO);
+	    (char *)kmem_malloc(kernel_arena, NMI_STACK_SIZE,
+		M_WAITOK | M_ZERO);
 	dpcpu =
 	    (void *)kmem_malloc(kernel_arena, DPCPU_SIZE, M_WAITOK | M_ZERO);
 

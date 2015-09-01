@@ -134,6 +134,12 @@ struct intsrc {
 struct trapframe;
 
 /*
+ * Per-CPU NMI stack parameters.
+ */
+#define	NMI_STACK_PAGES	1
+#define	NMI_STACK_SIZE	(NMI_STACK_PAGES * PAGE_SIZE)
+
+/*
  * The following data structure holds per-cpu data, and is placed just
  * above the top of the space used for the NMI stack.
  */
