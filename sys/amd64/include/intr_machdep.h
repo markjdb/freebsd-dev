@@ -131,8 +131,6 @@ struct intsrc {
 	u_int is_handlers;
 };
 
-struct trapframe;
-
 /*
  * Per-CPU NMI stack parameters.
  */
@@ -141,12 +139,22 @@ struct trapframe;
 
 /*
  * The following data structure holds per-cpu data, and is placed just
- * above the top of the space used for the NMI stack.
+ * above the top of the space used for the NMI stack.  Its size must be
+ * a multiple of 16 bytes so that the stack pointer is aligned upon entry
+ * to the NMI handler.
  */
 struct nmi_pcpu {
-	register_t	np_pcpu;
-	register_t	__padding;	/* pad to 16 bytes */
+	register_t	np_pcpu;	/* PCPU base address */
+	register_t	np_scratch1;	/* scratch space */
+	register_t	np_scratch2;
+	register_t	np_if_rip;	/* saved interrupt frame registers */
+	register_t	np_if_cs;
+	register_t	np_if_rflags;
+	register_t	np_if_rsp;
+	register_t	np_if_ss;
 };
+
+struct trapframe;
 
 extern struct mtx icu_lock;
 extern int elcr_found;

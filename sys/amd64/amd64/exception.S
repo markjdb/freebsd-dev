@@ -457,8 +457,42 @@ IDTVEC(fast_syscall32)
  */
 
 IDTVEC(nmi)
-	subq	$TF_RIP,%rsp
-	movl	$(T_NMI),TF_TRAPNO(%rsp)
+	movq	%r8,NMI_SCRATCH1(%rsp)
+	movq	%r9,NMI_SCRATCH2(%rsp)
+	testb	$SEL_RPL_MASK,IF_CS(%rsp)
+	jnz	nmi_saveregs
+	/* Were we already on the NMI stack when the interrupt occurred? */
+	movq	%rsp,%r8
+	addq	$NMI_FRAME_OFFSET,%r8
+	cmpq	%r8,IF_RSP(%rsp)
+	ja	nmi_saveregs
+	subq	$NMI_STACK_SIZE,%r8
+	cmpq	%r8,IF_RSP(%rsp)
+	/* We interrupted an NMI, so perform the necessary fixups. */
+	ja	nmi_reenter
+nmi_saveregs:
+	/*
+	 * Make a second copy of the interrupt frame immediately below the one
+	 * that the hardware saved for us.  This is needed to support re-entrant
+	 * NMIs.
+	 */
+	movq	%rsp,%r9
+	subq	$IF_SIZE,%r9
+	movq	IF_SS(%rsp),%r8
+	movq	%r8,IF_SS(%r9)
+	movq	IF_RSP(%rsp),%r8
+	movq	%r8,IF_RSP(%r9)
+	movq	IF_RFLAGS(%rsp),%r8
+	movq	%r8,IF_RFLAGS(%r9)
+	movq	IF_CS(%rsp),%r8
+	movq	%r8,IF_CS(%r9)
+	movq	IF_RIP(%rsp),%r8
+	movq	%r8,IF_RIP(%r9)
+nmi_fromtrampoline:
+	movq	NMI_SCRATCH1(%rsp),%r8
+	movq	NMI_SCRATCH2(%rsp),%r9
+	subq	$TF_SIZE,%rsp
+	movl	$T_NMI,TF_TRAPNO(%rsp)
 	movq	$0,TF_ADDR(%rsp)
 	movq	$0,TF_ERR(%rsp)
 	movq	%rdi,TF_RDI(%rsp)
@@ -493,8 +527,11 @@ IDTVEC(nmi)
 	movq	%rax,%r12
 	shlq	$32,%rdx
 	orq	%rdx,%r12
-	/* Retrieve and load the canonical value for GS.base. */
-	movq	TF_SIZE(%rsp),%rdx
+	/*
+	 * Retrieve and load the canonical value for GS.base.  We need to
+	 * skip past an extra copy of the interrupt frame to access it.
+	 */
+	movq	(TF_SIZE+IF_SIZE)(%rsp),%rdx
 	movl	%edx,%eax
 	shrq	$32,%rdx
 	wrmsr
@@ -575,7 +612,6 @@ nocallchain:
 #endif
 	testl	%ebx,%ebx
 	jnz	doreti_exit
-nmi_kernelexit:
 	/*
 	 * Put back the preserved MSR_GSBASE value.
 	 */
@@ -602,6 +638,75 @@ nmi_restoreregs:
 	movq	TF_R15(%rsp),%r15
 	addq	$TF_RIP,%rsp
 	jmp	doreti_iret
+nmi_reenter:
+	/*
+	 * Were we in the NMI iret trampoline?  If so, the NMI handler is about
+	 * to be restarted, so an NMI was already latched and we have nothing
+	 * to do.
+	 */
+	movq	IF_RIP(%rsp),%r8
+	cmpq	%r8,nmi_iret_trampoline
+	ja	nmi_latch
+	cmpq	%r8,nmi_iret_trampoline_end
+	jbe	nmi_latch
+	jmp	nmi_latched
+nmi_latch:
+	/*
+	 * Copy the first NMI's interrupt frame to NMI PCPU space.  This lets
+	 * us update the current frame so that the first NMI jumps to the
+	 * trampoline when handler has finished and executes an 'iretq'.  If
+	 * an NMI is already latched, this has already been done, but it
+	 * doesn't hurt.
+	 */
+	movq	%rsp,%r9
+	subq	$IF_SIZE,%r9
+	movq	IF_SS(%r9),%r8
+	movq	%r8,NMI_IF_SS(%rsp)
+	movq	IF_RSP(%r9),%r8
+	movq	%r8,NMI_IF_RSP(%rsp)
+	movq	IF_RFLAGS(%r9),%r8
+	movq	%r8,NMI_IF_RFLAGS(%rsp)
+	movq	IF_CS(%r9),%r8
+	movq	%r8,NMI_IF_CS(%rsp)
+	movq	IF_RIP(%r9),%r8
+	movq	%r8,NMI_IF_RIP(%rsp)
+	/*
+	 * We want the interrupted NMI handler to jump to the trampoline
+	 * upon execution of an 'iretq'.
+	 */
+	movq	%rsp,%r9
+	subq	$IF_SIZE,%r9
+	movq	$nmi_iret_trampoline,IF_RIP(%r9)
+	movq	%cs,IF_CS(%r9)
+	pushfq
+	popq	%r8
+	movq	%r8,IF_RFLAGS(%r9)
+	movq	%rsp,IF_RSP(%r9)
+	movq	%ss,IF_SS(%r9)
+nmi_latched:
+	movq	NMI_SCRATCH1(%rsp),%r8
+	movq	NMI_SCRATCH2(%rsp),%r9
+	jmp	doreti_iret
+nmi_iret_trampoline:
+	movq	%r8,NMI_SCRATCH1(%rsp)
+	movq	%r9,NMI_SCRATCH2(%rsp)
+	/* Copy back the original interrupt frame from PCPU NMI space. */
+	movq	%rsp,%r9
+	subq	$IF_SIZE,%r9
+	movq	NMI_IF_SS(%rsp),%r8
+	movq	%r8,IF_SS(%r9)
+	movq	NMI_IF_RSP(%rsp),%r8
+	movq	%r8,IF_RSP(%r9)
+	movq	NMI_IF_RFLAGS(%rsp),%r8
+	movq	%r8,IF_RFLAGS(%r9)
+	movq	NMI_IF_CS(%rsp),%r8
+	movq	%r8,IF_CS(%r9)
+	movq	NMI_IF_RIP(%rsp),%r8
+	movq	%r8,IF_RIP(%r9)
+	/* Restart the NMI handler. */
+	jmp	nmi_fromtrampoline
+	/* NMI trampoline boundary. */
+nmi_iret_trampoline_end:
 
 ENTRY(fork_trampoline)
 	movq	%r12,%rdi		/* function */

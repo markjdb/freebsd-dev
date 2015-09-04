@@ -44,6 +44,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/assym.h>
 #include <sys/bio.h>
 #include <sys/buf.h>
+#include <sys/bus.h>
 #include <sys/proc.h>
 #ifdef	HWPMC_HOOKS
 #include <sys/pmckern.h>
@@ -60,9 +61,9 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
-#include <sys/proc.h>
 #include <x86/apicreg.h>
 #include <machine/cpu.h>
+#include <machine/intr_machdep.h>
 #include <machine/pcb.h>
 #include <machine/sigframe.h>
 #include <machine/proc.h>
@@ -159,34 +160,55 @@ ASSYM(PCB_32BIT, PCB_32BIT);
 
 ASSYM(COMMON_TSS_RSP0, offsetof(struct amd64tss, tss_rsp0));
 
-ASSYM(TF_R15, offsetof(struct trapframe, tf_r15));
-ASSYM(TF_R14, offsetof(struct trapframe, tf_r14));
-ASSYM(TF_R13, offsetof(struct trapframe, tf_r13));
-ASSYM(TF_R12, offsetof(struct trapframe, tf_r12));
-ASSYM(TF_R11, offsetof(struct trapframe, tf_r11));
-ASSYM(TF_R10, offsetof(struct trapframe, tf_r10));
-ASSYM(TF_R9, offsetof(struct trapframe, tf_r9));
-ASSYM(TF_R8, offsetof(struct trapframe, tf_r8));
-ASSYM(TF_RDI, offsetof(struct trapframe, tf_rdi));
-ASSYM(TF_RSI, offsetof(struct trapframe, tf_rsi));
-ASSYM(TF_RBP, offsetof(struct trapframe, tf_rbp));
-ASSYM(TF_RBX, offsetof(struct trapframe, tf_rbx));
-ASSYM(TF_RDX, offsetof(struct trapframe, tf_rdx));
-ASSYM(TF_RCX, offsetof(struct trapframe, tf_rcx));
-ASSYM(TF_RAX, offsetof(struct trapframe, tf_rax));
-ASSYM(TF_TRAPNO, offsetof(struct trapframe, tf_trapno));
-ASSYM(TF_ADDR, offsetof(struct trapframe, tf_addr));
-ASSYM(TF_ERR, offsetof(struct trapframe, tf_err));
-ASSYM(TF_RIP, offsetof(struct trapframe, tf_rip));
-ASSYM(TF_CS, offsetof(struct trapframe, tf_cs));
-ASSYM(TF_RFLAGS, offsetof(struct trapframe, tf_rflags));
-ASSYM(TF_RSP, offsetof(struct trapframe, tf_rsp));
-ASSYM(TF_SS, offsetof(struct trapframe, tf_ss));
-ASSYM(TF_DS, offsetof(struct trapframe, tf_ds));
-ASSYM(TF_ES, offsetof(struct trapframe, tf_es));
-ASSYM(TF_FS, offsetof(struct trapframe, tf_fs));
-ASSYM(TF_GS, offsetof(struct trapframe, tf_gs));
-ASSYM(TF_FLAGS, offsetof(struct trapframe, tf_flags));
+#define	INTR_FRAME_SIZE	(5 * sizeof(register_t))
+
+ASSYM(NMI_FRAME_OFFSET, INTR_FRAME_SIZE + sizeof(struct nmi_pcpu));
+ASSYM(NMI_IF_RIP, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_if_rip));
+ASSYM(NMI_IF_CS, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_if_cs));
+ASSYM(NMI_IF_RFLAGS, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_if_rflags));
+ASSYM(NMI_IF_RSP, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_if_rsp));
+ASSYM(NMI_IF_SS, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_if_ss));
+ASSYM(NMI_SCRATCH1, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_scratch1));
+ASSYM(NMI_SCRATCH2, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_scratch2));
+ASSYM(NMI_STACK_SIZE, NMI_STACK_SIZE);
+
+#define	TF_OFF(field)	offsetof(struct trapframe, tf_ ## field)
+
+ASSYM(IF_RIP, TF_OFF(rip) - TF_OFF(rip));
+ASSYM(IF_CS, TF_OFF(cs) - TF_OFF(rip));
+ASSYM(IF_RFLAGS, TF_OFF(rflags) - TF_OFF(rip));
+ASSYM(IF_RSP, TF_OFF(rsp) - TF_OFF(rip));
+ASSYM(IF_SS, TF_OFF(ss) - TF_OFF(rip));
+ASSYM(IF_SIZE, INTR_FRAME_SIZE);
+
+ASSYM(TF_R15, TF_OFF(r15));
+ASSYM(TF_R14, TF_OFF(r14));
+ASSYM(TF_R13, TF_OFF(r13));
+ASSYM(TF_R12, TF_OFF(r12));
+ASSYM(TF_R11, TF_OFF(r11));
+ASSYM(TF_R10, TF_OFF(r10));
+ASSYM(TF_R9, TF_OFF(r9));
+ASSYM(TF_R8, TF_OFF(r8));
+ASSYM(TF_RDI, TF_OFF(rdi));
+ASSYM(TF_RSI, TF_OFF(rsi));
+ASSYM(TF_RBP, TF_OFF(rbp));
+ASSYM(TF_RBX, TF_OFF(rbx));
+ASSYM(TF_RDX, TF_OFF(rdx));
+ASSYM(TF_RCX, TF_OFF(rcx));
+ASSYM(TF_RAX, TF_OFF(rax));
+ASSYM(TF_TRAPNO, TF_OFF(trapno));
+ASSYM(TF_ADDR, TF_OFF(addr));
+ASSYM(TF_ERR, TF_OFF(err));
+ASSYM(TF_RIP, TF_OFF(rip));
+ASSYM(TF_CS, TF_OFF(cs));
+ASSYM(TF_RFLAGS, TF_OFF(rflags));
+ASSYM(TF_RSP, TF_OFF(rsp));
+ASSYM(TF_SS, TF_OFF(ss));
+ASSYM(TF_DS, TF_OFF(ds));
+ASSYM(TF_ES, TF_OFF(es));
+ASSYM(TF_FS, TF_OFF(fs));
+ASSYM(TF_GS, TF_OFF(gs));
+ASSYM(TF_FLAGS, TF_OFF(flags));
 ASSYM(TF_SIZE, sizeof(struct trapframe));
 ASSYM(TF_HASSEGS, TF_HASSEGS);
 
@@ -215,7 +237,7 @@ ASSYM(PC_LDT, offsetof(struct pcpu, pc_ldt));
 ASSYM(PC_COMMONTSSP, offsetof(struct pcpu, pc_commontssp));
 ASSYM(PC_TSS, offsetof(struct pcpu, pc_tss));
 ASSYM(PC_PM_SAVE_CNT, offsetof(struct pcpu, pc_pm_save_cnt));
- 
+
 ASSYM(LA_EOI, LAPIC_EOI * LAPIC_MEM_MUL);
 ASSYM(LA_ISR, LAPIC_ISR0 * LAPIC_MEM_MUL);
 
