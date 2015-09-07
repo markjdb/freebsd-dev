@@ -162,6 +162,8 @@ ASSYM(COMMON_TSS_RSP0, offsetof(struct amd64tss, tss_rsp0));
 
 #define	INTR_FRAME_SIZE	(5 * sizeof(register_t))
 
+ASSYM(NMI_FLAGS, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_flags));
+ASSYM(NMI_LATCHED, NMI_LATCHED);
 ASSYM(NMI_FRAME_OFFSET, INTR_FRAME_SIZE + sizeof(struct nmi_pcpu));
 ASSYM(NMI_IF_RIP, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_if_rip));
 ASSYM(NMI_IF_CS, INTR_FRAME_SIZE + offsetof(struct nmi_pcpu, np_if_cs));

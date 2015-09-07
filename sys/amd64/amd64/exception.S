@@ -640,9 +640,14 @@ nmi_restoreregs:
 	jmp	doreti_iret
 nmi_reenter:
 	/*
+	 * If an NMI is already latched, we have nothing to do.
+	 */
+	testq	$NMI_LATCHED,NMI_FLAGS(%rsp)
+	jnz	nmi_latched
+	/*
 	 * Were we in the NMI iret trampoline?  If so, the NMI handler is about
-	 * to be restarted, so an NMI was already latched and we have nothing
-	 * to do.
+	 * to be restarted, so an NMI was already latched and we thus have
+	 * nothing to do.
 	 */
 	movq	IF_RIP(%rsp),%r8
 	cmpq	%r8,nmi_iret_trampoline
@@ -653,9 +658,7 @@ nmi_latch:
 	/*
 	 * Copy the first NMI's interrupt frame to NMI PCPU space.  This lets
 	 * us update the current frame so that the first NMI jumps to the
-	 * trampoline when handler has finished and executes an 'iretq'.  If
-	 * an NMI is already latched, this has already been done, but it
-	 * doesn't hurt.
+	 * trampoline when handler has finished and executes an 'iretq'.
 	 */
 	movq	%rsp,%r9
 	subq	$IF_SIZE,%r9
@@ -682,6 +685,7 @@ nmi_latch:
 	movq	%r8,IF_RFLAGS(%r9)
 	movq	%rsp,IF_RSP(%r9)
 	movq	%ss,IF_SS(%r9)
+	orq	$NMI_LATCHED,NMI_FLAGS(%rsp)
 nmi_latched:
 	movq	NMI_SCRATCH1(%rsp),%r8
 	movq	NMI_SCRATCH2(%rsp),%r9

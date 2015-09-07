@@ -147,6 +147,9 @@ struct nmi_pcpu {
 	register_t	np_pcpu;	/* PCPU base address */
 	register_t	np_scratch1;	/* scratch space */
 	register_t	np_scratch2;
+#define	NMI_LATCHED	0x01
+	register_t	np_flags;
+	register_t	np_padding;
 	register_t	np_if_rip;	/* saved interrupt frame registers */
 	register_t	np_if_cs;
 	register_t	np_if_rflags;
