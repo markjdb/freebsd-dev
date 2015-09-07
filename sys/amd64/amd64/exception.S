@@ -648,8 +648,7 @@ nmi_reenter:
 	cmpq	%r8,nmi_iret_trampoline
 	ja	nmi_latch
 	cmpq	%r8,nmi_iret_trampoline_end
-	jbe	nmi_latch
-	jmp	nmi_latched
+	ja	nmi_latched
 nmi_latch:
 	/*
 	 * Copy the first NMI's interrupt frame to NMI PCPU space.  This lets
