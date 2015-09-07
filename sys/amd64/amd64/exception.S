@@ -563,33 +563,18 @@ nmi_calltrap:
 	jz	nocallchain
 	testl	$TDP_CALLCHAIN,TD_PFLAGS(%rax) /* flagged for capture? */
 	jz	nocallchain
-	/*
-	 * A user callchain is to be captured, so:
-	 * - Move execution to the regular kernel stack, to allow for
-	 *   nested NMI interrupts.
-	 * - Take the processor out of "NMI" mode by faking an "iret".
-	 * - Enable interrupts, so that copyin() can work.
-	 */
-	movq	%rsp,%rsi	/* source stack pointer */
-	movq	$TF_SIZE,%rcx
-	movq	PCPU(RSP0),%rdx
-	subq	%rcx,%rdx
-	movq	%rdx,%rdi	/* destination stack pointer */
-
-	shrq	$3,%rcx		/* trap frame size in long words */
-	cld
-	rep
-	movsq			/* copy trapframe */
 
 	movl	%ss,%eax
 	pushq	%rax		/* tf_ss */
-	pushq	%rdx		/* tf_rsp (on kernel stack) */
+	pushq	%rsp
 	pushfq			/* tf_rflags */
 	movl	%cs,%eax
 	pushq	%rax		/* tf_cs */
-	pushq	$outofnmi	/* tf_rip */
+	pushq	$nmi_user_trampoline /* tf_rip */
 	iretq
 outofnmi:
+	movq	PCPU(RSP0),%rsp
+	subq	$TF_SIZE,%rsp
 	/*
 	 * At this point the processor has exited NMI mode and is running
 	 * with interrupts turned off on the normal kernel stack.
@@ -620,7 +605,6 @@ nocallchain:
 	movl	%edx,%eax
 	shrq	$32,%rdx
 	wrmsr
-nmi_restoreregs:
 	movq	TF_RDI(%rsp),%rdi
 	movq	TF_RSI(%rsp),%rsi
 	movq	TF_RDX(%rsp),%rdx
@@ -709,6 +693,30 @@ nmi_iret_trampoline:
 	/* Restart the NMI handler. */
 	jmp	nmi_fromtrampoline
 	/* NMI trampoline boundary. */
+#ifdef HWPMC_HOOKS
+nmi_user_trampoline:
+	/* Copy the trap frame to the kernel stack. */ 
+	/*
+	 * A user callchain is to be captured, so:
+	 * - Move execution to the regular kernel stack, to allow for
+	 *   nested NMI interrupts.
+	 * - Take the processor out of "NMI" mode by faking an "iret".
+	 * - Enable interrupts, so that copyin() can work.
+	 */
+	movq	%rsp,%rsi	/* source stack pointer */
+	movq	$TF_SIZE,%rcx
+	movq	PCPU(RSP0),%rdx
+	subq	%rcx,%rdx
+	movq	%rdx,%rdi	/* destination stack pointer */
+
+	shrq	$3,%rcx		/* trap frame size in long words */
+	cld
+	rep movsq		/* copy trapframe */
+
+	testq	$NMI_LATCHED,NMI_FLAGS(%rsp)
+	jz	outofnmi
+	jmp	nmi_iret_trampoline
+#endif
 nmi_iret_trampoline_end:
 
 ENTRY(fork_trampoline)

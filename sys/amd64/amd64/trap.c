@@ -221,6 +221,7 @@ trap(struct trapframe *frame)
 		if (stack_nmi_handler(frame) != 0)
 			goto out;
 #endif
+		goto out;
 	}
 
 	if (type == T_MCHK) {
