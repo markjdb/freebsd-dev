@@ -488,9 +488,9 @@ nmi_saveregs:
 	movq	%r8,IF_CS(%r9)
 	movq	IF_RIP(%rsp),%r8
 	movq	%r8,IF_RIP(%r9)
-nmi_fromtrampoline:
 	movq	NMI_SCRATCH1(%rsp),%r8
 	movq	NMI_SCRATCH2(%rsp),%r9
+
 	subq	$TF_SIZE,%rsp
 	movl	$T_NMI,TF_TRAPNO(%rsp)
 	movq	$0,TF_ADDR(%rsp)
@@ -515,6 +515,7 @@ nmi_fromtrampoline:
 	movw	%es,TF_ES(%rsp)
 	movw	%ds,TF_DS(%rsp)
 	movl	$TF_HASSEGS,TF_FLAGS(%rsp)
+nmi_fromtrampoline:
 	cld
 	xorl	%ebx,%ebx
 	testb	$SEL_RPL_MASK,TF_CS(%rsp)
@@ -680,9 +681,8 @@ nmi_latched:
 	movq	NMI_SCRATCH2(%rsp),%r9
 	jmp	doreti_iret
 nmi_iret_trampoline:
-	movq	%r8,NMI_SCRATCH1(%rsp)
-	movq	%r9,NMI_SCRATCH2(%rsp)
 	/* Copy back the original interrupt frame from PCPU NMI space. */
+	/* XXX consider using movs */
 	movq	%rsp,%r9
 	subq	$IF_SIZE,%r9
 	movq	NMI_IF_SS(%rsp),%r8
@@ -697,6 +697,7 @@ nmi_iret_trampoline:
 	movq	%r8,IF_RIP(%r9)
 	/* Restart the NMI handler. */
 	andq	$~NMI_LATCHED,NMI_FLAGS(%rsp)
+	subq	$TF_SIZE,%rsp
 	jmp	nmi_fromtrampoline
 #ifdef HWPMC_HOOKS
 nmi_user_trampoline:
