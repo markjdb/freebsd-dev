@@ -564,17 +564,16 @@ nmi_calltrap:
 	testl	$TDP_CALLCHAIN,TD_PFLAGS(%rax) /* flagged for capture? */
 	jz	nocallchain
 
+	movq	%rsp,%rsi
 	movl	%ss,%eax
 	pushq	%rax		/* tf_ss */
-	pushq	%rsp
+	pushq	%rsi		/* tf_rsp */
 	pushfq			/* tf_rflags */
 	movl	%cs,%eax
 	pushq	%rax		/* tf_cs */
 	pushq	$nmi_user_trampoline /* tf_rip */
 	iretq
 outofnmi:
-	movq	PCPU(RSP0),%rsp
-	subq	$TF_SIZE,%rsp
 	/*
 	 * At this point the processor has exited NMI mode and is running
 	 * with interrupts turned off on the normal kernel stack.
@@ -632,12 +631,18 @@ nmi_reenter:
 	 * Were we in the NMI iret trampoline?  If so, the NMI handler is about
 	 * to be restarted, so an NMI was already latched and we thus have
 	 * nothing to do.
+	 *
+	 * XXX ifdef hwpmc_hooks?
 	 */
 	movq	IF_RIP(%rsp),%r8
 	cmpq	%r8,nmi_iret_trampoline
 	ja	nmi_latch
-	cmpq	%r8,nmi_iret_trampoline_end
+	cmpq	%r8,nmi_user_trampoline
 	ja	nmi_latched
+	cmpq	%r8,nmi_trampoline_end
+	jbe	nmi_latch
+	/* Restart the user trampoline. */
+	movq	$nmi_user_trampoline,IF_RIP(%rsp)
 nmi_latch:
 	/*
 	 * Copy the first NMI's interrupt frame to NMI PCPU space.  This lets
@@ -691,18 +696,10 @@ nmi_iret_trampoline:
 	movq	NMI_IF_RIP(%rsp),%r8
 	movq	%r8,IF_RIP(%r9)
 	/* Restart the NMI handler. */
+	andq	$~NMI_LATCHED,NMI_FLAGS(%rsp)
 	jmp	nmi_fromtrampoline
-	/* NMI trampoline boundary. */
 #ifdef HWPMC_HOOKS
 nmi_user_trampoline:
-	/* Copy the trap frame to the kernel stack. */ 
-	/*
-	 * A user callchain is to be captured, so:
-	 * - Move execution to the regular kernel stack, to allow for
-	 *   nested NMI interrupts.
-	 * - Take the processor out of "NMI" mode by faking an "iret".
-	 * - Enable interrupts, so that copyin() can work.
-	 */
 	movq	%rsp,%rsi	/* source stack pointer */
 	movq	$TF_SIZE,%rcx
 	movq	PCPU(RSP0),%rdx
@@ -713,11 +710,17 @@ nmi_user_trampoline:
 	cld
 	rep movsq		/* copy trapframe */
 
-	testq	$NMI_LATCHED,NMI_FLAGS(%rsp)
-	jz	outofnmi
-	jmp	nmi_iret_trampoline
+	testq	$NMI_LATCHED,(NMI_FLAGS+TF_SIZE)(%rsp)
+	jnz	nmi_iret_trampoline
+	/*
+	 * Take ourselves off the NMI stack.  If an NMI arrives after this
+	 * instruction is executed, it'll be handled in the usual way.
+	 */
+	movq	%rdx,%rsp
+	jmp	outofnmi
 #endif
-nmi_iret_trampoline_end:
+	/* NMI trampoline boundary. */
+nmi_trampoline_end:
 
 ENTRY(fork_trampoline)
 	movq	%r12,%rdi		/* function */
