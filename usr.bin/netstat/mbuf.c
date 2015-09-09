@@ -117,6 +117,10 @@ mbpr(void *kvmd, u_long mbaddr)
 		}
 	}
 
+	if (fetch_stats("kern.ipc.sfstat", mbaddr, &sfstat, sizeof(sfstat),
+	    kread_counters) != 0)
+		goto out;
+
 	mtp = memstat_mtl_find(mtlp, ALLOCATOR_UMA, MBUF_MEM_NAME);
 	if (mtp == NULL) {
 		xo_warnx("memstat_mtl_find: zone %s not found", MBUF_MEM_NAME);
@@ -310,27 +314,17 @@ mbpr(void *kvmd, u_long mbaddr)
 	    jumbop_failures, jumbo9_failures, jumbo16_failures,
 	    jumbop_size / 1024);
 
-	if (live) {
-		mlen = sizeof(nsfbufs);
-		if (!sysctlbyname("kern.ipc.nsfbufs", &nsfbufs, &mlen, NULL,
-		    0) &&
-		    !sysctlbyname("kern.ipc.nsfbufsused", &nsfbufsused,
-		    &mlen, NULL, 0) &&
-		    !sysctlbyname("kern.ipc.nsfbufspeak", &nsfbufspeak,
-		    &mlen, NULL, 0))
-			xo_emit("{:nsfbufs-current/%d}/{:nsfbufs-peak/%d}/"
-			    "{:nsfbufs/%d} "
-			    "{N:sfbufs in use (current\\/peak\\/max)}\n",
-			    nsfbufsused, nsfbufspeak, nsfbufs);
-		mlen = sizeof(sfstat);
-		if (sysctlbyname("kern.ipc.sfstat", &sfstat, &mlen, NULL, 0)) {
-			xo_warn("kern.ipc.sfstat");
-			goto out;
-		}
-	} else {
-		if (kread_counters(mbaddr, (char *)&sfstat, sizeof sfstat) != 0)
-			goto out;
-	}
+	mlen = sizeof(nsfbufs);
+	if (sysctlbyname("kern.ipc.nsfbufs", &nsfbufs, &mlen, NULL, 0) == 0 &&
+	    sysctlbyname("kern.ipc.nsfbufsused", &nsfbufsused, &mlen,
+	    NULL, 0) == 0 &&
+	    sysctlbyname("kern.ipc.nsfbufspeak", &nsfbufspeak, &mlen,
+	    NULL, 0) == 0)
+		xo_emit("{:nsfbufs-current/%d}/{:nsfbufs-peak/%d}/"
+		    "{:nsfbufs/%d} "
+		    "{N:sfbufs in use (current\\/peak\\/max)}\n",
+		    nsfbufsused, nsfbufspeak, nsfbufs);
+
 	xo_emit("{:sfbufs-alloc-failed/%ju} {N:requests for sfbufs denied}\n",
 	    (uintmax_t)sfstat.sf_allocfail);
 	xo_emit("{:sfbufs-alloc-wait/%ju} {N:requests for sfbufs delayed}\n",
@@ -338,7 +332,7 @@ mbpr(void *kvmd, u_long mbaddr)
 	xo_emit("{:sfbufs-io-count/%ju} "
 	    "{N:requests for I\\/O initiated by sendfile}\n",
 	    (uintmax_t)sfstat.sf_iocnt);
-out:
 	xo_close_container("mbuf-statistics");
+out:
 	memstat_mtl_free(mtlp);
 }
