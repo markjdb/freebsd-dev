@@ -437,7 +437,7 @@ static int ctl_scsiio_lun_check(struct ctl_lun *lun,
 #ifdef notyet
 static void ctl_failover(void);
 #endif
-static void ctl_clear_ua(struct ctl_softc *ctl_softc, uint32_t initidx,
+static void ctl_clr_ua_allluns(struct ctl_softc *ctl_softc, uint32_t initidx,
 			 ctl_ua_type ua_type);
 static int ctl_scsiio_precheck(struct ctl_softc *ctl_softc,
 			       struct ctl_scsiio *ctsio);
@@ -1009,6 +1009,20 @@ ctl_clr_ua_all(struct ctl_lun *lun, uint32_t except, ctl_ua_type ua)
 				continue;
 			lun->pending_ua[i][j] &= ~ua;
 		}
+	}
+}
+
+static void
+ctl_clr_ua_allluns(struct ctl_softc *ctl_softc, uint32_t initidx,
+    ctl_ua_type ua_type)
+{
+	struct ctl_lun *lun;
+
+	mtx_assert(&ctl_softc->ctl_lock, MA_OWNED);
+	STAILQ_FOREACH(lun, &ctl_softc->lun_list, links) {
+		mtx_lock(&lun->lun_lock);
+		ctl_clr_ua(lun, initidx, ua_type);
+		mtx_unlock(&lun->lun_lock);
 	}
 }
 
@@ -3100,7 +3114,8 @@ ctl_lun_map_init(struct ctl_port *port)
 		return (ENOMEM);
 	for (i = 0; i < CTL_MAX_LUNS; i++)
 		port->lun_map[i] = UINT32_MAX;
-	if (port->status & CTL_PORT_STATUS_ONLINE) {
+	if (port->status & CTL_PORT_STATUS_ONLINE &&
+	    port->lun_disable != NULL) {
 		STAILQ_FOREACH(lun, &softc->lun_list, links)
 			port->lun_disable(port->targ_lun_arg, lun->lun);
 	}
@@ -3117,7 +3132,8 @@ ctl_lun_map_deinit(struct ctl_port *port)
 		return (0);
 	free(port->lun_map, M_CTL);
 	port->lun_map = NULL;
-	if (port->status & CTL_PORT_STATUS_ONLINE) {
+	if (port->status & CTL_PORT_STATUS_ONLINE &&
+	    port->lun_enable != NULL) {
 		STAILQ_FOREACH(lun, &softc->lun_list, links)
 			port->lun_enable(port->targ_lun_arg, lun->lun);
 	}
@@ -3137,7 +3153,8 @@ ctl_lun_map_set(struct ctl_port *port, uint32_t plun, uint32_t glun)
 	}
 	old = port->lun_map[plun];
 	port->lun_map[plun] = glun;
-	if ((port->status & CTL_PORT_STATUS_ONLINE) && old >= CTL_MAX_LUNS)
+	if ((port->status & CTL_PORT_STATUS_ONLINE) && old >= CTL_MAX_LUNS &&
+	    port->lun_enable != NULL)
 		port->lun_enable(port->targ_lun_arg, plun);
 	return (0);
 }
@@ -3151,7 +3168,8 @@ ctl_lun_map_unset(struct ctl_port *port, uint32_t plun)
 		return (0);
 	old = port->lun_map[plun];
 	port->lun_map[plun] = UINT32_MAX;
-	if ((port->status & CTL_PORT_STATUS_ONLINE) && old < CTL_MAX_LUNS)
+	if ((port->status & CTL_PORT_STATUS_ONLINE) && old < CTL_MAX_LUNS &&
+	    port->lun_disable != NULL)
 		port->lun_disable(port->targ_lun_arg, plun);
 	return (0);
 }
@@ -3983,7 +4001,7 @@ ctl_alloc_lun(struct ctl_softc *ctl_softc, struct ctl_lun *ctl_lun,
 	struct ctl_lun *nlun, *lun;
 	struct scsi_vpd_id_descriptor *desc;
 	struct scsi_vpd_id_t10 *t10id;
-	const char *eui, *naa, *scsiname, *vendor, *value;
+	const char *eui, *naa, *scsiname, *vendor;
 	int lun_number, i, lun_malloced;
 	int devidlen, idlen1, idlen2 = 0, len;
 
@@ -4149,21 +4167,6 @@ ctl_alloc_lun(struct ctl_softc *ctl_softc, struct ctl_lun *ctl_lun,
 	if (be_lun->flags & CTL_LUN_FLAG_PRIMARY)
 		lun->flags |= CTL_LUN_PRIMARY_SC;
 
-	value = ctl_get_opt(&be_lun->options, "readonly");
-	if (value != NULL && strcmp(value, "on") == 0)
-		lun->flags |= CTL_LUN_READONLY;
-
-	lun->serseq = CTL_LUN_SERSEQ_OFF;
-	if (be_lun->flags & CTL_LUN_FLAG_SERSEQ_READ)
-		lun->serseq = CTL_LUN_SERSEQ_READ;
-	value = ctl_get_opt(&be_lun->options, "serseq");
-	if (value != NULL && strcmp(value, "on") == 0)
-		lun->serseq = CTL_LUN_SERSEQ_ON;
-	else if (value != NULL && strcmp(value, "read") == 0)
-		lun->serseq = CTL_LUN_SERSEQ_READ;
-	else if (value != NULL && strcmp(value, "off") == 0)
-		lun->serseq = CTL_LUN_SERSEQ_OFF;
-
 	lun->ctl_softc = ctl_softc;
 #ifdef CTL_TIME_IO
 	lun->last_busy = getsbinuptime();
@@ -4319,7 +4322,7 @@ ctl_enable_lun(struct ctl_be_lun *be_lun)
 	for (port = STAILQ_FIRST(&softc->port_list); port != NULL; port = nport) {
 		nport = STAILQ_NEXT(port, links);
 		if ((port->status & CTL_PORT_STATUS_ONLINE) == 0 ||
-		    port->lun_map != NULL)
+		    port->lun_map != NULL || port->lun_enable == NULL)
 			continue;
 
 		/*
@@ -4366,9 +4369,9 @@ ctl_disable_lun(struct ctl_be_lun *be_lun)
 
 	STAILQ_FOREACH(port, &softc->port_list, links) {
 		if ((port->status & CTL_PORT_STATUS_ONLINE) == 0 ||
-		    port->lun_map != NULL)
+		    port->lun_map != NULL || port->lun_disable == NULL)
 			continue;
-		mtx_unlock(&softc->ctl_lock);
+
 		/*
 		 * Drop the lock before we call the frontend's disable
 		 * routine, to avoid lock order reversals.
@@ -4376,6 +4379,7 @@ ctl_disable_lun(struct ctl_be_lun *be_lun)
 		 * XXX KDM what happens if the frontend list changes while
 		 * we're traversing it?  It's unlikely, but should be handled.
 		 */
+		mtx_unlock(&softc->ctl_lock);
 		retval = port->lun_disable(port->targ_lun_arg, lun->lun);
 		mtx_lock(&softc->ctl_lock);
 		if (retval != 0) {
@@ -6255,7 +6259,7 @@ ctl_mode_sense(struct ctl_scsiio *ctsio)
 		header->datalen = MIN(total_len - 1, 254);
 		if (control_dev == 0) {
 			header->dev_specific = 0x10; /* DPOFUA */
-			if ((lun->flags & CTL_LUN_READONLY) ||
+			if ((lun->be_lun->flags & CTL_LUN_FLAG_READONLY) ||
 			    (lun->mode_pages.control_page[CTL_PAGE_CURRENT]
 			    .eca_and_aen & SCP_SWP) != 0)
 				    header->dev_specific |= 0x80; /* WP */
@@ -6278,7 +6282,7 @@ ctl_mode_sense(struct ctl_scsiio *ctsio)
 		scsi_ulto2b(datalen, header->datalen);
 		if (control_dev == 0) {
 			header->dev_specific = 0x10; /* DPOFUA */
-			if ((lun->flags & CTL_LUN_READONLY) ||
+			if ((lun->be_lun->flags & CTL_LUN_FLAG_READONLY) ||
 			    (lun->mode_pages.control_page[CTL_PAGE_CURRENT]
 			    .eca_and_aen & SCP_SWP) != 0)
 				    header->dev_specific |= 0x80; /* WP */
@@ -8946,7 +8950,7 @@ ctl_report_luns(struct ctl_scsiio *ctsio)
 		 */
 		if (request_lun != NULL) {
 			mtx_lock(&lun->lun_lock);
-			ctl_clr_ua(lun, initidx, CTL_UA_RES_RELEASE);
+			ctl_clr_ua(lun, initidx, CTL_UA_LUN_CHANGE);
 			mtx_unlock(&lun->lun_lock);
 		}
 	}
@@ -9095,7 +9099,7 @@ ctl_request_sense(struct ctl_scsiio *ctsio)
 		if (ua_type == CTL_UA_LUN_CHANGE) {
 			mtx_unlock(&lun->lun_lock);
 			mtx_lock(&ctl_softc->ctl_lock);
-			ctl_clear_ua(ctl_softc, initidx, ua_type);
+			ctl_clr_ua_allluns(ctl_softc, initidx, ua_type);
 			mtx_unlock(&ctl_softc->ctl_lock);
 			mtx_lock(&lun->lun_lock);
 		}
@@ -10511,15 +10515,16 @@ ctl_check_for_blockage(struct ctl_lun *lun, union ctl_io *pending_io,
 		return (CTL_ACTION_BLOCK);
 	case CTL_SER_EXTENT:
 		return (ctl_extent_check(ooa_io, pending_io,
-		    (lun->serseq == CTL_LUN_SERSEQ_ON)));
+		    (lun->be_lun && lun->be_lun->serseq == CTL_LUN_SERSEQ_ON)));
 	case CTL_SER_EXTENTOPT:
 		if ((lun->mode_pages.control_page[CTL_PAGE_CURRENT].queue_flags
 		    & SCP_QUEUE_ALG_MASK) != SCP_QUEUE_ALG_UNRESTRICTED)
 			return (ctl_extent_check(ooa_io, pending_io,
-			    (lun->serseq == CTL_LUN_SERSEQ_ON)));
+			    (lun->be_lun &&
+			     lun->be_lun->serseq == CTL_LUN_SERSEQ_ON)));
 		return (CTL_ACTION_PASS);
 	case CTL_SER_EXTENTSEQ:
-		if (lun->serseq != CTL_LUN_SERSEQ_OFF)
+		if (lun->be_lun && lun->be_lun->serseq != CTL_LUN_SERSEQ_OFF)
 			return (ctl_extent_check_seq(ooa_io, pending_io));
 		return (CTL_ACTION_PASS);
 	case CTL_SER_PASS:
@@ -10746,7 +10751,8 @@ ctl_scsiio_lun_check(struct ctl_lun *lun,
 	}
 
 	if (entry->pattern & CTL_LUN_PAT_WRITE) {
-		if (lun->flags & CTL_LUN_READONLY) {
+		if (lun->be_lun &&
+		    lun->be_lun->flags & CTL_LUN_FLAG_READONLY) {
 			ctl_set_sense(ctsio, /*current_error*/ 1,
 			    /*sense_key*/ SSD_KEY_DATA_PROTECT,
 			    /*asc*/ 0x27, /*ascq*/ 0x01, SSD_ELEM_NONE);
@@ -11082,24 +11088,6 @@ ctl_failover(void)
 	mtx_unlock(&softc->ctl_lock);
 }
 #endif
-
-static void
-ctl_clear_ua(struct ctl_softc *ctl_softc, uint32_t initidx,
-	     ctl_ua_type ua_type)
-{
-	struct ctl_lun *lun;
-	ctl_ua_type *pu;
-
-	mtx_assert(&ctl_softc->ctl_lock, MA_OWNED);
-
-	STAILQ_FOREACH(lun, &ctl_softc->lun_list, links) {
-		mtx_lock(&lun->lun_lock);
-		pu = lun->pending_ua[initidx / CTL_MAX_INIT_PER_PORT];
-		if (pu != NULL)
-			pu[initidx % CTL_MAX_INIT_PER_PORT] &= ~ua_type;
-		mtx_unlock(&lun->lun_lock);
-	}
-}
 
 static int
 ctl_scsiio_precheck(struct ctl_softc *softc, struct ctl_scsiio *ctsio)
