@@ -97,8 +97,6 @@ struct vmmeter {
 	u_int v_inactive_target; /* (c) pages desired inactive */
 	u_int v_inactive_count;	/* (q) pages inactive */
 	u_int v_cache_count;	/* (f) pages on cache queue */
-	u_int v_cache_min;	/* (c) min pages desired on cache queue */
-	u_int v_cache_max;	/* (c) max pages in cached obj (unused) */
 	u_int v_pageout_free_min;   /* (c) min pages reserved for kernel */
 	u_int v_interrupt_free_min; /* (c) reserved pages for int code */
 	u_int v_free_severe;	/* (c) severe page depletion point */
