@@ -315,7 +315,8 @@ mbpr(void *kvmd, u_long mbaddr)
 	    jumbop_size / 1024);
 
 	mlen = sizeof(nsfbufs);
-	if (sysctlbyname("kern.ipc.nsfbufs", &nsfbufs, &mlen, NULL, 0) == 0 &&
+	if (live &&
+	    sysctlbyname("kern.ipc.nsfbufs", &nsfbufs, &mlen, NULL, 0) == 0 &&
 	    sysctlbyname("kern.ipc.nsfbufsused", &nsfbufsused, &mlen,
 	    NULL, 0) == 0 &&
 	    sysctlbyname("kern.ipc.nsfbufspeak", &nsfbufspeak, &mlen,
@@ -325,6 +326,10 @@ mbpr(void *kvmd, u_long mbaddr)
 		    "{N:sfbufs in use (current\\/peak\\/max)}\n",
 		    nsfbufsused, nsfbufspeak, nsfbufs);
 
+	if (fetch_stats("kern.ipc.sfstat", mbaddr, &sfstat, sizeof(sfstat),
+	    kread_counters) != 0)
+		goto out;
+
 	xo_emit("{:sfbufs-alloc-failed/%ju} {N:requests for sfbufs denied}\n",
 	    (uintmax_t)sfstat.sf_allocfail);
 	xo_emit("{:sfbufs-alloc-wait/%ju} {N:requests for sfbufs delayed}\n",
@@ -332,7 +337,7 @@ mbpr(void *kvmd, u_long mbaddr)
 	xo_emit("{:sfbufs-io-count/%ju} "
 	    "{N:requests for I\\/O initiated by sendfile}\n",
 	    (uintmax_t)sfstat.sf_iocnt);
-	xo_close_container("mbuf-statistics");
 out:
+	xo_close_container("mbuf-statistics");
 	memstat_mtl_free(mtlp);
 }

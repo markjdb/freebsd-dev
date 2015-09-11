@@ -62,8 +62,10 @@ typedef struct amd64_frame *x86_frame_t;
 static struct stack *nmi_stack;
 static volatile struct thread *nmi_pending;
 
+#ifdef SMP
 static struct mtx nmi_lock;
 MTX_SYSINIT(nmi_lock, &nmi_lock, "stack_nmi", MTX_SPIN);
+#endif
 
 static void
 stack_capture(struct thread *td, struct stack *st, register_t fp)
@@ -131,6 +133,7 @@ stack_save_td_running(struct stack *st, struct thread *td)
 		return (0);
 	}
 
+#ifdef SMP
 	mtx_lock_spin(&nmi_lock);
 
 	nmi_stack = st;
@@ -145,7 +148,9 @@ stack_save_td_running(struct stack *st, struct thread *td)
 	if (st->depth == 0)
 		/* We interrupted a thread in user mode. */
 		return (EAGAIN);
-
+#else
+	KASSERT(0, ("curthread isn't running"));
+#endif
 	return (0);
 }
 

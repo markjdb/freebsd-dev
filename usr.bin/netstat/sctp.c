@@ -661,7 +661,7 @@ sctp_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 	struct sctpstat sctpstat;
 
 	if (fetch_stats("net.inet.sctp.stats", off, &sctpstat,
-	    sizeof(sctpstat), kread_counters) != 0)
+	    sizeof(sctpstat), kread) != 0)
 		return;
 
 	xo_open_container(name);
