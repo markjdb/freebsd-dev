@@ -1066,11 +1066,9 @@ vop_stdadvise(struct vop_advise_args *ap)
 		vinvalbuf(vp, V_CLEANONLY, 0, 0);
 		if (vp->v_object != NULL) {
 			start = trunc_page(ap->a_start);
-			end = round_page(ap->a_end);
-			VM_OBJECT_WLOCK(vp->v_object);
-			vm_object_page_advise(vp->v_object, OFF_TO_IDX(start),
+			end = ap->a_end == OFF_MAX ? 0 : round_page(ap->a_end);
+			vm_object_madvise(vp->v_object, OFF_TO_IDX(start),
 			    OFF_TO_IDX(end), MADV_DONTNEED);
-			VM_OBJECT_WUNLOCK(vp->v_object);
 		}
 		VOP_UNLOCK(vp, 0);
 		break;
