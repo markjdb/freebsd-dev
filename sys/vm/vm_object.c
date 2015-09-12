@@ -1105,6 +1105,8 @@ vm_object_madvise(vm_object_t object, vm_pindex_t pindex, vm_pindex_t end,
 	if (object == NULL)
 		return;
 	VM_OBJECT_WLOCK(object);
+	if (end == 0)
+		end = object->size;
 	/*
 	 * Locate and adjust resident pages
 	 */
@@ -1960,53 +1962,6 @@ next:
 skipmemq:
 	if (__predict_false(!vm_object_cache_is_empty(object)))
 		vm_page_cache_free(object, start, end);
-}
-
-/*
- *	vm_object_page_advise:
- *
- *	For the given object, pass the specified advice through to pages
- *	in the given range ["start", "end").  As a special case, if
- *	"end" is zero, then the range extends from "start" to the end of
- *	the object.  This operation currently has no effect when
- *	"advice" is not MADV_FREE or MADV_DONTNEED.
- *
- *	This operation should only be performed on objects that
- *	contain non-fictitious, managed pages.
- *
- *	The object must be locked.
- */
-void
-vm_object_page_advise(vm_object_t object, vm_pindex_t start, vm_pindex_t end,
-    int advice)
-{
-	struct mtx *mtx, *new_mtx;
-	vm_page_t p, next;
-
-	VM_OBJECT_ASSERT_WLOCKED(object);
-	KASSERT((object->flags & (OBJ_FICTITIOUS | OBJ_UNMANAGED)) == 0,
-	    ("vm_object_page_advise: illegal object %p", object));
-
-	mtx = NULL;
-	for (p = vm_page_find_least(object, start);
-	    p != NULL && (p->pindex < end || end == 0); p = next) {
-		next = TAILQ_NEXT(p, listq);
-
-		/*
-		 * Avoid releasing and reacquiring the same page lock.
-		 */
-		new_mtx = vm_page_lockptr(p);
-		if (mtx != new_mtx) {
-			if (mtx != NULL)
-				mtx_unlock(mtx);
-			mtx = new_mtx;
-			mtx_lock(mtx);
-		}
-		if (p->hold_count == 0 && p->wire_count == 0)
-			vm_page_advise(p, advice);
-	}
-	if (mtx != NULL)
-		mtx_unlock(mtx);
 }
 
 /*
