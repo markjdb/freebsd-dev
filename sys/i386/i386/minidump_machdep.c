@@ -49,7 +49,6 @@ uint32_t *vm_page_dump;
 int vm_page_dump_size;
 
 static struct kerneldumpheader kdh;
-static off_t dumplo;
 
 /* Handle chunked writes. */
 static size_t fragsz;

@@ -235,16 +235,6 @@ print_uptime(void)
 	printf("%lds\n", (long)ts.tv_sec);
 }
 
-static int
-isbufbusy(struct buf *bp)
-{
-	if (((bp->b_flags & (B_INVAL | B_PERSISTENT)) == 0 &&
-	    BUF_ISLOCKED(bp)) ||
-	    ((bp->b_flags & (B_DELWRI | B_INVAL)) == B_DELWRI))
-		return (1);
-	return (0);
-}
-
 /*
  * Shutdown the system cleanly to prepare for reboot, halt, or power off.
  */
