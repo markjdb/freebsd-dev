@@ -95,7 +95,7 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	name = symval->name;
 
 	/* Check if function is excluded from instrumentation */
-	if (fbt_excluded(name))
+	if (fbt_excluded(lf, name))
 		return (0);
 
 	instr = (uint32_t *)(symval->value);

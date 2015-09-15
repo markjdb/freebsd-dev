@@ -56,7 +56,7 @@ int	fbt_invop(uintptr_t, uintptr_t *, uintptr_t);
 void	fbt_patch_tracepoint(fbt_probe_t *, fbt_patchval_t);
 int	fbt_provide_module_function(struct linker_file *, int,
 	    struct linker_symval *, void *);
-int	fbt_excluded(const char *name);
+int	fbt_excluded(linker_file_t, const char *);
 
 extern dtrace_provider_id_t	fbt_id;
 extern fbt_probe_t		**fbt_probetab;

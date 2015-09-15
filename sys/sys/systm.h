@@ -433,4 +433,11 @@ void	intr_prof_stack_use(struct thread *td, struct trapframe *frame);
 
 extern void (*softdep_ast_cleanup)(void);
 
+/*
+ * Macros used to prevent creation of FBT probes for the specified function.
+ */
+#define	DTRACE_NOTRACE_PREFIX	__fbt_notrace_
+#define	DTRACE_NOTRACE(f)						\
+	__strong_reference(f, __CONCAT(DTRACE_NOTRACE_PREFIX, f))
+
 #endif /* !_SYS_SYSTM_H_ */

@@ -116,6 +116,9 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	int j;
 	uint32_t *instr, *limit;
 
+	if (fbt_excluded(lf, name))
+		return (0);
+
 #ifdef __powerpc64__
 	/*
 	 * PowerPC64 uses '.' prefixes on symbol names, ignore it, but only
@@ -127,20 +130,6 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	else
 		return (0);
 #endif
-
-	if (strncmp(name, "dtrace_", 7) == 0 &&
-	    strncmp(name, "dtrace_safe_", 12) != 0) {
-		/*
-		 * Anything beginning with "dtrace_" may be called
-		 * from probe context unless it explicitly indicates
-		 * that it won't be called from probe context by
-		 * using the prefix "dtrace_safe_".
-		 */
-		return (0);
-	}
-
-	if (name[0] == '_' && name[1] == '_')
-		return (0);
 
 	instr = (uint32_t *) symval->value;
 	limit = (uint32_t *) (symval->value + symval->size);

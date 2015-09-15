@@ -99,10 +99,10 @@ PMC_SOFT_DEFINE( , , page_fault, write);
 #include <sys/dtrace_bsd.h>
 #endif
 
-extern void __noinline trap(struct trapframe *frame);
-extern void trap_check(struct trapframe *frame);
 extern void syscall(struct trapframe *frame);
 void dblfault_handler(struct trapframe *frame);
+void __noinline trap(struct trapframe *frame);
+void trap_check(struct trapframe *frame);
 
 static int trap_pfault(struct trapframe *, int);
 static void trap_fatal(struct trapframe *, vm_offset_t);
@@ -627,6 +627,7 @@ trap_check(struct trapframe *frame)
 #endif
 	trap(frame);
 }
+DTRACE_NOTRACE(trap_check);
 
 static int
 trap_pfault(frame, usermode)

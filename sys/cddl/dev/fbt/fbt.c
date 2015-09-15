@@ -112,8 +112,11 @@ static int			fbt_probetab_size;
 static int			fbt_verbose = 0;
 
 int
-fbt_excluded(const char *name)
+fbt_excluded(linker_file_t lf, const char *name)
 {
+	char *notrace;
+	size_t len;
+	caddr_t sym;
 
 	if (strncmp(name, "dtrace_", 7) == 0 &&
 	    strncmp(name, "dtrace_safe_", 12) != 0) {
@@ -138,6 +141,15 @@ fbt_excluded(const char *name)
 	if (strncmp(name, "fbt_", 4) == 0)
 		return (1);
 #endif
+
+	len = strlen(name) + sizeof(__XSTRING(DTRACE_NOTRACE_PREFIX));
+	notrace = malloc(len, M_TEMP, M_WAITOK);
+	strlcpy(notrace, __XSTRING(DTRACE_NOTRACE_PREFIX), len);
+	strlcat(notrace, name, len);
+	sym = linker_file_lookup_symbol(lf, notrace, 0);
+	free(notrace, M_TEMP);
+	if (sym != 0)
+		return (1);
 
 	return (0);
 }

@@ -192,6 +192,7 @@ owner_mtx(const struct lock_object *lock, struct thread **owner)
 	*owner = mtx_owner(m);
 	return (mtx_unowned(m) == 0);
 }
+DTRACE_NOTRACE(owner_mtx);
 #endif
 
 /*
