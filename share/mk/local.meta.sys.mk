@@ -16,13 +16,17 @@ OBJROOT:=${MAKEOBJDIRPREFIX}${SRCTOP:S,/src,,}/
 MAKEOBJDIRPREFIX=
 .export MAKEOBJDIRPREFIX
 .endif
-.if empty(MAKEOBJDIR) || ${MAKEOBJDIR:M*/*} == ""
+_default_makeobjdir=$${.CURDIR:S,$${SRCTOP},$${OBJTOP},}
+.if empty(MAKEOBJDIR)
 # OBJTOP set below
-MAKEOBJDIR=$${.CURDIR:S,$${SRCTOP},$${OBJTOP},}
+MAKEOBJDIR=${_default_makeobjdir}
 # export but do not track
 .export-env MAKEOBJDIR
 # now for our own use
 MAKEOBJDIR= ${.CURDIR:S,${SRCTOP},${OBJTOP},}
+.endif
+.if ${MAKEOBJDIR:M*/*} == ""
+.error Cannot use MAKEOBJDIR=${MAKEOBJDIR}${.newline}Unset MAKEOBJDIR to get default:  MAKEOBJDIR='${_default_makeobjdir}'
 .endif
 .endif
 .if !empty(SB)
@@ -185,6 +189,10 @@ UPDATE_DEPENDFILE= NO
 
 # define the list of places that contain files we are responsible for
 .MAKE.META.BAILIWICK = ${SB} ${OBJROOT} ${STAGE_ROOT}
+
+.if defined(CCACHE_DIR)
+.MAKE.META.IGNORE_PATHS += ${CCACHE_DIR}
+.endif
 
 CSU_DIR.${MACHINE_ARCH} ?= csu/${MACHINE_ARCH}
 CSU_DIR := ${CSU_DIR.${MACHINE_ARCH}}
