@@ -542,8 +542,10 @@ ctl_be_block_biodone(struct bio *bio)
 			ctl_set_internal_failure(&io->scsiio,
 						 /*sks_valid*/ 1,
 						 /*retry_count*/ 0xbad2);
-		} else
-			ctl_set_medium_error(&io->scsiio);
+		} else {
+			ctl_set_medium_error(&io->scsiio,
+			    beio->bio_cmd == BIO_READ);
+		}
 		ctl_complete_beio(beio);
 		return;
 	}
@@ -632,8 +634,8 @@ ctl_be_block_dispatch_file(struct ctl_be_block_lun *be_lun,
 	union ctl_io *io;
 	struct uio xuio;
 	struct iovec *xiovec;
-	int flags;
-	int error, i;
+	size_t s;
+	int error, flags, i;
 
 	DPRINTF("entered\n");
 
@@ -694,6 +696,22 @@ ctl_be_block_dispatch_file(struct ctl_be_block_lun *be_lun,
 
 		VOP_UNLOCK(be_lun->vn, 0);
 		SDT_PROBE(cbb, kernel, read, file_done, 0, 0, 0, 0, 0);
+		if (error == 0 && xuio.uio_resid > 0) {
+			/*
+			 * If we red less then requested (EOF), then
+			 * we should clean the rest of the buffer.
+			 */
+			s = beio->io_len - xuio.uio_resid;
+			for (i = 0; i < beio->num_segs; i++) {
+				if (s >= beio->sg_segs[i].len) {
+					s -= beio->sg_segs[i].len;
+					continue;
+				}
+				bzero((uint8_t *)beio->sg_segs[i].addr + s,
+				    beio->sg_segs[i].len - s);
+				s = 0;
+			}
+		}
 	} else {
 		struct mount *mountpoint;
 		int lock_flags;
@@ -742,17 +760,14 @@ ctl_be_block_dispatch_file(struct ctl_be_block_lun *be_lun,
 	 * return the I/O to the user.
 	 */
 	if (error != 0) {
-		char path_str[32];
-
-		ctl_scsi_path_string(io, path_str, sizeof(path_str));
-		printf("%s%s command returned errno %d\n", path_str,
-		       (beio->bio_cmd == BIO_READ) ? "READ" : "WRITE", error);
 		if (error == ENOSPC || error == EDQUOT) {
 			ctl_set_space_alloc_fail(&io->scsiio);
 		} else if (error == EROFS || error == EACCES) {
 			ctl_set_hw_write_protected(&io->scsiio);
-		} else
-			ctl_set_medium_error(&io->scsiio);
+		} else {
+			ctl_set_medium_error(&io->scsiio,
+			    beio->bio_cmd == BIO_READ);
+		}
 		ctl_complete_beio(beio);
 		return;
 	}
@@ -918,8 +933,10 @@ ctl_be_block_dispatch_zvol(struct ctl_be_block_lun *be_lun,
 			ctl_set_space_alloc_fail(&io->scsiio);
 		} else if (error == EROFS || error == EACCES) {
 			ctl_set_hw_write_protected(&io->scsiio);
-		} else
-			ctl_set_medium_error(&io->scsiio);
+		} else {
+			ctl_set_medium_error(&io->scsiio,
+			    beio->bio_cmd == BIO_READ);
+		}
 		ctl_complete_beio(beio);
 		return;
 	}
