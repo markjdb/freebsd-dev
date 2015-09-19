@@ -56,6 +56,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/mutex.h>
 #include <sys/kernel.h>
@@ -1785,6 +1786,8 @@ brelse(struct buf *bp)
 	    bp, bp->b_vp, bp->b_flags);
 	KASSERT(!(bp->b_flags & (B_CLUSTER|B_PAGING)),
 	    ("brelse: inappropriate B_PAGING or B_CLUSTER bp %p", bp));
+	KASSERT((bp->b_flags & B_VMIO) != 0 || (bp->b_flags & B_NOREUSE) == 0,
+	    ("brelse: non-VMIO buffer marked as NOREUSE"));
 
 	if (BUF_LOCKRECURSED(bp)) {
 		/*
@@ -1885,8 +1888,10 @@ brelse(struct buf *bp)
 	 * doesn't find it.
 	 */
 	if (bp->b_bufsize == 0 || (bp->b_ioflags & BIO_ERROR) != 0 ||
-	    (bp->b_flags & (B_INVAL | B_NOCACHE | B_RELBUF)) != 0)
+	    (bp->b_flags & (B_INVAL | B_NOCACHE | B_RELBUF)) != 0) {
 		bp->b_flags |= B_INVAL;
+		bp->b_flags &= ~B_NOREUSE;
+	}
 	if (bp->b_flags & B_INVAL) {
 		if (bp->b_flags & B_DELWRI)
 			bundirty(bp);
@@ -2079,10 +2084,15 @@ vfs_vmio_unwire(struct buf *bp, vm_page_t m)
 			freed = false;
 		if (!freed) {
 			/*
-			 * In order to maintain LRU page ordering, put
-			 * the page at the tail of the inactive queue.
+			 * If the page is unlikely to be reused, let the
+			 * VM know.  Otherwise, maintain LRU page
+			 * ordering and put the page at the tail of the
+			 * inactive queue.
 			 */
-			vm_page_deactivate(m);
+			if ((bp->b_flags & B_NOREUSE) != 0)
+				vm_page_deactivate_noreuse(m);
+			else
+				vm_page_deactivate(m);
 		}
 	}
 	vm_page_unlock(m);
