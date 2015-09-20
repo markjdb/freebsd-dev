@@ -562,8 +562,10 @@ ctl_be_block_biodone(struct bio *bio)
 		ctl_complete_beio(beio);
 	} else {
 		if ((ARGS(io)->flags & CTL_LLF_READ) &&
-		    beio->beio_cont == NULL)
+		    beio->beio_cont == NULL) {
 			ctl_set_success(&io->scsiio);
+			ctl_serseq_done(io);
+		}
 #ifdef CTL_TIME_IO
         	getbintime(&io->io_hdr.dma_start_bt);
 #endif  
@@ -782,8 +784,10 @@ ctl_be_block_dispatch_file(struct ctl_be_block_lun *be_lun,
 		ctl_complete_beio(beio);
 	} else {
 		if ((ARGS(io)->flags & CTL_LLF_READ) &&
-		    beio->beio_cont == NULL)
+		    beio->beio_cont == NULL) {
 			ctl_set_success(&io->scsiio);
+			ctl_serseq_done(io);
+		}
 #ifdef CTL_TIME_IO
         	getbintime(&io->io_hdr.dma_start_bt);
 #endif  
@@ -951,8 +955,10 @@ ctl_be_block_dispatch_zvol(struct ctl_be_block_lun *be_lun,
 		ctl_complete_beio(beio);
 	} else {
 		if ((ARGS(io)->flags & CTL_LLF_READ) &&
-		    beio->beio_cont == NULL)
+		    beio->beio_cont == NULL) {
 			ctl_set_success(&io->scsiio);
+			ctl_serseq_done(io);
+		}
 #ifdef CTL_TIME_IO
         	getbintime(&io->io_hdr.dma_start_bt);
 #endif  
@@ -1643,7 +1649,7 @@ ctl_be_block_dispatch(struct ctl_be_block_lun *be_lun,
 	io->scsiio.kern_data_len = beio->io_len;
 	io->scsiio.kern_data_resid = 0;
 	io->scsiio.kern_sg_entries = beio->num_segs;
-	io->io_hdr.flags |= CTL_FLAG_ALLOCATED | CTL_FLAG_KDPTR_SGLIST;
+	io->io_hdr.flags |= CTL_FLAG_ALLOCATED;
 
 	/*
 	 * For the read case, we need to read the data into our buffers and

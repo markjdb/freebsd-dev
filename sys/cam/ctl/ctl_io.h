@@ -88,8 +88,6 @@ typedef enum {
 	CTL_FLAG_DATA_OUT	= 0x00000002,	/* DATA OUT */
 	CTL_FLAG_DATA_NONE	= 0x00000003,	/* no data */
 	CTL_FLAG_DATA_MASK	= 0x00000003,
-	CTL_FLAG_KDPTR_SGLIST	= 0x00000008, 	/* kern_data_ptr is S/G list*/
-	CTL_FLAG_EDPTR_SGLIST	= 0x00000010,	/* ext_data_ptr is S/G list */
 	CTL_FLAG_DO_AUTOSENSE	= 0x00000020,	/* grab sense info */
 	CTL_FLAG_USER_REQ	= 0x00000040,	/* request came from userland */
 	CTL_FLAG_ALLOCATED	= 0x00000100,	/* data space allocated */
@@ -115,7 +113,8 @@ typedef enum {
 
 	CTL_FLAG_FAILOVER	= 0x04000000,	/* Killed by a failover */
 	CTL_FLAG_IO_ACTIVE	= 0x08000000,	/* I/O active on this SC */
-	CTL_FLAG_STATUS_SENT	= 0x10000000	/* Status sent by datamove */
+	CTL_FLAG_STATUS_SENT	= 0x10000000,	/* Status sent by datamove */
+	CTL_FLAG_SERSEQ_DONE	= 0x20000000	/* All storage I/O started */
 } ctl_io_flags;
 
 
@@ -384,10 +383,10 @@ struct ctl_pr_info {
 
 struct ctl_ha_msg_hdr {
 	ctl_msg_type		msg_type;
+	uint32_t		status;	     /* transaction status */
 	union ctl_io		*original_sc;
 	union ctl_io		*serializing_sc;
 	struct ctl_nexus	nexus;	     /* Initiator, port, target, lun */
-	uint32_t		status;	     /* transaction status */
 };
 
 #define	CTL_HA_MAX_SG_ENTRIES	16
