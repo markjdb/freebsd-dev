@@ -599,6 +599,10 @@ struct r92s_add_ba_event {
 	uint8_t tid;
 };
 
+struct r92s_add_ba_req {
+	uint32_t tid;
+};
+
 /*
  * Driver definitions.
  */
@@ -720,7 +724,6 @@ struct rsu_data {
 
 struct rsu_vap {
 	struct ieee80211vap		vap;
-	struct ieee80211_beacon_offsets bo;
 
 	int				(*newstate)(struct ieee80211vap *,
 					    enum ieee80211_state, int);
@@ -745,6 +748,7 @@ struct rsu_softc {
 	struct mtx			sc_mtx;
 	int				sc_ht;
 	int				sc_nendpoints;
+	int				sc_curpwrstate;
 
 	u_int				sc_running:1,
 					sc_calibrating:1,
