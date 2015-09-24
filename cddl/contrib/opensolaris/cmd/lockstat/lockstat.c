@@ -722,7 +722,11 @@ dprog_addevent(int event)
 		caller = "(uintptr_t)arg0";
 		arg1 = "arg2";
 	} else {
+#ifdef illumos
+		arg0 = "(uintptr_t)arg0";
+#else
 		arg0 = "stringof(args[0]->lock_object.lo_name)";
+#endif
 		caller = "caller";
 	}
 
