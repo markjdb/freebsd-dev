@@ -38,8 +38,10 @@ PROG ?= $t
 
 .if defined(PROG)
 # just one of many
-PROG_OVERRIDE_VARS += BINDIR DPSRCS MAN SRCS
-PROG_VARS += CFLAGS CPPFLAGS CXXFLAGS DPADD DPLIBS LDADD LIBADD LDFLAGS ${PROG_OVERRIDE_VARS}
+PROG_OVERRIDE_VARS +=	BINDIR BINGRP BINOWN BINMODE DPSRCS MAN PROGNAME \
+			SRCS
+PROG_VARS +=	CFLAGS CPPFLAGS CXXFLAGS DPADD DPLIBS LDADD LIBADD LINKS \
+		LDFLAGS MLINKS ${PROG_OVERRIDE_VARS}
 .for v in ${PROG_VARS:O:u}
 .if empty(${PROG_OVERRIDE_VARS:M$v})
 .if defined(${v}.${PROG})
@@ -82,7 +84,7 @@ $v =
 
 .if !empty(PROGS) && !defined(_RECURSING_PROGS)
 # tell progs.mk we might want to install things
-PROGS_TARGETS+= checkdpadd clean cleandepend cleandir cleanobj depend install
+PROGS_TARGETS+= checkdpadd clean cleandepend cleandir depend install
 
 .for p in ${PROGS}
 .if defined(PROGS_CXX) && !empty(PROGS_CXX:M$p)
