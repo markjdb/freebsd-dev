@@ -32,14 +32,13 @@
 #include_next <sys/sdt.h>
 
 #ifdef KDTRACE_HOOKS
+
 SDT_PROBE_DECLARE(sdt, , , set__error);
 
-#define SET_ERROR(err) \
-	((sdt_sdt___set__error->id ? \
-	(*sdt_probe_func)(sdt_sdt___set__error->id, \
-	    (uintptr_t)err, 0, 0, 0, 0) : 0), err)
+#define	SET_ERROR(err)	({SDT_PROBE1(sdt, , , set__error, err); err;})
+
 #else
 #define SET_ERROR(err) (err)
 #endif
 
-#endif	/* _OPENSOLARIS_SYS_SDT_H_ */
+#endif /* _OPENSOLARIS_SYS_SDT_H_ */

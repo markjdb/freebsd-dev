@@ -135,10 +135,15 @@ gdbinit:
 .endif
 .endif
 
-${FULLKERNEL}: ${SYSTEM_DEP} vers.o
+sdtstubs.c: ${FULLKERNEL}.reloc
+	NM='${NM}' sh $S/tools/sdtstubs.sh ${.ALLSRC} > ${.TARGET}
+
+${FULLKERNEL}.reloc: ${SYSTEM_DEP}
+	@${LD} --relocatable -o ${.TARGET} ${SYSTEM_OBJS}
+
+${FULLKERNEL}: ${FULLKERNEL}.reloc sdtstubs.o vers.o
 	@rm -f ${.TARGET}
 	@echo linking ${.TARGET}
-	${SYSTEM_LD_HEAD}
 	${SYSTEM_LD}
 .if !empty(MD_ROOT_SIZE_CONFIGURED) && defined(MFS_IMAGE)
 	@sh ${S}/tools/embed_mfs.sh ${.TARGET} ${MFS_IMAGE}
