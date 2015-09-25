@@ -186,7 +186,7 @@ SYSTEM_OBJS+= embedfs_${MFS_IMAGE:T:R}.o
 SYSTEM_LD_HEAD= @${LD} --relocatable -o ${.TARGET}.reloc ${SYSTEM_OBJS}
 SYSTEM_LD= @${LD} -Bdynamic -T ${LDSCRIPT} ${_LDFLAGS} --no-warn-mismatch \
 	--warn-common --export-dynamic --dynamic-linker /red/herring \
-	-o ${.TARGET} -X ${.TARGET}.reloc vers.o hack.So
+	-o ${.TARGET} -X ${.TARGET}.reloc sdtstubs.o vers.o hack.So
 SYSTEM_LD_TAIL= @${OBJCOPY} --strip-symbol gcc2_compiled. ${.TARGET} ; \
 	${SIZE} ${.TARGET} ; chmod 755 ${.TARGET}
 SYSTEM_DEP+= ${LDSCRIPT}
