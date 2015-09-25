@@ -130,12 +130,11 @@
     arg6, xarg6)
 
 #define	DTRACE_PROBE(name)
-#define	DTRACE_PROBE1(name, type0, arg0)
-#define	DTRACE_PROBE2(name, type0, arg0, type1, arg1)
-#define	DTRACE_PROBE3(name, type0, arg0, type1, arg1, type2, arg2)
-#define	DTRACE_PROBE4(name, type0, arg0, type1, arg1, type2, arg2, type3, arg3)
-#define	DTRACE_PROBE5(name, type0, arg0, type1, arg1, type2, arg2,	\
-    type3, arg3, type4, arg4)
+#define	DTRACE_PROBE1(name, t0, arg0)
+#define	DTRACE_PROBE2(name, t0, arg0, t1, arg1)
+#define	DTRACE_PROBE3(name, t0, arg0, t1, arg1, t2, arg2)
+#define	DTRACE_PROBE4(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3)
+#define	DTRACE_PROBE5(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3, t4, arg4)
 
 #else /* !KDTRACE_HOOKS */
 
@@ -421,46 +420,43 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	SDT_PROBE0(sdt, , , name);					\
 } while (0)
 
-#define	DTRACE_PROBE1(name, type0, arg0) do {				\
-	static _SDT_PROBE_DEFINE1(sdt, , , name, type0);		\
+#define	DTRACE_PROBE1(name, t0, arg0) do {				\
+	static _SDT_PROBE_DEFINE1(sdt, , , name, t0);			\
 	SDT_PROBE1(sdt, , , name, arg0);				\
 } while (0)
 
-#define	DTRACE_PROBE2(name, type0, arg0, type1, arg1) do {		\
-	static _SDT_PROBE_DEFINE2(sdt, , , name, type0, type1);		\
+#define	DTRACE_PROBE2(name, t0, arg0, t1, arg1) do {			\
+	static _SDT_PROBE_DEFINE2(sdt, , , name, t0, t1);		\
 	SDT_PROBE2(sdt, , , name, arg0, arg1);				\
 } while (0)
 
-#define	DTRACE_PROBE3(name, type0, arg0, type1, arg1, type2, arg2) do {	\
-	static _SDT_PROBE_DEFINE3(sdt, , , name, type0, type1, type2);	\
+#define	DTRACE_PROBE3(name, t0, arg0, t1, arg1, t2, arg2) do {		\
+	static _SDT_PROBE_DEFINE3(sdt, , , name, t0, t1, t2);		\
 	SDT_PROBE3(sdt, , , name, arg0, arg1, arg2);			\
 } while (0)
 
-#define	DTRACE_PROBE4(name, type0, arg0, type1, arg1, type2, arg2,	\
-    type3, arg3) do {							\
-	static _SDT_PROBE_DEFINE4(sdt, , , name, type0, type1, type2,	\
-	    type3);							\
+#define	DTRACE_PROBE4(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3) do { \
+	static _SDT_PROBE_DEFINE4(sdt, , , name, t0, t1, t2, t3);	\
 	SDT_PROBE4(sdt, , , name, arg0, arg1, arg2, arg3);		\
 } while (0)
 
-#define	DTRACE_PROBE5(name, type0, arg0, type1, arg1, type2, arg2,	\
-    type3, arg3, type4, arg4) do {					\
-	static _SDT_PROBE_DEFINE5(sdt, , , name, type0, type1, type2,	\
-	    type3, type4);						\
+#define	DTRACE_PROBE5(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3, t4,	\
+    arg4) do {								\
+	static _SDT_PROBE_DEFINE5(sdt, , , name, t0, t1, t2, t3, t4);	\
 	SDT_PROBE5(sdt, , , name, arg0, arg1, arg2, arg3, arg4);	\
 } while (0)
 
-#define	DTRACE_PROBE6(name, type0, arg0, type1, arg1, type2, arg2,	\
-    type3, arg3, type4, arg4, type5, arg5) do {				\
-	static _SDT_PROBE_DEFINE6(sdt, , , name, type0, type1, type2,	\
-	    type3, type4, type5);					\
+#define	DTRACE_PROBE6(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3, t4,	\
+    arg4, t5, arg5) do {						\
+	static _SDT_PROBE_DEFINE6(sdt, , , name, t0, t1, t2, t3, t4,	\
+	    t5);							\
 	SDT_PROBE5(sdt, , , name, arg0, arg1, arg2, arg3, arg4, arg5);	\
 } while (0)
 
-#define	DTRACE_PROBE7(name, type0, arg0, type1, arg1, type2, arg2,	\
-    type3, arg3, type4, arg4, type5, arg5, type6, arg6) do {		\
-	static _SDT_PROBE_DEFINE7(sdt, , , name, type0, type1, type2,	\
-	    type3, type4, type5, type6);				\
+#define	DTRACE_PROBE7(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3, t4,	\
+    arg4, t5, arg5, t6, arg6) do {					\
+	static _SDT_PROBE_DEFINE7(sdt, , , name, t0, t1, t2, t3, t4,	\
+	    t5, t6);							\
 	SDT_PROBE5(sdt, , , name, arg0, arg1, arg2, arg3, arg4, arg5,	\
 	    arg6);							\
 } while (0)
