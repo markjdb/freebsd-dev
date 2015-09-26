@@ -766,9 +766,8 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
     struct thread *td)
 {
 	struct vnode *vp;
-	off_t offset;
-	int error, ioflag;
-	int advice;
+	off_t orig_offset;
+	int advice, error, ioflag;
 
 	KASSERT(uio->uio_td == td, ("uio_td %p is not td %p",
 	    uio->uio_td, td));
@@ -792,7 +791,7 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 		/* Disable read-ahead for random I/O. */
 		break;
 	}
-	offset = uio->uio_offset;
+	orig_offset = uio->uio_offset;
 
 #ifdef MAC
 	error = mac_vnode_check_read(active_cred, fp->f_cred, vp);
@@ -802,13 +801,13 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	fp->f_nextoff = uio->uio_offset;
 	VOP_UNLOCK(vp, 0);
 	if (error == 0 && advice == POSIX_FADV_NOREUSE &&
-	    offset != uio->uio_offset)
+	    orig_offset != uio->uio_offset)
 		/*
 		 * Use POSIX_FADV_DONTNEED to flush clean pages and
 		 * buffers for the backing file after a
 		 * POSIX_FADV_NOREUSE read(2).
 		 */
-		error = VOP_ADVISE(vp, offset, uio->uio_offset - 1,
+		error = VOP_ADVISE(vp, orig_offset, uio->uio_offset - 1,
 		    POSIX_FADV_DONTNEED);
 	return (error);
 }
@@ -822,9 +821,8 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 {
 	struct vnode *vp;
 	struct mount *mp;
-	off_t offset;
-	int error, ioflag, lock_flags;
-	int advice;
+	off_t orig_offset;
+	int advice, error, ioflag, lock_flags;
 
 	KASSERT(uio->uio_td == td, ("uio_td %p is not td %p",
 	    uio->uio_td, td));
@@ -867,7 +865,7 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 		/* XXX: Is this correct? */
 		break;
 	}
-	offset = uio->uio_offset;
+	orig_offset = uio->uio_offset;
 
 #ifdef MAC
 	error = mac_vnode_check_write(active_cred, fp->f_cred, vp);
@@ -879,13 +877,13 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	if (vp->v_type != VCHR)
 		vn_finished_write(mp);
 	if (error == 0 && advice == POSIX_FADV_NOREUSE &&
-	    offset != uio->uio_offset)
+	    orig_offset != uio->uio_offset)
 		/*
 		 * Use POSIX_FADV_DONTNEED to flush clean pages and
 		 * buffers for the backing file after a
 		 * POSIX_FADV_NOREUSE write(2).
 		 */
-		error = VOP_ADVISE(vp, offset, uio->uio_offset - 1,
+		error = VOP_ADVISE(vp, orig_offset, uio->uio_offset - 1,
 		    POSIX_FADV_DONTNEED);
 unlock:
 	return (error);
