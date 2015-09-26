@@ -1038,6 +1038,7 @@ vop_stdadvise(struct vop_advise_args *ap)
 	struct buflists *bl;
 	struct vnode *vp;
 	daddr_t bn, startn, endn;
+	off_t start, end;
 	int bsize, error;
 
 	vp = ap->a_vp;
@@ -1058,6 +1059,21 @@ vop_stdadvise(struct vop_advise_args *ap)
 			break;
 		}
 
+		/*
+		 * Deactivate pages in the specified range from the backing VM
+		 * object.  Pages that are resident in the buffer cache will
+		 * remain wired until their corresponding buffers are released
+		 * below.
+		 */
+		if (vp->v_object != NULL) {
+			start = trunc_page(ap->a_start);
+			end = round_page(ap->a_end);
+			VM_OBJECT_WLOCK(vp->v_object);
+			vm_object_page_noreuse(vp->v_object, OFF_TO_IDX(start),
+			    OFF_TO_IDX(end));
+			VM_OBJECT_WUNLOCK(vp->v_object);
+		}
+
 		BO_RLOCK(&vp->v_bufobj);
 		bsize = vp->v_bufobj.bo_bsize;
 		startn = ap->a_start / bsize;
@@ -1074,18 +1090,20 @@ vop_stdadvise(struct vop_advise_args *ap)
 			endn = ap->a_end / bsize;
 		BO_RUNLOCK(&vp->v_bufobj);
 		/*
-		 * Use the B_NOREUSE flag to hint that the pages backing each
-		 * buffer in the range are unlikely to be reused.  Dirty buffers
-		 * will have the hint applied once they've been written.
+		 * In the VMIO case, use the B_NOREUSE flag to hint that the
+		 * pages backing each buffer in the range are unlikely to be
+		 * reused.  Dirty buffers will have the hint applied once
+		 * they've been written.
 		 */
 		for (bn = startn; bn <= endn; bn++) {
 			bp = getblk(vp, bn, bsize, 0, 0, GB_NOCREAT |
 			    GB_UNMAPPED);
 			if (bp == NULL)
 				continue;
-			bp->b_flags |= B_NOREUSE;
+			if (vp->v_object != NULL)
+				bp->b_flags |= B_NOREUSE;
 			if ((bp->b_flags & B_DELWRI) == 0)
-				bp->b_flags |= B_INVAL | B_RELBUF;
+				bp->b_flags |= B_RELBUF;
 			brelse(bp);
 		}
 		VOP_UNLOCK(vp, 0);

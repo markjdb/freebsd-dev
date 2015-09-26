@@ -56,7 +56,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
-#include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/mutex.h>
 #include <sys/kernel.h>
@@ -1787,7 +1786,7 @@ brelse(struct buf *bp)
 	KASSERT(!(bp->b_flags & (B_CLUSTER|B_PAGING)),
 	    ("brelse: inappropriate B_PAGING or B_CLUSTER bp %p", bp));
 	KASSERT((bp->b_flags & B_VMIO) != 0 || (bp->b_flags & B_NOREUSE) == 0,
-	    ("brelse: non-VMIO buffer marked as NOREUSE"));
+	    ("brelse: non-VMIO buffer marked NOREUSE"));
 
 	if (BUF_LOCKRECURSED(bp)) {
 		/*
@@ -2058,6 +2057,8 @@ vfs_vmio_iodone(struct buf *bp)
 		pmap_qenter(trunc_page((vm_offset_t)bp->b_data),
 		    bp->b_pages, bp->b_npages);
 	}
+	if ((bp->b_flags & B_NOREUSE) != 0)
+		bp->b_flags |= B_RELBUF;
 }
 
 /*
