@@ -2062,8 +2062,6 @@ vfs_vmio_iodone(struct buf *bp)
 		pmap_qenter(trunc_page((vm_offset_t)bp->b_data),
 		    bp->b_pages, bp->b_npages);
 	}
-	if ((bp->b_flags & B_NOREUSE) != 0)
-		bp->b_flags |= B_RELBUF;
 }
 
 /*
