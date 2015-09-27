@@ -762,12 +762,17 @@ get_advice(struct file *fp, struct uio *uio)
  * File table vnode read routine.
  */
 static int
-vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
-    struct thread *td)
+vn_read(fp, uio, active_cred, flags, td)
+	struct file *fp;
+	struct uio *uio;
+	struct ucred *active_cred;
+	int flags;
+	struct thread *td;
 {
 	struct vnode *vp;
 	off_t orig_offset;
-	int advice, error, ioflag;
+	int error, ioflag;
+	int advice;
 
 	KASSERT(uio->uio_td == td, ("uio_td %p is not td %p",
 	    uio->uio_td, td));
@@ -816,13 +821,18 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
  * File table vnode write routine.
  */
 static int
-vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
-    struct thread *td)
+vn_write(fp, uio, active_cred, flags, td)
+	struct file *fp;
+	struct uio *uio;
+	struct ucred *active_cred;
+	int flags;
+	struct thread *td;
 {
 	struct vnode *vp;
 	struct mount *mp;
 	off_t orig_offset;
-	int advice, error, ioflag, lock_flags;
+	int error, ioflag, lock_flags;
+	int advice;
 
 	KASSERT(uio->uio_td == td, ("uio_td %p is not td %p",
 	    uio->uio_td, td));

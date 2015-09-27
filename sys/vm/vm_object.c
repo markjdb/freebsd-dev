@@ -1993,7 +1993,7 @@ vm_object_page_noreuse(vm_object_t object, vm_pindex_t start, vm_pindex_t end)
 
 	/*
 	 * Here, the variable "p" is either (1) the page with the least pindex
-	 * greater than or equal to the parameter "start" or (2) NULL.
+	 * greater than or equal to the parameter "start" or (2) NULL. 
 	 */
 	mtx = NULL;
 	for (; p != NULL && (p->pindex < end || end == 0); p = next) {
