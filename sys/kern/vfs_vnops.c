@@ -762,12 +762,17 @@ get_advice(struct file *fp, struct uio *uio)
  * File table vnode read routine.
  */
 static int
-vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
-    struct thread *td)
+vn_read(fp, uio, active_cred, flags, td)
+	struct file *fp;
+	struct uio *uio;
+	struct ucred *active_cred;
+	int flags;
+	struct thread *td;
 {
 	struct vnode *vp;
 	off_t orig_offset;
-	int advice, error, ioflag;
+	int error, ioflag;
+	int advice;
 
 	KASSERT(uio->uio_td == td, ("uio_td %p is not td %p",
 	    uio->uio_td, td));
@@ -803,9 +808,9 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	if (error == 0 && advice == POSIX_FADV_NOREUSE &&
 	    orig_offset != uio->uio_offset)
 		/*
-		 * Use POSIX_FADV_DONTNEED to flush clean pages and
-		 * buffers for the backing file after a
-		 * POSIX_FADV_NOREUSE read(2).
+		 * Use POSIX_FADV_DONTNEED to flush pages and buffers
+		 * for the backing file after a POSIX_FADV_NOREUSE
+		 * read(2).
 		 */
 		error = VOP_ADVISE(vp, orig_offset, uio->uio_offset - 1,
 		    POSIX_FADV_DONTNEED);
@@ -816,13 +821,18 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
  * File table vnode write routine.
  */
 static int
-vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
-    struct thread *td)
+vn_write(fp, uio, active_cred, flags, td)
+	struct file *fp;
+	struct uio *uio;
+	struct ucred *active_cred;
+	int flags;
+	struct thread *td;
 {
 	struct vnode *vp;
 	struct mount *mp;
 	off_t orig_offset;
-	int advice, error, ioflag, lock_flags;
+	int error, ioflag, lock_flags;
+	int advice;
 
 	KASSERT(uio->uio_td == td, ("uio_td %p is not td %p",
 	    uio->uio_td, td));
@@ -879,9 +889,9 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	if (error == 0 && advice == POSIX_FADV_NOREUSE &&
 	    orig_offset != uio->uio_offset)
 		/*
-		 * Use POSIX_FADV_DONTNEED to flush clean pages and
-		 * buffers for the backing file after a
-		 * POSIX_FADV_NOREUSE write(2).
+		 * Use POSIX_FADV_DONTNEED to flush pages and buffers
+		 * for the backing file after a POSIX_FADV_NOREUSE
+		 * write(2).
 		 */
 		error = VOP_ADVISE(vp, orig_offset, uio->uio_offset - 1,
 		    POSIX_FADV_DONTNEED);

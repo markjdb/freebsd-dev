@@ -1845,9 +1845,14 @@ brelse(struct buf *bp)
 	 * 
 	 * We still allow the B_INVAL case to call vfs_vmio_truncate(), even
 	 * if B_DELWRI is set.
+	 *
+	 * On the other hand, if B_NOREUSE is set we want to evict this buffer,
+	 * so set B_RELBUF.
 	 */
 	if (bp->b_flags & B_DELWRI)
 		bp->b_flags &= ~B_RELBUF;
+	else if ((bp->b_flags & B_NOREUSE) != 0)
+		bp->b_flags |= B_RELBUF;
 
 	/*
 	 * VMIO buffer rundown.  It is not very necessary to keep a VMIO buffer
@@ -1887,10 +1892,8 @@ brelse(struct buf *bp)
 	 * doesn't find it.
 	 */
 	if (bp->b_bufsize == 0 || (bp->b_ioflags & BIO_ERROR) != 0 ||
-	    (bp->b_flags & (B_INVAL | B_NOCACHE | B_RELBUF)) != 0) {
+	    (bp->b_flags & (B_INVAL | B_NOCACHE | B_RELBUF)) != 0)
 		bp->b_flags |= B_INVAL;
-		bp->b_flags &= ~B_NOREUSE;
-	}
 	if (bp->b_flags & B_INVAL) {
 		if (bp->b_flags & B_DELWRI)
 			bundirty(bp);
@@ -1922,7 +1925,8 @@ brelse(struct buf *bp)
 
 	binsfree(bp, qindex);
 
-	bp->b_flags &= ~(B_ASYNC | B_NOCACHE | B_AGE | B_RELBUF | B_DIRECT);
+	bp->b_flags &= ~(B_ASYNC | B_NOCACHE | B_AGE | B_RELBUF | B_DIRECT |
+	    B_NOREUSE);
 	if ((bp->b_flags & B_DELWRI) == 0 && (bp->b_xflags & BX_VNDIRTY))
 		panic("brelse: not dirty");
 	/* unlock */
@@ -2057,8 +2061,6 @@ vfs_vmio_iodone(struct buf *bp)
 		pmap_qenter(trunc_page((vm_offset_t)bp->b_data),
 		    bp->b_pages, bp->b_npages);
 	}
-	if ((bp->b_flags & B_NOREUSE) != 0)
-		bp->b_flags |= B_RELBUF;
 }
 
 /*
@@ -3879,8 +3881,8 @@ bufdone_finish(struct buf *bp)
 	 * here in the async case. The sync case always needs to do a wakeup.
 	 */
 	if (bp->b_flags & B_ASYNC) {
-		if ((bp->b_flags & (B_NOCACHE | B_INVAL | B_RELBUF)) ||
-		    (bp->b_ioflags & BIO_ERROR))
+		if ((bp->b_flags & (B_NOCACHE | B_INVAL | B_RELBUF |
+		    B_NOREUSE)) != 0 || (bp->b_ioflags & BIO_ERROR) != 0)
 			brelse(bp);
 		else
 			bqrelse(bp);

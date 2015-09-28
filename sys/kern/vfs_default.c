@@ -1100,10 +1100,9 @@ vop_stdadvise(struct vop_advise_args *ap)
 			    GB_UNMAPPED);
 			if (bp == NULL)
 				continue;
+			bp->b_flags |= B_RELBUF;
 			if (vp->v_object != NULL)
 				bp->b_flags |= B_NOREUSE;
-			if ((bp->b_flags & B_DELWRI) == 0)
-				bp->b_flags |= B_RELBUF;
 			brelse(bp);
 		}
 		VOP_UNLOCK(vp, 0);
