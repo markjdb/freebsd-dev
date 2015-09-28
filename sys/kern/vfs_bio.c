@@ -1882,6 +1882,7 @@ brelse(struct buf *bp)
 
 	if ((bp->b_flags & (B_INVAL | B_RELBUF)) != 0) {
 		allocbuf(bp, 0);
+		bp->b_flags &= ~B_NOREUSE;
 		if (bp->b_vp != NULL)
 			brelvp(bp);
 	}
@@ -1925,8 +1926,7 @@ brelse(struct buf *bp)
 
 	binsfree(bp, qindex);
 
-	bp->b_flags &= ~(B_ASYNC | B_NOCACHE | B_AGE | B_RELBUF | B_DIRECT |
-	    B_NOREUSE);
+	bp->b_flags &= ~(B_ASYNC | B_NOCACHE | B_AGE | B_RELBUF | B_DIRECT);
 	if ((bp->b_flags & B_DELWRI) == 0 && (bp->b_xflags & BX_VNDIRTY))
 		panic("brelse: not dirty");
 	/* unlock */
