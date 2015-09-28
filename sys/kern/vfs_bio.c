@@ -1977,6 +1977,10 @@ bqrelse(struct buf *bp)
 		if ((bp->b_flags & B_DELWRI) == 0 &&
 		    (bp->b_xflags & BX_VNDIRTY))
 			panic("bqrelse: not dirty");
+		if ((bp->b_flags & B_NOREUSE) != 0) {
+			brelse(bp);
+			return;
+		}
 		qindex = QUEUE_CLEAN;
 	}
 	binsfree(bp, qindex);
@@ -3881,8 +3885,8 @@ bufdone_finish(struct buf *bp)
 	 * here in the async case. The sync case always needs to do a wakeup.
 	 */
 	if (bp->b_flags & B_ASYNC) {
-		if ((bp->b_flags & (B_NOCACHE | B_INVAL | B_RELBUF |
-		    B_NOREUSE)) != 0 || (bp->b_ioflags & BIO_ERROR) != 0)
+		if ((bp->b_flags & (B_NOCACHE | B_INVAL | B_RELBUF)) ||
+		    (bp->b_ioflags & BIO_ERROR))
 			brelse(bp);
 		else
 			bqrelse(bp);
