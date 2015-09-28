@@ -1846,8 +1846,8 @@ brelse(struct buf *bp)
 	 * We still allow the B_INVAL case to call vfs_vmio_truncate(), even
 	 * if B_DELWRI is set.
 	 *
-	 * If B_NOREUSE is set and the buffer is clean, we want to evict the
-	 * buffer, so set B_RELBUF.
+	 * On the other hand, if B_NOREUSE is set we want to evict this buffer,
+	 * so set B_RELBUF.
 	 */
 	if (bp->b_flags & B_DELWRI)
 		bp->b_flags &= ~B_RELBUF;
@@ -3882,8 +3882,8 @@ bufdone_finish(struct buf *bp)
 	 * here in the async case. The sync case always needs to do a wakeup.
 	 */
 	if (bp->b_flags & B_ASYNC) {
-		if ((bp->b_flags & (B_NOCACHE | B_INVAL | B_RELBUF)) ||
-		    (bp->b_ioflags & BIO_ERROR))
+		if ((bp->b_flags & (B_NOCACHE | B_INVAL | B_RELBUF |
+		    B_NOREUSE)) != 0 || (bp->b_ioflags & BIO_ERROR) != 0)
 			brelse(bp);
 		else
 			bqrelse(bp);
