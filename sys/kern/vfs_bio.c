@@ -1845,14 +1845,9 @@ brelse(struct buf *bp)
 	 * 
 	 * We still allow the B_INVAL case to call vfs_vmio_truncate(), even
 	 * if B_DELWRI is set.
-	 *
-	 * On the other hand, if B_NOREUSE is set we want to evict this buffer,
-	 * so set B_RELBUF.
 	 */
 	if (bp->b_flags & B_DELWRI)
 		bp->b_flags &= ~B_RELBUF;
-	else if ((bp->b_flags & B_NOREUSE) != 0)
-		bp->b_flags |= B_RELBUF;
 
 	/*
 	 * VMIO buffer rundown.  It is not very necessary to keep a VMIO buffer
@@ -1880,7 +1875,8 @@ brelse(struct buf *bp)
 		allocbuf(bp, 0);
 	}
 
-	if ((bp->b_flags & (B_INVAL | B_RELBUF)) != 0) {
+	if ((bp->b_flags & (B_INVAL | B_RELBUF)) != 0 ||
+	    (bp->b_flags & (B_DELWRI | B_NOREUSE)) == B_NOREUSE) {
 		allocbuf(bp, 0);
 		bp->b_flags &= ~B_NOREUSE;
 		if (bp->b_vp != NULL)
