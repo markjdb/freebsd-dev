@@ -2469,8 +2469,8 @@ getnewbuf_reuse_bp(struct buf *bp, int qindex)
 	 * Note: we no longer distinguish between VMIO and non-VMIO
 	 * buffers.
 	 */
-	KASSERT((bp->b_flags & B_DELWRI) == 0,
-	    ("delwri buffer %p found in queue %d", bp, qindex));
+	KASSERT((bp->b_flags & (B_DELWRI | B_NOREUSE)) == 0,
+	    ("invalid buffer %p found in queue %d", bp, qindex));
 
 	/*
 	 * When recycling a clean buffer we have to truncate it and
