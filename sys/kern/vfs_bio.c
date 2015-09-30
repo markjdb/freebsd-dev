@@ -2470,7 +2470,8 @@ getnewbuf_reuse_bp(struct buf *bp, int qindex)
 	 * buffers.
 	 */
 	KASSERT((bp->b_flags & (B_DELWRI | B_NOREUSE)) == 0,
-	    ("invalid buffer %p found in queue %d", bp, qindex));
+	    ("invalid buffer %p flags %#x found in queue %d", bp, bp->b_flags,
+	    qindex));
 
 	/*
 	 * When recycling a clean buffer we have to truncate it and
