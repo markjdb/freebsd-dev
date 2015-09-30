@@ -68,7 +68,7 @@ typedef struct lsrec {
 #ifdef illumos
 	uintptr_t	ls_lock;	/* lock address */
 #else
-	const char	*ls_lock;	/* lock name */
+	char		*ls_lock;	/* lock name */
 #endif
 	uintptr_t	ls_caller;	/* caller address */
 	uint32_t	ls_count;	/* cumulative event count */
@@ -1574,6 +1574,9 @@ main(int argc, char **argv)
 					caller_in_stack = 1;
 				bcopy(oldlsp, lsp, LS_TIME);
 				lsp->ls_caller = oldlsp->ls_stack[fr];
+#ifndef illumos
+				lsp->ls_lock = strdup(oldlsp->ls_lock);
+#endif
 				/* LINTED - alignment */
 				lsp = (lsrec_t *)((char *)lsp + LS_TIME);
 			}
@@ -1582,6 +1585,9 @@ main(int argc, char **argv)
 				/* LINTED - alignment */
 				lsp = (lsrec_t *)((char *)lsp + LS_TIME);
 			}
+#ifndef illumos
+			free(oldlsp->ls_lock);
+#endif
 		}
 		g_nrecs = g_nrecs_used =
 		    ((uintptr_t)lsp - (uintptr_t)newlsp) / LS_TIME;
@@ -1695,6 +1701,15 @@ main(int argc, char **argv)
 		    ev_time[event]);
 		first = current;
 	}
+
+#ifndef illumos
+	/*
+	 * Free lock name buffers
+	 */
+	for (i = 0, lsp = (lsrec_t *)data_buf; i < g_nrecs_used; i++,
+	    lsp = (lsrec_t *)((char *)lsp + g_recsize))
+		free(lsp->ls_lock);
+#endif
 
 	return (0);
 }
