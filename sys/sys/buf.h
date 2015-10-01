@@ -204,7 +204,7 @@ struct buf {
 #define	B_PERSISTENT	0x00000100	/* Perm. ref'ed while EXT2FS mounted. */
 #define	B_DONE		0x00000200	/* I/O completed. */
 #define	B_EINTR		0x00000400	/* I/O was interrupted */
-#define	B_NOREUSE	0x00000800	/* Won't be reused once released. */
+#define	B_NOREUSE	0x00000800	/* Contents not reused once released. */
 #define	B_00001000	0x00001000	/* Available flag. */
 #define	B_INVAL		0x00002000	/* Does not contain valid info. */
 #define	B_BARRIER	0x00004000	/* Write this and all preceeding first. */

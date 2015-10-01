@@ -875,6 +875,7 @@ struct otus_tx_cmd {
 	uint8_t			*buf;
 	uint16_t		buflen;
 	void *			*odata;
+	uint16_t		odatalen;
 	uint16_t		token;
 	STAILQ_ENTRY(otus_tx_cmd)	next_cmd;
 };
@@ -982,6 +983,10 @@ struct otus_softc {
 
 	/* current noisefloor, from SET_FREQUENCY */
 	int				sc_nf[OTUS_NUM_CHAINS];
+
+	/* How many pending, active transmit frames */
+	int				sc_tx_n_pending;
+	int				sc_tx_n_active;
 
 	const uint32_t			*phy_vals;
 
