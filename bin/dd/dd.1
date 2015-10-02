@@ -94,6 +94,16 @@ modes, fill with the specified
 .Tn ASCII
 character, rather than using a space or
 .Dv NUL .
+.It Cm iadvice Ns = Ns Ar value
+Use
+.Xr posix_fadvise 2
+to provide the specified hint about the input file over its entire range.
+This is useful for benchmarking.
+Valid values are formed by removing the
+.Ql POSIX_FADV_
+prefix of
+.Xr posix_fadvise 2
+arguments and converting the result to lower-case.
 .It Cm ibs Ns = Ns Ar n
 Set the input block size to
 .Ar n
@@ -108,6 +118,10 @@ Seek on the input file
 blocks.
 This is synonymous with
 .Cm skip Ns = Ns Ar n .
+.It Cm oadvice Ns = Ns Ar value
+The equivalent of
+.Cm iadvice
+for the output file.
 .It Cm obs Ns = Ns Ar n
 Set the output block size to
 .Ar n

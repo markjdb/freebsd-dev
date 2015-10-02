@@ -39,10 +39,11 @@ static char sccsid[] = "@(#)args.c	8.3 (Berkeley) 4/2/94";
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <sys/types.h>
+#include <sys/param.h>
 
 #include <err.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <signal.h>
@@ -54,14 +55,17 @@ __FBSDID("$FreeBSD$");
 
 static int	c_arg(const void *, const void *);
 static int	c_conv(const void *, const void *);
+static void	f_advice(const char *, IO *);
 static void	f_bs(char *);
 static void	f_cbs(char *);
 static void	f_conv(char *);
 static void	f_count(char *);
 static void	f_files(char *);
 static void	f_fillchar(char *);
+static void	f_iadvice(char *);
 static void	f_ibs(char *);
 static void	f_if(char *);
+static void	f_oadvice(char *);
 static void	f_obs(char *);
 static void	f_of(char *);
 static void	f_seek(char *);
@@ -81,9 +85,11 @@ static const struct arg {
 	{ "count",	f_count,	C_COUNT, C_COUNT },
 	{ "files",	f_files,	C_FILES, C_FILES },
 	{ "fillchar",	f_fillchar,	C_FILL,	 C_FILL },
+	{ "iadvice",	f_iadvice,	C_IADV,	 C_IADV },
 	{ "ibs",	f_ibs,		C_IBS,	 C_BS|C_IBS },
 	{ "if",		f_if,		C_IF,	 C_IF },
 	{ "iseek",	f_skip,		C_SKIP,	 C_SKIP },
+	{ "oadvice",	f_oadvice,	C_OADV,	 C_OADV },
 	{ "obs",	f_obs,		C_OBS,	 C_BS|C_OBS },
 	{ "of",		f_of,		C_OF,	 C_OF },
 	{ "oseek",	f_seek,		C_SEEK,	 C_SEEK },
@@ -104,6 +110,7 @@ jcl(char **argv)
 	char *arg;
 
 	in.dbsz = out.dbsz = 512;
+	in.advice = out.advice = POSIX_FADV_NORMAL;
 
 	while ((oper = *++argv) != NULL) {
 		if ((oper = strdup(oper)) == NULL)
@@ -306,6 +313,48 @@ f_status(char *arg)
 		errx(1, "unknown status %s", arg);
 }
  
+static const struct {
+	const char *name;
+	int	advice;
+	int	flags;
+} pieces[] = {
+	{ "noreuse", POSIX_FADV_NOREUSE, ADVBEFORE },
+	{ "normal", POSIX_FADV_NORMAL, ADVBEFORE },
+	{ "random", POSIX_FADV_RANDOM, ADVBEFORE },
+	{ "sequential", POSIX_FADV_SEQUENTIAL, ADVBEFORE },
+	{ "willneed", POSIX_FADV_WILLNEED, ADVBEFORE },
+	{ "dontneed", POSIX_FADV_DONTNEED, ADVAFTER },
+};
+
+static void
+f_advice(const char *arg, IO *io)
+{
+	u_long i;
+
+	for (i = 0; i < nitems(pieces); i++)
+		if (strcmp(arg, pieces[i].name) == 0)
+			break;
+	if (i == nitems(pieces))
+		errx(1, "'%s' isn't real advice", arg);
+
+	io->advice = pieces[i].advice;
+	io->flags |= pieces[i].flags;
+}
+
+static void
+f_iadvice(char *arg)
+{
+
+	f_advice(arg, &in);
+}
+
+static void
+f_oadvice(char *arg)
+{
+
+	f_advice(arg, &out);
+}
+
 static const struct conv {
 	const char *name;
 	u_int set, noset;

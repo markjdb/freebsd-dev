@@ -243,6 +243,13 @@ setup(void)
 		ctab = casetab;
 	}
 
+	if ((in.flags & ADVBEFORE) &&
+	    posix_fadvise(in.fd, 0, 0, in.advice) != 0)
+		err(1, "posix_fadvise");
+	if ((out.flags & ADVBEFORE) &&
+	    posix_fadvise(out.fd, 0, 0, out.advice) != 0)
+		err(1, "posix_fadvise");
+
 	if (clock_gettime(CLOCK_MONOTONIC, &st.start))
 		err(1, "clock_gettime");
 }
@@ -409,6 +416,12 @@ dd_close(void)
 	}
 	if (out.dbcnt || pending)
 		dd_out(1);
+	if ((in.flags & ADVAFTER) &&
+	    posix_fadvise(in.fd, 0, 0, in.advice) != 0)
+		err(1, "posix_fadvise");
+	if ((out.flags & ADVAFTER) &&
+	    posix_fadvise(out.fd, 0, 0, out.advice) != 0)
+		err(1, "posix_fadvise");
 }
 
 void
