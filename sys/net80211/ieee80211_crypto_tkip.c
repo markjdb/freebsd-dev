@@ -54,7 +54,7 @@ __FBSDID("$FreeBSD$");
 static	void *tkip_attach(struct ieee80211vap *, struct ieee80211_key *);
 static	void tkip_detach(struct ieee80211_key *);
 static	int tkip_setkey(struct ieee80211_key *);
-static	int tkip_encap(struct ieee80211_key *, struct mbuf *m, uint8_t keyid);
+static	int tkip_encap(struct ieee80211_key *, struct mbuf *);
 static	int tkip_enmic(struct ieee80211_key *, struct mbuf *, int);
 static	int tkip_decap(struct ieee80211_key *, struct mbuf *, int);
 static	int tkip_demic(struct ieee80211_key *, struct mbuf *, int);
@@ -152,12 +152,13 @@ tkip_setkey(struct ieee80211_key *k)
  * Add privacy headers and do any s/w encryption required.
  */
 static int
-tkip_encap(struct ieee80211_key *k, struct mbuf *m, uint8_t keyid)
+tkip_encap(struct ieee80211_key *k, struct mbuf *m)
 {
 	struct tkip_ctx *ctx = k->wk_private;
 	struct ieee80211vap *vap = ctx->tc_vap;
 	struct ieee80211com *ic = vap->iv_ic;
 	uint8_t *ivp;
+	uint8_t keyid;
 	int hdrlen;
 
 	/*
@@ -185,6 +186,8 @@ tkip_encap(struct ieee80211_key *k, struct mbuf *m, uint8_t keyid)
 	memmove(ivp, ivp + tkip.ic_header, hdrlen);
 	ivp += hdrlen;
 
+	keyid = ieee80211_crypto_get_keyid(vap, k) << 6;
+
 	ivp[0] = k->wk_keytsc >> 8;		/* TSC1 */
 	ivp[1] = (ivp[0] | 0x20) & 0x7f;	/* WEP seed */
 	ivp[2] = k->wk_keytsc >> 0;		/* TSC0 */
@@ -195,7 +198,7 @@ tkip_encap(struct ieee80211_key *k, struct mbuf *m, uint8_t keyid)
 	ivp[7] = k->wk_keytsc >> 40;		/* TSC5 */
 
 	/*
-	 * Finally, do software encrypt if neeed.
+	 * Finally, do software encrypt if needed.
 	 */
 	if (k->wk_flags & IEEE80211_KEY_SWENCRYPT) {
 		if (!tkip_encrypt(ctx, k, m, hdrlen))
