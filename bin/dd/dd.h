@@ -49,9 +49,12 @@ typedef struct {
 #define	ISSEEK		0x08		/* valid to seek on */
 #define	NOREAD		0x10		/* not readable */
 #define	ISTRUNC		0x20		/* valid to ftruncate() */
+#define	ADVBEFORE	0x40		/* apply advice before I/O */
+#define	ADVAFTER	0x80		/* apply advice after I/O */
 	u_int		flags;
 
 	const char	*name;		/* name */
+	int		advice;		/* posix_fadvise(2) advice */
 	int		fd;		/* file descriptor */
 	off_t		offset;		/* # of blocks to skip */
 } IO;
@@ -98,5 +101,7 @@ typedef struct {
 #define	C_STATUS	0x08000000
 #define	C_NOXFER	0x10000000
 #define	C_NOINFO	0x20000000
+#define	C_IADV		0x40000000
+#define	C_OADV		0x80000000
 
 #define	C_PARITY	(C_PAREVEN | C_PARODD | C_PARNONE | C_PARSET)
