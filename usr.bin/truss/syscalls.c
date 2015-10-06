@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/event.h>
 #include <sys/ioccom.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/procctl.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
@@ -88,7 +89,7 @@ __FBSDID("$FreeBSD$");
 /*
  * This should probably be in its own file, sorted alphabetically.
  */
-static struct syscall syscalls[] = {
+static struct syscall decoded_syscalls[] = {
 	{ .name = "fcntl", .ret_type = 1, .nargs = 3,
 	  .args = { { Int, 0 }, { Fcntl, 1 }, { Fcntlflag, 2 } } },
 	{ .name = "rfork", .ret_type = 1, .nargs = 1,
@@ -182,6 +183,10 @@ static struct syscall syscalls[] = {
 		    { Atflags, 3 } } },
 	{ .name = "stat", .ret_type = 1, .nargs = 2,
 	  .args = { { Name | IN, 0 }, { Stat | OUT, 1 } } },
+	{ .name = "statfs", .ret_type = 1, .nargs = 2,
+	  .args = { { Name | IN, 0 }, { StatFs | OUT, 1 } } },
+	{ .name = "fstatfs", .ret_type = 1, .nargs = 2,
+	  .args = { { Int, 0 }, { StatFs | OUT, 1 } } },
 	{ .name = "lstat", .ret_type = 1, .nargs = 2,
 	  .args = { { Name | IN, 0 }, { Stat | OUT, 1 } } },
 	{ .name = "linux_newstat", .ret_type = 1, .nargs = 2,
@@ -248,6 +253,8 @@ static struct syscall syscalls[] = {
 	  .args = { { Int, 0 }, { Ptr, 1 } } },
 	{ .name = "kldfirstmod", .ret_type = 1, .nargs = 1,
 	  .args = { { Int, 0 } } },
+	{ .name = "modfind", .ret_type = 1, .nargs = 1,
+	  .args = { { Name | IN, 0 } } },
 	{ .name = "nanosleep", .ret_type = 1, .nargs = 1,
 	  .args = { { Timespec, 0 } } },
 	{ .name = "select", .ret_type = 1, .nargs = 5,
@@ -365,6 +372,7 @@ static struct syscall syscalls[] = {
 	  .args = { { Ptr, 0 } } },
 	{ .name = 0 },
 };
+static STAILQ_HEAD(, syscall) syscalls;
 
 /* Xlat idea taken from strace */
 struct xlat {
@@ -654,24 +662,49 @@ xlookup_bits(struct xlat *xlat, int val)
 	return (str);
 }
 
+void
+init_syscalls(void)
+{
+	struct syscall *sc;
+
+	STAILQ_INIT(&syscalls);
+	for (sc = decoded_syscalls; sc->name != NULL; sc++)
+		STAILQ_INSERT_HEAD(&syscalls, sc, entries);
+}
 /*
  * If/when the list gets big, it might be desirable to do it
  * as a hash table or binary search.
  */
 struct syscall *
-get_syscall(const char *name)
+get_syscall(const char *name, int nargs)
 {
 	struct syscall *sc;
+	int i;
 
-	sc = syscalls;
 	if (name == NULL)
 		return (NULL);
-	while (sc->name) {
+	STAILQ_FOREACH(sc, &syscalls, entries)
 		if (strcmp(name, sc->name) == 0)
 			return (sc);
-		sc++;
+
+	/* It is unknown.  Add it into the list. */
+#if DEBUG
+	fprintf(stderr, "unknown syscall %s -- setting args to %d\n", name,
+	    nargs);
+#endif
+
+	sc = calloc(1, sizeof(struct syscall));
+	sc->name = strdup(name);
+	sc->ret_type = 1;
+	sc->nargs = nargs;
+	for (i = 0; i < nargs; i++) {
+		sc->args[i].offset = i;
+		/* Treat all unknown arguments as LongHex. */
+		sc->args[i].type = LongHex;
 	}
-	return (NULL);
+	STAILQ_INSERT_HEAD(&syscalls, sc, entries);
+
+	return (sc);
 }
 
 /*
@@ -1444,6 +1477,30 @@ print_arg(struct syscall_args *sc, unsigned long *args, long *retval,
 		}
 		break;
 	}
+	case StatFs: {
+		unsigned int i;
+		struct statfs buf;
+
+		if (get_struct(pid, (void *)args[sc->offset], &buf,
+		    sizeof(buf)) != -1) {
+			char fsid[17];
+
+			bzero(fsid, sizeof(fsid));
+			if (buf.f_fsid.val[0] != 0 || buf.f_fsid.val[1] != 0) {
+			        for (i = 0; i < sizeof(buf.f_fsid); i++)
+					snprintf(&fsid[i*2],
+					    sizeof(fsid) - (i*2), "%02x",
+					    ((u_char *)&buf.f_fsid)[i]);
+			}
+			fprintf(fp,
+			    "{ fstypename=%s,mntonname=%s,mntfromname=%s,"
+			    "fsid=%s }", buf.f_fstypename, buf.f_mntonname,
+			    buf.f_mntfromname, fsid);
+		} else
+			fprintf(fp, "0x%lx", args[sc->offset]);
+		break;
+	}
+
 	case Rusage: {
 		struct rusage ru;
 
@@ -1603,8 +1660,6 @@ print_syscall_ret(struct trussinfo *trussinfo, const char *name, int nargs,
 	struct timespec timediff;
 
 	if (trussinfo->flags & COUNTONLY) {
-		if (!sc)
-			return;
 		clock_gettime(CLOCK_REALTIME, &trussinfo->curthread->after);
 		timespecsubt(&trussinfo->curthread->after,
 		    &trussinfo->curthread->before, &timediff);
@@ -1621,7 +1676,7 @@ print_syscall_ret(struct trussinfo *trussinfo, const char *name, int nargs,
 		fprintf(trussinfo->outfile, " ERR#%ld '%s'\n", retval[0],
 		    strerror(retval[0]));
 #ifndef __LP64__
-	else if (sc != NULL && sc->ret_type == 2) {
+	else if (sc->ret_type == 2) {
 		off_t off;
 
 #if _BYTE_ORDER == _LITTLE_ENDIAN
@@ -1648,7 +1703,7 @@ print_summary(struct trussinfo *trussinfo)
 	fprintf(trussinfo->outfile, "%-20s%15s%8s%8s\n",
 	    "syscall", "seconds", "calls", "errors");
 	ncall = nerror = 0;
-	for (sc = syscalls; sc->name != NULL; sc++)
+	STAILQ_FOREACH(sc, &syscalls, entries)
 		if (sc->ncalls) {
 			fprintf(trussinfo->outfile, "%-20s%5jd.%09ld%8d%8d\n",
 			    sc->name, (intmax_t)sc->time.tv_sec,
