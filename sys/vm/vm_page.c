@@ -2536,14 +2536,16 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
  * processes.  This optimization causes one-time-use metadata to be
  * reused more quickly.
  *
- * Normally athead is 0 resulting in LRU operation.  athead is set
+ * Normally noreuse is 0, resulting in LRU operation.  noreuse is set
  * to 1 if we want this page to be 'as if it were placed in the cache',
- * except without unmapping it from the process address space.
+ * except without unmapping it from the process address space.  In
+ * practice this is implemented by inserting the page at the head of the
+ * queue, using a marker page to guide FIFO insertion ordering.
  *
  * The page must be locked.
  */
 static inline void
-_vm_page_deactivate(vm_page_t m, int athead)
+_vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 {
 	struct vm_pagequeue *pq;
 	int queue;
@@ -2554,7 +2556,7 @@ _vm_page_deactivate(vm_page_t m, int athead)
 	 * Ignore if the page is already inactive, unless it is unlikely to be
 	 * reactivated.
 	 */
-	if ((queue = m->queue) == PQ_INACTIVE && !athead)
+	if ((queue = m->queue) == PQ_INACTIVE && !noreuse)
 		return;
 	if (m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0) {
 		pq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
@@ -2569,8 +2571,9 @@ _vm_page_deactivate(vm_page_t m, int athead)
 			vm_pagequeue_lock(pq);
 		}
 		m->queue = PQ_INACTIVE;
-		if (athead)
-			TAILQ_INSERT_HEAD(&pq->pq_pl, m, plinks.q);
+		if (noreuse)
+			TAILQ_INSERT_BEFORE(&vm_phys_domain(m)->vmd_inacthead,
+			    m, plinks.q);
 		else
 			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
