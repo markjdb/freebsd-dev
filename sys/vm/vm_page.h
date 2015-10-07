@@ -330,6 +330,7 @@ extern struct mtx_padalign pa_lock[];
 #define	PG_WINATCFLS	0x0040		/* flush dirty page on inactive q */
 #define	PG_NODUMP	0x0080		/* don't include this page in a dump */
 #define	PG_UNHOLDFREE	0x0100		/* delayed free of a held page */
+#define	PG_NOREUSE	0x0200		/* LRU-defeating deactivation */
 
 /*
  * Misc constants.
