@@ -111,7 +111,8 @@ struct vmmeter {
 	u_int v_vforkpages;	/* (p) VM pages affected by vfork() */
 	u_int v_rforkpages;	/* (p) VM pages affected by rfork() */
 	u_int v_kthreadpages;	/* (p) VM pages affected by fork() by kernel */
-	u_int v_spare[2];
+	u_int v_reuseafterall;	/* (p) reactivations of noreuse pages */
+	u_int v_spare;
 };
 #ifdef _KERNEL
 

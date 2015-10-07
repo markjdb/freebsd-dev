@@ -2225,6 +2225,7 @@ vm_page_enqueue(uint8_t queue, vm_page_t m)
 	pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
 	vm_pagequeue_lock(pq);
 	m->queue = queue;
+	m->flags &= ~PG_NOREUSE;
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 	vm_pagequeue_cnt_inc(pq);
 	vm_pagequeue_unlock(pq);
@@ -2247,6 +2248,7 @@ vm_page_requeue(vm_page_t m)
 	    ("vm_page_requeue: page %p is not queued", m));
 	pq = vm_page_pagequeue(m);
 	vm_pagequeue_lock(pq);
+	m->flags &= ~PG_NOREUSE;
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 	vm_pagequeue_unlock(pq);
@@ -2268,6 +2270,7 @@ vm_page_requeue_locked(vm_page_t m)
 	    ("vm_page_requeue_locked: page %p is not queued", m));
 	pq = vm_page_pagequeue(m);
 	vm_pagequeue_assert_locked(pq);
+	m->flags &= ~PG_NOREUSE;
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 }
@@ -2293,6 +2296,9 @@ vm_page_activate(vm_page_t m)
 				m->act_count = ACT_INIT;
 			if (queue != PQ_NONE)
 				vm_page_dequeue(m);
+			MPASS(queue == PQ_INACTIVE || !(m->flags & PG_NOREUSE));
+			if (queue == PQ_INACTIVE)
+				PCPU_INC(cnt.v_reuseafterall);
 			vm_page_enqueue(PQ_ACTIVE, m);
 		} else
 			KASSERT(queue == PQ_NONE,
@@ -2571,10 +2577,11 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 			vm_pagequeue_lock(pq);
 		}
 		m->queue = PQ_INACTIVE;
-		if (noreuse)
+		if (noreuse) {
+			m->flags |= PG_NOREUSE;
 			TAILQ_INSERT_BEFORE(&vm_phys_domain(m)->vmd_inacthead,
 			    m, plinks.q);
-		else
+		} else
 			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
 		vm_pagequeue_unlock(pq);
