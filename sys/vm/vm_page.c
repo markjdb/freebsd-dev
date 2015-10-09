@@ -2296,8 +2296,10 @@ vm_page_activate(vm_page_t m)
 				m->act_count = ACT_INIT;
 			if (queue != PQ_NONE)
 				vm_page_dequeue(m);
-			MPASS(queue == PQ_INACTIVE || !(m->flags & PG_NOREUSE));
-			if (queue == PQ_INACTIVE)
+			MPASS(queue == PQ_INACTIVE ||
+			    (m->flags & PG_NOREUSE) == 0);
+			if (queue == PQ_INACTIVE &&
+			    (m->flags & PG_NOREUSE) != 0)
 				PCPU_INC(cnt.v_reuseafterall);
 			vm_page_enqueue(PQ_ACTIVE, m);
 		} else
