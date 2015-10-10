@@ -39,18 +39,36 @@ cat <<__EOF__
  */
 #include <sys/cdefs.h>
 
-void	sdt_probe_stub(void);
+void	_sdt_probe_stub(void);
 
 /*
  * A no-op stub used as an alias for all SDT probe site stubs.
  */
 void
-sdt_probe_stub(void)
+_sdt_probe_stub(void)
 {
 }
 
 __EOF__
 
 ${NM} -u "$obj" | \
-    awk '/^[[:space:]]*U __dtrace_sdt_[_[:alnum:]]*$/ \
-         {printf "__strong_reference(sdt_probe_stub, %s);\n", $2}'
+    ${AWK} '/^[[:space:]]*U __dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*$/ \
+            {printf "__strong_reference(_sdt_probe_stub, %s);\n", $2;}'
+
+cat <<__EOF__
+__asm__(
+    ".pushsection set_sdt_probe_site_set, \"a\"\n"
+    ".align 8\n"
+    ".globl __start_set_sdt_probe_site_set\n"
+    ".globl __stop_set_sdt_probe_site_set\n"
+__EOF__
+
+${OBJDUMP} -r -j .text "$obj" | \
+    ${AWK} '$3 ~ /^__dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*\+?/ \
+            {match($3, /sdt_[_[:alpha:]]+[_[:alnum:]]*/); \
+             printf "    \".quad %s\\n\"\n    \".quad 0x%s\\n\"\n", \
+                 substr($3, 10, RLENGTH), $1;}'
+
+cat <<__EOF__
+    ".popsection\n");
+__EOF__

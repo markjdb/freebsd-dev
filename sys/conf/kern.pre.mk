@@ -38,6 +38,7 @@ CP?=		cp
 LINT?=		lint
 NM?=		nm
 OBJCOPY?=	objcopy
+OBJDUMP?=	objdump
 SIZE?=		size
 
 .if defined(DEBUG)
