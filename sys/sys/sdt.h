@@ -164,7 +164,8 @@
 #define	SDT_PROBE_DEFINE(prov, mod, func, name)				\
 	struct sdt_probe _SDT_PROBE_NAME(prov, mod, func, name)[1] = {	\
 	    { sizeof(struct sdt_probe), sdt_provider_##prov,		\
-	    { NULL, NULL }, { NULL, NULL }, #mod, #func, #name, 0, 0, NULL } \
+	    { NULL, NULL }, { NULL }, { NULL, NULL },			\
+	    #mod, #func, #name, 0, 0, NULL }				\
 	};								\
 	DATA_SET(sdt_probes_set, _SDT_PROBE_NAME(prov, mod, func, name))
 
@@ -330,26 +331,14 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
  * Macros for defining probe sites.
  */
 
-#define	_SDT_PROBE_POSTAMBLE_(probe)					\
-	__asm__ __volatile(						\
-	    "%=:\n"							\
-	    ".pushsection sdt_probe_site, \"a\"\n"			\
-	    ".align 8\n"						\
-	    ".quad " #probe "\n"					\
-	    ".quad %=b\n"						\
-	    ".popsection\n" :: )
-#define	_SDT_PROBE_POSTAMBLE(probe)	_SDT_PROBE_POSTAMBLE_(probe)
-
 #define	SDT_PROBE0(prov, mod, func, name) do {				\
 	extern void _SDT_PROBE_STUB(prov, mod, func, name)(void);	\
 	_SDT_PROBE_STUB(prov, mod, func, name)();			\
-	_SDT_PROBE_POSTAMBLE(_SDT_PROBE_NAME(prov, mod, func, name));	\
 } while (0)
 
 #define	SDT_PROBE1(prov, mod, func, name, arg0) do {			\
 	extern void _SDT_PROBE_STUB(prov, mod, func, name)(uintptr_t);	\
 	_SDT_PROBE_STUB(prov, mod, func, name)((uintptr_t)arg0);	\
-	_SDT_PROBE_POSTAMBLE(_SDT_PROBE_NAME(prov, mod, func, name));	\
 } while (0)
 
 #define	SDT_PROBE2(prov, mod, func, name, arg0, arg1) do {		\
@@ -357,7 +346,6 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	    uintptr_t);							\
 	_SDT_PROBE_STUB(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1);						\
-	_SDT_PROBE_POSTAMBLE(_SDT_PROBE_NAME(prov, mod, func, name));	\
 } while (0)
 
 #define	SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2) do {	\
@@ -365,7 +353,6 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	    uintptr_t, uintptr_t);					\
 	_SDT_PROBE_STUB(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2);				\
-	_SDT_PROBE_POSTAMBLE(_SDT_PROBE_NAME(prov, mod, func, name));	\
 } while (0)
 
 #define	SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3) do {	\
@@ -373,7 +360,6 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	    uintptr_t, uintptr_t, uintptr_t);				\
 	_SDT_PROBE_STUB(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3);		\
-	_SDT_PROBE_POSTAMBLE(_SDT_PROBE_NAME(prov, mod, func, name));	\
 } while (0)
 
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3,	\
@@ -383,7 +369,6 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	_SDT_PROBE_STUB(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
 	    (uintptr_t)arg4);						\
-	_SDT_PROBE_POSTAMBLE(_SDT_PROBE_NAME(prov, mod, func, name));	\
 } while (0)
 
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
@@ -393,7 +378,6 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	_SDT_PROBE_STUB(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
 	    (uintptr_t)arg4, (uintptr_t)arg5);				\
-	_SDT_PROBE_POSTAMBLE(_SDT_PROBE_NAME(prov, mod, func, name));	\
 } while (0)
 
 #define	SDT_PROBE7(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
@@ -404,7 +388,6 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	_SDT_PROBE_STUB(prov, mod, func, name)((uintptr_t)arg0,		\
 	    (uintptr_t)arg1, (uintptr_t)arg2, (uintptr_t)arg3,		\
 	    (uintptr_t)arg4, (uintptr_t)arg5, (uintptr_t)arg6);		\
-	_SDT_PROBE_POSTAMBLE(_SDT_PROBE_NAME(prov, mod, func, name));	\
 } while (0)
 
 /*
@@ -479,6 +462,7 @@ struct sdt_probe {
 	int		version;	/* Set to sizeof(struct sdt_probe). */
 	struct sdt_provider *prov;	/* Ptr to the provider structure. */
 	TAILQ_ENTRY(sdt_probe) probe_entry; /* SDT probe list entry. */
+	SLIST_HEAD(, sdt_probedesc) site_list; /* probe sites */
 	TAILQ_HEAD(, sdt_argtype) argtype_list;
 	const char	*mod;
 	const char	*func;
@@ -498,9 +482,9 @@ struct sdt_provider {
 struct sdt_probedesc {
 	union {
 		SLIST_ENTRY(sdt_probedesc) spd_entry;
-		struct probe	*sdp_probe;
-	};
-	uint64_t		sdp_offset;
+		struct sdt_probe *spd_probe;
+	} link;
+	uint64_t	spd_offset;
 };
 
 SDT_PROVIDER_DECLARE(sdt);

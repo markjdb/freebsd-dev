@@ -136,7 +136,8 @@ gdbinit:
 .endif
 
 sdtstubs.c: ${FULLKERNEL}.reloc
-	NM='${NM}' sh $S/tools/sdtstubs.sh ${.ALLSRC} > ${.TARGET}
+	AWK='${AWK}' OBJDUMP='${OBJDUMP}' NM='${NM}' \
+	    sh $S/tools/sdtstubs.sh ${.ALLSRC} > ${.TARGET}
 
 ${FULLKERNEL}.reloc: ${SYSTEM_DEP}
 	@${LD} --relocatable -o ${.TARGET} ${SYSTEM_OBJS}
