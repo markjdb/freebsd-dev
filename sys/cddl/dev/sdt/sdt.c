@@ -63,6 +63,7 @@ __FBSDID("$FreeBSD$");
 
 #define	SDT_TABENTRIES	0x2000
 #define	SDT_HADDR(addr)	((u_long)(((addr) >> 4) & sdt_hashmask))
+#define	SDT_HENTRY(addr) (&sdt_probetab[SDT_HADDR(addr)])
 
 LIST_HEAD(, sdt_siterec) *sdt_probetab;
 u_long sdt_hashmask;
@@ -182,6 +183,7 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 	char mod[DTRACE_MODNAMELEN];
 	char func[DTRACE_FUNCNAMELEN];
 	char name[DTRACE_NAMELEN];
+	dtrace_id_t id;
 	const char *from;
 	char *to;
 	size_t len;
@@ -193,7 +195,7 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 		return;
 	}
 
-	aframes = 1;
+	aframes = 3;
 	probe->sdtp_lf = lf;
 
 	TAILQ_FOREACH(prov, &sdt_prov_list, prov_entry)
@@ -228,15 +230,26 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 	*to = '\0';
 
 	/*
-	 * If the probe specified a function name, use it.
+	 * If the probe specified a function name, use it. We create a fake
+	 * probedesc with an offset of 0 to indicate that we should use the
+	 * probe's site list when enabling or disabling a probe.
 	 */
 	if (probe->func[0] != '\0') {
 		strlcpy(func, probe->func, sizeof(func));
-		if (dtrace_probe_lookup(prov->id, mod, func, name) !=
-		    DTRACE_IDNONE)
-			return;
-		(void)dtrace_probe_create(prov->id, mod, func, name, aframes,
-		    probe);
+
+		desc = malloc(sizeof(*desc), M_SDT, M_WAITOK);
+		desc->li.spd_probe = probe;
+		desc->spd_offset = 0;
+
+		id = dtrace_probe_create(prov->id, mod, func, name, aframes,
+		    desc);
+		SLIST_FOREACH(desc, &probe->site_list, li.spd_entry) {
+			rec = malloc(sizeof(*rec), M_SDT, M_WAITOK);
+			rec->desc = desc;
+			rec->id = id;
+			LIST_INSERT_HEAD(SDT_HENTRY(desc->spd_offset), rec,
+			    next);
+		}
 		return;
 	}
 
@@ -259,8 +272,7 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 		rec->desc = desc;
 		rec->id = dtrace_probe_create(prov->id, mod, func, name,
 		    aframes, desc);
-		LIST_INSERT_HEAD(&sdt_probetab[SDT_HADDR(desc->spd_offset)],
-		    rec, next);
+		LIST_INSERT_HEAD(SDT_HENTRY(desc->spd_offset), rec, next);
 	}
 }
 
@@ -335,6 +347,17 @@ sdt_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *argdesc)
 static void
 sdt_destroy(void *arg, dtrace_id_t id, void *parg)
 {
+	struct sdt_probedesc *desc;
+	struct sdt_probe *probe;
+
+	desc = parg;
+	if (desc->spd_offset == 0) {
+		probe = desc->li.spd_probe;
+		KASSERT(strlen(probe->func) > 0,
+		    ("probefunc is empty for %s:::%s", probe->prov->name,
+		    probe->name));
+		free(desc, M_SDT);
+	}
 }
 
 /*
