@@ -69,6 +69,4 @@ ${OBJDUMP} -r -j .text "$obj" | \
              printf "    \".quad %s\\n\"\n    \".quad 0x%s\\n\"\n", \
                  substr($3, 10, RLENGTH), $1;}'
 
-cat <<__EOF__
-    ".popsection\n");
-__EOF__
+printf "    \".popsection\");"

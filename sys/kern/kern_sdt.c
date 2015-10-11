@@ -49,12 +49,12 @@ SDT_PROVIDER_DEFINE(sdt);
 #define	AMD64_NOP	0x90
 #define	AMD64_RET	0xc3
 
-static eventhandler_tag sdt_kld_load_tag;
-
 /*
  * Defined by sdtstubs.sh at compile-time.
  */
 void	_sdt_probe_stub(void);
+
+static eventhandler_tag sdt_kld_load_tag;
 
 static int
 sdt_patch_linker_file(linker_file_t lf, void *arg __unused)
@@ -63,7 +63,7 @@ sdt_patch_linker_file(linker_file_t lf, void *arg __unused)
 	struct sdt_probe *probe;
 	uintptr_t stubaddr;
 	uint32_t offset;
-	uint8_t *callbuf, opcode;
+	uint8_t *callinstr, opcode;
 
 	if (linker_file_lookup_set(lf, "sdt_probe_site_set", &start, &end,
 	    NULL) != 0)
@@ -72,22 +72,22 @@ sdt_patch_linker_file(linker_file_t lf, void *arg __unused)
 	stubaddr = (uintptr_t)_sdt_probe_stub;
 
 	/*
-	 * Linker set iteration deviates from the normal pattern because this
-	 * linker set is special: it contains the probe info structs themselves
-	 * rather than pointers.
+	 * Linker set iteration here deviates from the normal pattern because
+	 * this linker set is special: it contains the probe info structs
+	 * themselves rather than pointers.
 	 */
 	for (spd = start; spd < end; spd++) {
-		callbuf = (uint8_t *)(uintptr_t)(spd->spd_offset - 1 +
+		callinstr = (uint8_t *)(uintptr_t)(spd->spd_offset - 1 +
 		    (uintptr_t)btext);
-		opcode = callbuf[0];
+		opcode = callinstr[0];
 		switch (opcode) {
 		case AMD64_CALL32:
 		case AMD64_JMP32:
 			break;
 		default:
 			printf("sdt: opcode mismatch (0x%x) for %s:::%s@%p\n",
-			    callbuf[0], spd->link.spd_probe->prov->name,
-			    spd->link.spd_probe->name, (void *)spd->spd_offset);
+			    callinstr[0], spd->li.spd_probe->prov->name,
+			    spd->li.spd_probe->name, (void *)spd->spd_offset);
 			continue;
 		}
 
@@ -95,32 +95,37 @@ sdt_patch_linker_file(linker_file_t lf, void *arg __unused)
 		 * Verify that the call/jmp target is in fact the SDT stub.
 		 * If it's not, we shouldn't touch anything.
 		 */
-		memcpy(&offset, &callbuf[1], sizeof(offset));
-		if (roundup2(offset + (uintptr_t)callbuf, 16) != stubaddr) {
+		memcpy(&offset, &callinstr[1], sizeof(offset));
+		if (roundup2(offset + (uintptr_t)callinstr, 16) != stubaddr) {
 			printf("sdt: offset mismatch: %p vs. %p\n",
-			    (void *)roundup2(offset + (uintptr_t)callbuf, 16),
+			    (void *)roundup2(offset + (uintptr_t)callinstr, 16),
 			    (void *)stubaddr);
 			continue;
 		}
 
 		switch (opcode) {
 		case AMD64_CALL32:
-			memset(callbuf, AMD64_NOP, CALL_SITE_LEN);
+			memset(callinstr, AMD64_NOP, CALL_SITE_LEN);
 			break;
 		case AMD64_JMP32:
-			/* The probe site is a tail call; just return. */
-			callbuf[0] = AMD64_RET;
-			memset(&callbuf[1], AMD64_NOP, CALL_SITE_LEN - 1);
+			/*
+			 * The probe site is a tail call, so we need a "ret"
+			 * when the probe isn't enabled. We overwrite the second
+			 * byte instead of the first: the first byte will be
+			 * replaced with a breakpoint when the probe is enabled.
+			 */
+			memset(callinstr, AMD64_NOP, CALL_SITE_LEN);
+			callinstr[1] = AMD64_RET;
 			break;
 		}
-		spd->spd_offset = (uintptr_t)callbuf;
+		spd->spd_offset = (uintptr_t)callinstr;
 
 		/*
 		 * The probe site is patched; now we can associate the site with
 		 * the probe itself.
 		 */
-		probe = spd->link.spd_probe;
-		SLIST_INSERT_HEAD(&probe->site_list, spd, link.spd_entry);
+		probe = spd->li.spd_probe;
+		SLIST_INSERT_HEAD(&probe->site_list, spd, li.spd_entry);
 	}
 	return (0);
 }
