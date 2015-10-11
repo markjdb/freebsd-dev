@@ -59,6 +59,16 @@ __FBSDID("$FreeBSD$");
 #include <sys/dtrace.h>
 #include <sys/dtrace_bsd.h>
 
+#include "sdt.h"
+
+#define	SDT_TABENTRIES	0x2000
+#define	SDT_HADDR(addr)	((u_long)(((addr) >> 4) & sdt_hashmask))
+
+LIST_HEAD(, sdt_siterec) *sdt_probetab;
+u_long sdt_hashmask;
+
+static MALLOC_DEFINE(M_SDT, "SDT", "DTrace SDT providers");
+
 /* DTrace methods. */
 static void	sdt_getargdesc(void *, dtrace_id_t, void *, dtrace_argdesc_t *);
 static void	sdt_provide_probes(void *, dtrace_probedesc_t *);
@@ -73,14 +83,12 @@ static void	sdt_create_probe(struct sdt_probe *, struct linker_file *);
 static void	sdt_kld_load(void *, struct linker_file *);
 static void	sdt_kld_unload_try(void *, struct linker_file *, int *);
 
-static MALLOC_DEFINE(M_SDT, "SDT", "DTrace SDT providers");
-
 static dtrace_pattr_t sdt_attr = {
 { DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
 { DTRACE_STABILITY_PRIVATE, DTRACE_STABILITY_PRIVATE, DTRACE_CLASS_UNKNOWN },
 { DTRACE_STABILITY_PRIVATE, DTRACE_STABILITY_PRIVATE, DTRACE_CLASS_ISA },
 { DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
-{ DTRACE_STABILITY_PRIVATE, DTRACE_STABILITY_PRIVATE, DTRACE_CLASS_ISA },
+{ DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_ISA },
 };
 
 static dtrace_pops_t sdt_pops = {
@@ -100,6 +108,18 @@ static TAILQ_HEAD(, sdt_provider) sdt_prov_list;
 
 static eventhandler_tag	sdt_kld_load_tag;
 static eventhandler_tag	sdt_kld_unload_try_tag;
+
+struct sdt_siterec *
+sdt_lookup_site(uint64_t offset)
+{
+	struct sdt_siterec *rec;
+
+	LIST_FOREACH(rec, &sdt_probetab[SDT_HADDR(offset)], next) {
+		if (rec->desc->spd_offset == offset)
+			return (rec);
+	}
+	return (NULL);
+}
 
 static void
 sdt_create_provider(struct sdt_provider *prov)
@@ -146,7 +166,7 @@ sdt_desc_match(struct linker_file *lf, int symidx, linker_symval_t *sym,
 	if (offset >= (uint64_t)sym->value && offset < (uint64_t)sym->value +
 	    sym->size) {
 		strlcpy(match->func, sym->name, DTRACE_FUNCNAMELEN);
-		printf("found probe in %s\n", sym->name);
+		/* Found a match, stop iterating. */
 		return (EJUSTRETURN);
 	}
 	return (0);
@@ -155,6 +175,7 @@ sdt_desc_match(struct linker_file *lf, int symidx, linker_symval_t *sym,
 static void
 sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 {
+	struct sdt_siterec *rec;
 	struct sdt_probedesc *desc;
 	struct sdt_descmatch match;
 	struct sdt_provider *prov;
@@ -164,6 +185,7 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 	const char *from;
 	char *to;
 	size_t len;
+	int aframes, error;
 
 	if (probe->version != (int)sizeof(*probe)) {
 		printf("sdt: ignoring probe %p, version %u expected %u\n",
@@ -171,7 +193,8 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 		return;
 	}
 
-	(*probe)->sdtp_lf = lf;
+	aframes = 1;
+	probe->sdtp_lf = lf;
 
 	TAILQ_FOREACH(prov, &sdt_prov_list, prov_entry)
 		if (strcmp(prov->name, probe->prov->name) == 0)
@@ -179,7 +202,9 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 
 	KASSERT(prov != NULL, ("probe defined without a provider"));
 
-	/* If no module name was specified, use the module filename. */
+	/*
+	 * If no module name was specified, use the module filename.
+	 */
 	if (probe->mod[0] == '\0') {
 		len = strlcpy(mod, probe->sdtp_lf->filename, sizeof(mod));
 		if (len > 3 && strcmp(mod + len - 3, ".ko") == 0)
@@ -187,6 +212,9 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 	} else
 		strlcpy(mod, probe->mod, sizeof(mod));
 
+	/*
+	 * Demangle the probe name: two consecutive underscores become a dash.
+	 */
 	from = probe->name;
 	to = name;
 	for (len = 0; len < sizeof(name) - 1 && *from != '\0';
@@ -207,7 +235,8 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 		if (dtrace_probe_lookup(prov->id, mod, func, name) !=
 		    DTRACE_IDNONE)
 			return;
-		(void)dtrace_probe_create(prov->id, mod, func, name, 1, probe);
+		(void)dtrace_probe_create(prov->id, mod, func, name, aframes,
+		    probe);
 		return;
 	}
 
@@ -216,13 +245,22 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 	 */
 	func[0] = '\0';
 	match.func = &func[0];
-	SLIST_FOREACH(desc, &probe->site_list, link.spd_entry) {
+	while ((desc = SLIST_FIRST(&probe->site_list)) != NULL) {
 		match.desc = desc;
-		if (linker_file_function_listall(lf, sdt_desc_match,
-		    &match) == 0)
-			printf("sdt: no function found at 0x%lx\n",
-			    desc->spd_offset);
-		(void)dtrace_probe_create(prov->id, mod, func, name, 1, probe);
+		error = linker_file_function_listall(lf, sdt_desc_match,
+		    &match);
+		if (error != EJUSTRETURN)
+			printf("sdt: no function found at 0x%lx (%d)\n",
+			    desc->spd_offset, error);
+		SLIST_REMOVE_HEAD(&probe->site_list, li.spd_entry);
+		desc->li.spd_probe = probe;
+
+		rec = malloc(sizeof(*rec), M_SDT, M_WAITOK);
+		rec->desc = desc;
+		rec->id = dtrace_probe_create(prov->id, mod, func, name,
+		    aframes, desc);
+		LIST_INSERT_HEAD(&sdt_probetab[SDT_HADDR(desc->spd_offset)],
+		    rec, next);
 	}
 }
 
@@ -239,51 +277,56 @@ sdt_provide_probes(void *arg, dtrace_probedesc_t *desc)
 static void
 sdt_enable(void *arg __unused, dtrace_id_t id, void *parg)
 {
-	struct sdt_probe *probe = parg;
+	struct sdt_probedesc *desc = parg;
+	struct sdt_probe *probe = desc->li.spd_probe;
 
-	probe->id = id;
 	probe->sdtp_lf->nenabled++;
 	if (strcmp(probe->prov->name, "lockstat") == 0)
 		lockstat_enabled++;
+	sdt_probe_enable(desc);
 }
 
 static void
 sdt_disable(void *arg __unused, dtrace_id_t id, void *parg)
 {
-	struct sdt_probe *probe = parg;
+	struct sdt_probedesc *desc = parg;
+	struct sdt_probe *probe = desc->li.spd_probe;
 
 	KASSERT(probe->sdtp_lf->nenabled > 0, ("no probes enabled"));
 
+	sdt_probe_disable(desc);
 	if (strcmp(probe->prov->name, "lockstat") == 0)
 		lockstat_enabled--;
-	probe->id = 0;
 	probe->sdtp_lf->nenabled--;
 }
 
 static void
-sdt_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
+sdt_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *argdesc)
 {
 	struct sdt_argtype *argtype;
-	struct sdt_probe *probe = parg;
+	struct sdt_probedesc *desc;
+	struct sdt_probe *probe;
 
-	if (desc->dtargd_ndx >= probe->n_args) {
-		desc->dtargd_ndx = DTRACE_ARGNONE;
+	desc = parg;
+	probe = desc->li.spd_probe;
+	if (argdesc->dtargd_ndx >= probe->n_args) {
+		argdesc->dtargd_ndx = DTRACE_ARGNONE;
 		return;
 	}
 
 	TAILQ_FOREACH(argtype, &probe->argtype_list, argtype_entry) {
-		if (desc->dtargd_ndx == argtype->ndx) {
-			desc->dtargd_mapping = desc->dtargd_ndx;
+		if (argdesc->dtargd_ndx == argtype->ndx) {
+			argdesc->dtargd_mapping = argdesc->dtargd_ndx;
 			if (argtype->type == NULL) {
-				desc->dtargd_native[0] = '\0';
-				desc->dtargd_xlate[0] = '\0';
+				argdesc->dtargd_native[0] = '\0';
+				argdesc->dtargd_xlate[0] = '\0';
 				continue;
 			}
-			strlcpy(desc->dtargd_native, argtype->type,
-			    sizeof(desc->dtargd_native));
+			strlcpy(argdesc->dtargd_native, argtype->type,
+			    sizeof(argdesc->dtargd_native));
 			if (argtype->xtype != NULL)
-				strlcpy(desc->dtargd_xlate, argtype->xtype,
-				    sizeof(desc->dtargd_xlate));
+				strlcpy(argdesc->dtargd_xlate, argtype->xtype,
+				    sizeof(argdesc->dtargd_xlate));
 			break;
 		}
 	}
@@ -383,6 +426,8 @@ sdt_load()
 
 	TAILQ_INIT(&sdt_prov_list);
 
+	sdt_probetab = hashinit(SDT_TABENTRIES, M_SDT, &sdt_hashmask);
+
 	sdt_kld_load_tag = EVENTHANDLER_REGISTER(kld_load, sdt_kld_load, NULL,
 	    EVENTHANDLER_PRI_ANY);
 	sdt_kld_unload_try_tag = EVENTHANDLER_REGISTER(kld_unload_try,
@@ -390,6 +435,8 @@ sdt_load()
 
 	/* Pick up probes from the kernel and already-loaded linker files. */
 	linker_file_foreach(sdt_linker_file_cb, NULL);
+
+	dtrace_invop_add(sdt_invop);
 }
 
 static int
@@ -398,8 +445,13 @@ sdt_unload()
 	struct sdt_provider *prov, *tmp;
 	int ret;
 
+	dtrace_invop_remove(sdt_invop);
+
 	EVENTHANDLER_DEREGISTER(kld_load, sdt_kld_load_tag);
 	EVENTHANDLER_DEREGISTER(kld_unload_try, sdt_kld_unload_try_tag);
+
+	/* XXX need to free recs. */
+	hashdestroy(sdt_probetab, M_SDT, sdt_hashmask);
 
 	TAILQ_FOREACH_SAFE(prov, &sdt_prov_list, prov_entry, tmp) {
 		ret = dtrace_unregister(prov->id);

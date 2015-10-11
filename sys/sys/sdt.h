@@ -28,115 +28,20 @@
 
 /*
  * Statically Defined Tracing (SDT) definitions.
+ *
+ * This file contains macros for defining DTrace SDT probes and probe sites.
+ * It also contains the macros used to create userland SDT probes (USDT).
  */
 
 #ifndef _SYS_SDT_H
 #define	_SYS_SDT_H
 
-#ifndef _KERNEL
+#ifdef _KERNEL
 
-#define	_DTRACE_VERSION	1
-
-#define	DTRACE_PROBE(prov, name) {				\
-	extern void __dtrace_##prov##___##name(void);		\
-	__dtrace_##prov##___##name();				\
-}
-
-#define	DTRACE_PROBE1(prov, name, arg1) {			\
-	extern void __dtrace_##prov##___##name(unsigned long);	\
-	__dtrace_##prov##___##name((unsigned long)arg1);	\
-}
-
-#define	DTRACE_PROBE2(prov, name, arg1, arg2) {			\
-	extern void __dtrace_##prov##___##name(unsigned long,	\
-	    unsigned long);					\
-	__dtrace_##prov##___##name((unsigned long)arg1,		\
-	    (unsigned long)arg2);				\
-}
-
-#define	DTRACE_PROBE3(prov, name, arg1, arg2, arg3) {		\
-	extern void __dtrace_##prov##___##name(unsigned long,	\
-	    unsigned long, unsigned long);			\
-	__dtrace_##prov##___##name((unsigned long)arg1,		\
-	    (unsigned long)arg2, (unsigned long)arg3);		\
-}
-
-#define	DTRACE_PROBE4(prov, name, arg1, arg2, arg3, arg4) {	\
-	extern void __dtrace_##prov##___##name(unsigned long,	\
-	    unsigned long, unsigned long, unsigned long);	\
-	__dtrace_##prov##___##name((unsigned long)arg1,		\
-	    (unsigned long)arg2, (unsigned long)arg3,		\
-	    (unsigned long)arg4);				\
-}
-
-#define	DTRACE_PROBE5(prov, name, arg1, arg2, arg3, arg4, arg5) {	\
-	extern void __dtrace_##prov##___##name(unsigned long,		\
-	    unsigned long, unsigned long, unsigned long, unsigned long);\
-	__dtrace_##prov##___##name((unsigned long)arg1,			\
-	    (unsigned long)arg2, (unsigned long)arg3,			\
-	    (unsigned long)arg4, (unsigned long)arg5);			\
-}
-
-#else /* _KERNEL */
+#ifdef KDTRACE_HOOKS
 
 #include <sys/cdefs.h>
 #include <sys/linker_set.h>
-
-#ifndef KDTRACE_HOOKS
-
-#define	SDT_PROVIDER_DEFINE(prov)
-#define	SDT_PROVIDER_DECLARE(prov)
-#define	SDT_PROBE_DEFINE(prov, mod, func, name)
-#define	SDT_PROBE_DECLARE(prov, mod, func, name)
-#define	SDT_PROBE_ENABLED(prov, mod, func, name)	0
-#define	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
-#define	SDT_PROBE_ARGTYPE(prov, mod, func, name, num, type, xtype)
-
-#define	SDT_PROBE_DEFINE0(prov, mod, func, name)
-#define	SDT_PROBE_DEFINE1(prov, mod, func, name, arg0)
-#define	SDT_PROBE_DEFINE2(prov, mod, func, name, arg0, arg1)
-#define	SDT_PROBE_DEFINE3(prov, mod, func, name, arg0, arg1, arg2)
-#define	SDT_PROBE_DEFINE4(prov, mod, func, name, arg0, arg1, arg2, arg3)
-#define	SDT_PROBE_DEFINE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
-#define	SDT_PROBE_DEFINE6(prov, mod, func, name, arg0, arg1, arg2, arg3, \
-    arg4, arg5)
-#define	SDT_PROBE_DEFINE7(prov, mod, func, name, arg0, arg1, arg2, arg3, \
-    arg4, arg5, arg6)
-
-#define	SDT_PROBE0(prov, mod, func, name)
-#define	SDT_PROBE1(prov, mod, func, name, arg0)
-#define	SDT_PROBE2(prov, mod, func, name, arg0, arg1)
-#define	SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2)
-#define	SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3)
-#define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
-#define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5)
-#define	SDT_PROBE7(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
-    arg5, arg6)
-
-#define	SDT_PROBE_DEFINE0_XLATE(prov, mod, func, name)
-#define	SDT_PROBE_DEFINE1_XLATE(prov, mod, func, name, arg0, xarg0)
-#define	SDT_PROBE_DEFINE2_XLATE(prov, mod, func, name, arg0, xarg0,	\
-    arg1, xarg1)
-#define	SDT_PROBE_DEFINE3_XLATE(prov, mod, func, name, arg0, xarg0,	\
-    arg1, xarg1, arg2, xarg2)
-#define	SDT_PROBE_DEFINE4_XLATE(prov, mod, func, name, arg0, xarg0,	\
-    arg1, xarg1, arg2, xarg2, arg3, xarg3)
-#define	SDT_PROBE_DEFINE5_XLATE(prov, mod, func, name, arg0, xarg0,	\
-    arg1, xarg1, arg2, xarg2, arg3, xarg3, arg4, xarg4)
-#define	SDT_PROBE_DEFINE6_XLATE(prov, mod, func, name, arg0, xarg0,	\
-    arg1,  xarg1, arg2, xarg2, arg3, xarg3, arg4, xarg4, arg5, xarg5)
-#define	SDT_PROBE_DEFINE7_XLATE(prov, mod, func, name, arg0, xarg0,	\
-    arg1, xarg1, arg2, xarg2, arg3, xarg3, arg4, xarg4, arg5, xarg5,	\
-    arg6, xarg6)
-
-#define	DTRACE_PROBE(name)
-#define	DTRACE_PROBE1(name, t0, arg0)
-#define	DTRACE_PROBE2(name, t0, arg0, t1, arg1)
-#define	DTRACE_PROBE3(name, t0, arg0, t1, arg1, t2, arg2)
-#define	DTRACE_PROBE4(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3)
-#define	DTRACE_PROBE5(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3, t4, arg4)
-
-#else /* !KDTRACE_HOOKS */
 
 /*
  * Utility macros used further down in this file.
@@ -165,7 +70,7 @@
 	struct sdt_probe _SDT_PROBE_NAME(prov, mod, func, name)[1] = {	\
 	    { sizeof(struct sdt_probe), sdt_provider_##prov,		\
 	    { NULL, NULL }, { NULL }, { NULL, NULL },			\
-	    #mod, #func, #name, 0, 0, NULL }				\
+	    #mod, #func, #name, 0, NULL }				\
 	};								\
 	DATA_SET(sdt_probes_set, _SDT_PROBE_NAME(prov, mod, func, name))
 
@@ -444,11 +349,65 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
 	    arg6);							\
 } while (0)
 
+#else /* !KDTRACE_HOOKS */
+
+#define	SDT_PROVIDER_DEFINE(prov)
+#define	SDT_PROVIDER_DECLARE(prov)
+#define	SDT_PROBE_DEFINE(prov, mod, func, name)
+#define	SDT_PROBE_DECLARE(prov, mod, func, name)
+#define	SDT_PROBE_ENABLED(prov, mod, func, name)	0
+#define	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
+#define	SDT_PROBE_ARGTYPE(prov, mod, func, name, num, type, xtype)
+
+#define	SDT_PROBE_DEFINE0(prov, mod, func, name)
+#define	SDT_PROBE_DEFINE1(prov, mod, func, name, arg0)
+#define	SDT_PROBE_DEFINE2(prov, mod, func, name, arg0, arg1)
+#define	SDT_PROBE_DEFINE3(prov, mod, func, name, arg0, arg1, arg2)
+#define	SDT_PROBE_DEFINE4(prov, mod, func, name, arg0, arg1, arg2, arg3)
+#define	SDT_PROBE_DEFINE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
+#define	SDT_PROBE_DEFINE6(prov, mod, func, name, arg0, arg1, arg2, arg3, \
+    arg4, arg5)
+#define	SDT_PROBE_DEFINE7(prov, mod, func, name, arg0, arg1, arg2, arg3, \
+    arg4, arg5, arg6)
+
+#define	SDT_PROBE0(prov, mod, func, name)
+#define	SDT_PROBE1(prov, mod, func, name, arg0)
+#define	SDT_PROBE2(prov, mod, func, name, arg0, arg1)
+#define	SDT_PROBE3(prov, mod, func, name, arg0, arg1, arg2)
+#define	SDT_PROBE4(prov, mod, func, name, arg0, arg1, arg2, arg3)
+#define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
+#define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5)
+#define	SDT_PROBE7(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4,	\
+    arg5, arg6)
+
+#define	SDT_PROBE_DEFINE0_XLATE(prov, mod, func, name)
+#define	SDT_PROBE_DEFINE1_XLATE(prov, mod, func, name, arg0, xarg0)
+#define	SDT_PROBE_DEFINE2_XLATE(prov, mod, func, name, arg0, xarg0,	\
+    arg1, xarg1)
+#define	SDT_PROBE_DEFINE3_XLATE(prov, mod, func, name, arg0, xarg0,	\
+    arg1, xarg1, arg2, xarg2)
+#define	SDT_PROBE_DEFINE4_XLATE(prov, mod, func, name, arg0, xarg0,	\
+    arg1, xarg1, arg2, xarg2, arg3, xarg3)
+#define	SDT_PROBE_DEFINE5_XLATE(prov, mod, func, name, arg0, xarg0,	\
+    arg1, xarg1, arg2, xarg2, arg3, xarg3, arg4, xarg4)
+#define	SDT_PROBE_DEFINE6_XLATE(prov, mod, func, name, arg0, xarg0,	\
+    arg1,  xarg1, arg2, xarg2, arg3, xarg3, arg4, xarg4, arg5, xarg5)
+#define	SDT_PROBE_DEFINE7_XLATE(prov, mod, func, name, arg0, xarg0,	\
+    arg1, xarg1, arg2, xarg2, arg3, xarg3, arg4, xarg4, arg5, xarg5,	\
+    arg6, xarg6)
+
+#define	DTRACE_PROBE(name)
+#define	DTRACE_PROBE1(name, t0, arg0)
+#define	DTRACE_PROBE2(name, t0, arg0, t1, arg1)
+#define	DTRACE_PROBE3(name, t0, arg0, t1, arg1, t2, arg2)
+#define	DTRACE_PROBE4(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3)
+#define	DTRACE_PROBE5(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3, t4, arg4)
+
 #endif /* KDTRACE_HOOKS */
 
+struct linker_file;
 struct sdt_probe;
 struct sdt_provider;
-struct linker_file;
 
 struct sdt_argtype {
 	int		ndx;		/* Argument index. */
@@ -467,7 +426,6 @@ struct sdt_probe {
 	const char	*mod;
 	const char	*func;
 	const char	*name;
-	id_t		id;		/* DTrace probe ID. */
 	int		n_args;		/* Number of arguments. */
 	struct linker_file *sdtp_lf;	/* Module in which we're defined. */
 };
@@ -483,12 +441,56 @@ struct sdt_probedesc {
 	union {
 		SLIST_ENTRY(sdt_probedesc) spd_entry;
 		struct sdt_probe *spd_probe;
-	} link;
+	} li;
 	uint64_t	spd_offset;
 };
 
 SDT_PROVIDER_DECLARE(sdt);
 
-#endif /* _KERNEL */
+#else /* !_KERNEL */
+
+#define	_DTRACE_VERSION	1
+
+#define	DTRACE_PROBE(prov, name) {					\
+	extern void __dtrace_##prov##___##name(void);			\
+	__dtrace_##prov##___##name();					\
+}
+
+#define	DTRACE_PROBE1(prov, name, arg1) {				\
+	extern void __dtrace_##prov##___##name(unsigned long);		\
+	__dtrace_##prov##___##name((unsigned long)arg1);		\
+}
+
+#define	DTRACE_PROBE2(prov, name, arg1, arg2) {				\
+	extern void __dtrace_##prov##___##name(unsigned long,		\
+	    unsigned long);						\
+	__dtrace_##prov##___##name((unsigned long)arg1,			\
+	    (unsigned long)arg2);					\
+}
+
+#define	DTRACE_PROBE3(prov, name, arg1, arg2, arg3) {			\
+	extern void __dtrace_##prov##___##name(unsigned long,		\
+	    unsigned long, unsigned long);				\
+	__dtrace_##prov##___##name((unsigned long)arg1,			\
+	    (unsigned long)arg2, (unsigned long)arg3);			\
+}
+
+#define	DTRACE_PROBE4(prov, name, arg1, arg2, arg3, arg4) {		\
+	extern void __dtrace_##prov##___##name(unsigned long,		\
+	    unsigned long, unsigned long, unsigned long);		\
+	__dtrace_##prov##___##name((unsigned long)arg1,			\
+	    (unsigned long)arg2, (unsigned long)arg3,			\
+	    (unsigned long)arg4);					\
+}
+
+#define	DTRACE_PROBE5(prov, name, arg1, arg2, arg3, arg4, arg5) {	\
+	extern void __dtrace_##prov##___##name(unsigned long,		\
+	    unsigned long, unsigned long, unsigned long, unsigned long);\
+	__dtrace_##prov##___##name((unsigned long)arg1,			\
+	    (unsigned long)arg2, (unsigned long)arg3,			\
+	    (unsigned long)arg4, (unsigned long)arg5);			\
+}
+
+#endif /* !_KERNEL */
 
 #endif /* _SYS_SDT_H */
