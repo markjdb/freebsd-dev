@@ -2580,6 +2580,7 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 		}
 		m->queue = PQ_INACTIVE;
 		if (noreuse) {
+			PCPU_INC(cnt.v_noreuse);
 			m->flags |= PG_NOREUSE;
 			TAILQ_INSERT_BEFORE(&vm_phys_domain(m)->vmd_inacthead,
 			    m, plinks.q);
