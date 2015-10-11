@@ -33,17 +33,37 @@ sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t rval)
 void
 sdt_probe_enable(struct sdt_probedesc *desc)
 {
+	struct sdt_probe *probe;
 	uint8_t *callsite;
 
-	callsite = (uint8_t *)desc->spd_offset;
-	callsite[0] = AMD64_BP;
+	if (desc->spd_offset == 0) {
+		probe = desc->li.spd_probe;
+		MPASS(strlen(probe->func) > 0);
+		SLIST_FOREACH(desc, &probe->site_list, li.spd_entry) {
+			callsite = (uint8_t *)desc->spd_offset;
+			callsite[0] = AMD64_BP;
+		}
+	} else {
+		callsite = (uint8_t *)desc->spd_offset;
+		callsite[0] = AMD64_BP;
+	}
 }
 
 void
 sdt_probe_disable(struct sdt_probedesc *desc)
 {
+	struct sdt_probe *probe;
 	uint8_t *callsite;
 
-	callsite = (uint8_t *)desc->spd_offset;
-	callsite[0] = AMD64_NOP;
+	if (desc->spd_offset == 0) {
+		probe = desc->li.spd_probe;
+		MPASS(strlen(probe->func) > 0);
+		SLIST_FOREACH(desc, &probe->site_list, li.spd_entry) {
+			callsite = (uint8_t *)desc->spd_offset;
+			callsite[0] = AMD64_NOP;
+		}
+	} else {
+		callsite = (uint8_t *)desc->spd_offset;
+		callsite[0] = AMD64_NOP;
+	}
 }
