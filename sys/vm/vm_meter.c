@@ -314,6 +314,7 @@ VM_STATS_VM(v_forkpages, "VM pages affected by fork()");
 VM_STATS_VM(v_vforkpages, "VM pages affected by vfork()");
 VM_STATS_VM(v_rforkpages, "VM pages affected by rfork()");
 VM_STATS_VM(v_kthreadpages, "VM pages affected by fork() by kernel");
+VM_STATS_VM(v_noreuse, "VM pages marked noreuse");
 VM_STATS_VM(v_reuseafterall, "reactivations of noreuse VM pages");
 
 SYSCTL_INT(_vm_stats_misc, OID_AUTO, zero_page_count, CTLFLAG_RD,
