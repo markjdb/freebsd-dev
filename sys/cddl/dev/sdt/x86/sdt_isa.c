@@ -17,7 +17,7 @@ __FBSDID("$FreeBSD$");
 int
 sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t rval)
 {
-	struct sdt_siterec *rec;
+	struct sdt_invoprec *rec;
 	struct trapframe *tf;
 
 	rec = sdt_lookup_site(addr);
@@ -25,7 +25,7 @@ sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t rval)
 		return (0);
 
 	tf = (struct trapframe *)(stack + 1);
-	dtrace_probe(rec->id, tf->tf_rdi, tf->tf_rsi, tf->tf_rdx, tf->tf_rcx,
+	dtrace_probe(rec->sr_id, tf->tf_rdi, tf->tf_rsi, tf->tf_rdx, tf->tf_rcx,
 	    tf->tf_r8);
 	return (DTRACE_INVOP_NOP);
 }

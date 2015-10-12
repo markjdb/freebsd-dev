@@ -65,7 +65,7 @@ __FBSDID("$FreeBSD$");
 #define	SDT_HADDR(addr)	((u_long)(((addr) >> 4) & sdt_hashmask))
 #define	SDT_HENTRY(addr) (&sdt_probetab[SDT_HADDR(addr)])
 
-LIST_HEAD(, sdt_siterec) *sdt_probetab;
+LIST_HEAD(, sdt_invoprec) *sdt_probetab;
 u_long sdt_hashmask;
 
 static MALLOC_DEFINE(M_SDT, "SDT", "DTrace SDT providers");
@@ -79,6 +79,7 @@ static void	sdt_disable(void *, dtrace_id_t, void *);
 
 static void	sdt_load(void);
 static int	sdt_unload(void);
+static void	sdt_create_invoprec(struct sdt_probedesc *, dtrace_id_t);
 static void	sdt_create_provider(struct sdt_provider *);
 static void	sdt_create_probe(struct sdt_probe *, struct linker_file *);
 static void	sdt_kld_load(void *, struct linker_file *);
@@ -110,16 +111,27 @@ static TAILQ_HEAD(, sdt_provider) sdt_prov_list;
 static eventhandler_tag	sdt_kld_load_tag;
 static eventhandler_tag	sdt_kld_unload_try_tag;
 
-struct sdt_siterec *
+struct sdt_invoprec *
 sdt_lookup_site(uint64_t offset)
 {
-	struct sdt_siterec *rec;
+	struct sdt_invoprec *rec;
 
-	LIST_FOREACH(rec, &sdt_probetab[SDT_HADDR(offset)], next) {
-		if (rec->desc->spd_offset == offset)
+	LIST_FOREACH(rec, &sdt_probetab[SDT_HADDR(offset)], sr_next) {
+		if (rec->sr_desc->spd_offset == offset)
 			return (rec);
 	}
 	return (NULL);
+}
+
+void
+sdt_create_invoprec(struct sdt_probedesc *desc, dtrace_id_t id)
+{
+	struct sdt_invoprec *rec;
+
+	rec = malloc(sizeof(*rec), M_SDT, M_WAITOK);
+	rec->sr_desc = desc;
+	rec->sr_id = id;
+	LIST_INSERT_HEAD(SDT_HENTRY(desc->spd_offset), rec, sr_next);
 }
 
 static void
@@ -176,7 +188,6 @@ sdt_desc_match(struct linker_file *lf, int symidx, linker_symval_t *sym,
 static void
 sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 {
-	struct sdt_siterec *rec;
 	struct sdt_probedesc *desc;
 	struct sdt_descmatch match;
 	struct sdt_provider *prov;
@@ -230,9 +241,9 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 	*to = '\0';
 
 	/*
-	 * If the probe specified a function name, use it. We create a fake
-	 * probedesc with an offset of 0 to indicate that we should use the
-	 * probe's site list when enabling or disabling a probe.
+	 * Finally, create the probe. If a function name is hard-coded, we
+	 * register a single probe and use its ID for each site. Otherwise, we
+	 * proceed normally and create a probe for each site.
 	 */
 	if (probe->func[0] != '\0') {
 		strlcpy(func, probe->func, sizeof(func));
@@ -243,36 +254,24 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 
 		id = dtrace_probe_create(prov->id, mod, func, name, aframes,
 		    desc);
-		SLIST_FOREACH(desc, &probe->site_list, li.spd_entry) {
-			rec = malloc(sizeof(*rec), M_SDT, M_WAITOK);
-			rec->desc = desc;
-			rec->id = id;
-			LIST_INSERT_HEAD(SDT_HENTRY(desc->spd_offset), rec,
-			    next);
+		SLIST_FOREACH(desc, &probe->site_list, li.spd_entry)
+			sdt_create_invoprec(desc, id);
+	} else {
+		match.func = &func[0];
+		while ((desc = SLIST_FIRST(&probe->site_list)) != NULL) {
+			match.desc = desc;
+			error = linker_file_function_listall(lf, sdt_desc_match,
+			    &match);
+			if (error != EJUSTRETURN)
+				printf("sdt: no function found at 0x%lx (%d)\n",
+				    desc->spd_offset, error);
+			SLIST_REMOVE_HEAD(&probe->site_list, li.spd_entry);
+			desc->li.spd_probe = probe;
+
+			id = dtrace_probe_create(prov->id, mod, func, name,
+			    aframes, desc);
+			sdt_create_invoprec(desc, id);
 		}
-		return;
-	}
-
-	/*
-	 * Otherwise, we create a probe for each recorded site.
-	 */
-	func[0] = '\0';
-	match.func = &func[0];
-	while ((desc = SLIST_FIRST(&probe->site_list)) != NULL) {
-		match.desc = desc;
-		error = linker_file_function_listall(lf, sdt_desc_match,
-		    &match);
-		if (error != EJUSTRETURN)
-			printf("sdt: no function found at 0x%lx (%d)\n",
-			    desc->spd_offset, error);
-		SLIST_REMOVE_HEAD(&probe->site_list, li.spd_entry);
-		desc->li.spd_probe = probe;
-
-		rec = malloc(sizeof(*rec), M_SDT, M_WAITOK);
-		rec->desc = desc;
-		rec->id = dtrace_probe_create(prov->id, mod, func, name,
-		    aframes, desc);
-		LIST_INSERT_HEAD(SDT_HENTRY(desc->spd_offset), rec, next);
 	}
 }
 
