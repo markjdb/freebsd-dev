@@ -35,7 +35,15 @@
 
 SDT_PROBE_DECLARE(sdt, , , set__error);
 
-#define	SET_ERROR(err)	({SDT_PROBE1(sdt, , , set__error, err); err;})
+static inline int
+__sdt_set_error(int err)
+{
+
+	SDT_PROBE1(sdt, , , set__error, err);
+	return (err);
+}
+
+#define	SET_ERROR(err)	(__sdt_set_error(err))
 
 #else
 #define SET_ERROR(err) (err)
