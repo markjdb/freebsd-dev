@@ -49,11 +49,6 @@ struct lwref {
 
 static void lwref_change_action(void *v);
 
-#ifdef INVARIANTS
-extern void Xrendezvous(void);
-extern void Xtimerint(void);
-#endif
- 
 lwref_t
 lwref_alloc(void *ptr, int flags)
 {
@@ -96,45 +91,23 @@ static void
 lwref_fixup_td(void *arg)
 {
 	struct thread *td = arg;
-	register_t *rbp;
+
+	if (td->td_intr_nesting_level == 0)
+		/*
+		 * The thread didn't switch in interrupt context, so it couldn't
+		 * have been executing an lwref operation.
+		 */
+		return;
+
+	if (td->td_intr_nesting_level == 1) {
+		lwref_fixup_rip(&td->td_intr_frame->tf_rip, __func__);
+		return;
+	}
 
 	/*
-	 * The timer interrupt trapframe is 3 functions deep:
-	 * Xtimerint -> lapic_handle_timer -> mi_switch -> sched_switch,
-	 * so in 99% this would work:
-	 *
-	 * tf = (struct trapframe *)
-	 *   ((register_t *)(***(void ****)(td->td_pcb->pcb_rbp)) + 2);
-	 *
+	 * XXX not sure what to do here yet.
 	 */
-	for (rbp = (register_t *)td->td_pcb->pcb_rbp;
-	    rbp && rbp < (register_t *)*rbp;
-	    rbp = (register_t *)*rbp) {
-		struct trapframe *tf;
-		register_t rip = (register_t )*(rbp + 1);
-
-		if (
-		    rip == (register_t )timerint_ret ||
-		    rip == (register_t )apic_isr1_ret ||
-		    rip == (register_t )apic_isr2_ret ||
-		    rip == (register_t )apic_isr3_ret ||
-		    rip == (register_t )apic_isr4_ret ||
-		    rip == (register_t )apic_isr5_ret ||
-		    rip == (register_t )apic_isr6_ret ||
-		    rip == (register_t )apic_isr7_ret ||
-		    rip == (register_t )ipi_intr_bitmap_handler_ret
-		    ) {
-			struct trapframe *tf;
-
-			tf = (struct trapframe *)(rbp + 2);
-			lwref_fixup_rip(&tf->tf_rip, __func__);
-		}
-
-		tf = (struct trapframe *)(rbp + 2);
-		if (tf->tf_rip > (register_t )lwref_acquire &&
-		    tf->tf_rip < (register_t )lwref_acquire_ponr)
-			panic("lwref deteceted\n");
-	}
+	MPASS(0 == 1);
 }
 
 static void
