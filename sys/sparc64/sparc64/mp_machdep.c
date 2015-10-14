@@ -100,6 +100,7 @@ __FBSDID("$FreeBSD$");
 static ih_func_t cpu_ipi_ast;
 static ih_func_t cpu_ipi_hardclock;
 static ih_func_t cpu_ipi_preempt;
+static ih_func_t cpu_ipi_rendezvous;
 static ih_func_t cpu_ipi_stop;
 
 /*
@@ -282,8 +283,7 @@ cpu_mp_start(void)
 	}
 
 	intr_setup(PIL_AST, cpu_ipi_ast, -1, NULL, NULL);
-	intr_setup(PIL_RENDEZVOUS, (ih_func_t *)smp_rendezvous_action,
-	    -1, NULL, NULL);
+	intr_setup(PIL_RENDEZVOUS, cpu_ipi_rendezvous, -1, NULL, NULL);
 	intr_setup(PIL_STOP, cpu_ipi_stop, -1, NULL, NULL);
 	intr_setup(PIL_PREEMPT, cpu_ipi_preempt, -1, NULL, NULL);
 	intr_setup(PIL_HARDCLOCK, cpu_ipi_hardclock, -1, NULL, NULL);
@@ -556,6 +556,21 @@ cpu_ipi_hardclock(struct trapframe *tf)
 	td->td_intr_frame = oldframe;
 	td->td_intr_nesting_level--;
 	critical_exit();
+}
+
+static void
+cpu_ipi_rendezvous(struct trapframe *tf)
+{
+	struct trapframe *oldframe;
+	struct thread *td;
+
+	td = curthread;
+	td->td_intr_nesting_level++;
+	oldframe = td->td_intr_frame;
+	td->td_intr_frame = tf;
+	smp_rendezvous_action();
+	td->td_intr_frame = oldframe;
+	td->td_intr_nesting_level--;
 }
 
 static void

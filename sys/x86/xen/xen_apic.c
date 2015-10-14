@@ -405,6 +405,7 @@ xen_ipi_bitmap_handler(void *arg)
 static int
 xen_smp_rendezvous_action(void *arg)
 {
+
 #ifdef COUNT_IPIS
 	(*ipi_rendezvous_counts[PCPU_GET(cpuid)])++;
 #endif /* COUNT_IPIS */

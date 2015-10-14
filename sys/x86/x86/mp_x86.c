@@ -880,6 +880,21 @@ ipi_bitmap_handler(struct trapframe frame)
 	critical_exit();
 }
 
+void
+ipi_rendezvous_handler(struct trapframe frame)
+{
+	struct trapframe *oldframe;
+	struct thread *td;
+
+	td = curthread;
+	td->td_intr_nesting_level++;
+	oldframe = td->td_intr_frame;
+	td->td_intr_frame = &frame;
+	smp_rendezvous_action();
+	td->td_intr_nesting_level--;
+	td->td_intr_frame = oldframe;
+}
+
 /*
  * send an IPI to a set of cpus.
  */
