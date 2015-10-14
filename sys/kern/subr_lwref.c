@@ -77,7 +77,6 @@ struct lwref_change_ctx {
 	lwref_t		lwr;
 	void		*newptr;
 	counter_u64_t	newcnt;
-	u_int		cpu;
 	u_int		oldcnt;
 };
 
@@ -152,8 +151,8 @@ lwref_change_action(void *v)
 
 	sched_foreach_on_runq(lwref_fixup_td);
 
-	if (ctx->cpu == curcpu)
-		/* We are not in IPI. */
+	if (curthread->td_intr_nesting_level == 0)
+		/* We requested the rendezvous, so there's nothing to do. */
 		return;
 
 	/*
@@ -192,7 +191,6 @@ lwref_change(lwref_t lwr, void *newptr, void (*freefn)(void *, void *),
 	orefcnt = lwr->refcnt;
 	ctx.lwr = lwr;
 	ctx.newptr = newptr;
-	ctx.cpu = curcpu;	/* XXXGL: race */
 	smp_rendezvous(smp_no_rendevous_barrier, lwref_change_action,
 	    smp_no_rendevous_barrier, &ctx);
 	mtx_unlock(&lwr->mtx);
