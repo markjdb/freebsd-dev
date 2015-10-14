@@ -439,6 +439,20 @@ pf_hashsrc(struct pf_addr *addr, sa_family_t af)
 	return (h & pf_srchashmask);
 }
 
+#ifdef ALTQ
+static int
+pf_state_hash(struct pf_state *s)
+{
+	u_int32_t hv = (intptr_t)s / sizeof(*s);
+
+	hv ^= crc32(&s->src, sizeof(s->src));
+	hv ^= crc32(&s->dst, sizeof(s->dst));
+	if (hv == 0)
+		hv = 1;
+	return (hv);
+}
+#endif
+
 #ifdef INET6
 void
 pf_addrcpy(struct pf_addr *dst, struct pf_addr *src, sa_family_t af)
@@ -3667,7 +3681,7 @@ csfailed:
 
 		sh = &V_pf_srchash[pf_hashsrc(&nsn->addr, nsn->af)];
 		PF_HASHROW_LOCK(sh);
-		if (--nsn->states == 1 && nsn->expire == 0) {
+		if (--nsn->states == 0 && nsn->expire == 0) {
 			pf_unlink_src_node(nsn);
 			uma_zfree(V_pf_sources_z, nsn);
 			counter_u64_add(
@@ -5520,7 +5534,7 @@ pf_route6(struct mbuf **m, struct pf_rule *r, int dir, struct ifnet *oifp,
 	if (IN6_IS_SCOPE_EMBED(&dst.sin6_addr))
 		dst.sin6_addr.s6_addr16[1] = htons(ifp->if_index);
 	if ((u_long)m0->m_pkthdr.len <= ifp->if_mtu)
-		nd6_output(ifp, ifp, m0, &dst, NULL);
+		nd6_output_ifp(ifp, ifp, m0, &dst);
 	else {
 		in6_ifstat_inc(ifp, ifs6_in_toobig);
 		if (r->rt != PF_DUPTO)
@@ -5881,7 +5895,7 @@ done:
 	    !((s && s->state_flags & PFSTATE_ALLOWOPTS) || r->allow_opts)) {
 		action = PF_DROP;
 		REASON_SET(&reason, PFRES_IPOPTIONS);
-		log = 1;
+		log = r->log;
 		DPFPRINTF(PF_DEBUG_MISC,
 		    ("pf: dropping packet with ip options\n"));
 	}
@@ -5900,6 +5914,8 @@ done:
 			action = PF_DROP;
 			REASON_SET(&reason, PFRES_MEMORY);
 		} else {
+			if (s != NULL)
+				pd.pf_mtag->qid_hash = pf_state_hash(s);
 			if (pqid || (pd.tos & IPTOS_LOWDELAY))
 				pd.pf_mtag->qid = r->pqid;
 			else
@@ -6069,7 +6085,17 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0, struct inpcb *inp)
 
 	M_ASSERTPKTHDR(m);
 
-	if (dir == PF_OUT && m->m_pkthdr.rcvif && ifp != m->m_pkthdr.rcvif)
+	/* Detect packet forwarding.
+	 * If the input interface is different from the output interface we're
+	 * forwarding.
+	 * We do need to be careful about bridges. If the
+	 * net.link.bridge.pfil_bridge sysctl is set we can be filtering on a
+	 * bridge, so if the input interface is a bridge member and the output
+	 * interface is its bridge we're not actually forwarding but bridging.
+	 */
+	if (dir == PF_OUT && m->m_pkthdr.rcvif && ifp != m->m_pkthdr.rcvif
+	    && (m->m_pkthdr.rcvif->if_bridge == NULL
+	        || m->m_pkthdr.rcvif->if_bridge != ifp->if_softc))
 		fwdir = PF_FWD;
 
 	if (!V_pf_status.running)
@@ -6313,7 +6339,7 @@ done:
 	    !((s && s->state_flags & PFSTATE_ALLOWOPTS) || r->allow_opts)) {
 		action = PF_DROP;
 		REASON_SET(&reason, PFRES_IPOPTIONS);
-		log = 1;
+		log = r->log;
 		DPFPRINTF(PF_DEBUG_MISC,
 		    ("pf: dropping packet with dangerous v6 headers\n"));
 	}
@@ -6332,6 +6358,8 @@ done:
 			action = PF_DROP;
 			REASON_SET(&reason, PFRES_MEMORY);
 		} else {
+			if (s != NULL)
+				pd.pf_mtag->qid_hash = pf_state_hash(s);
 			if (pd.tos & IPTOS_LOWDELAY)
 				pd.pf_mtag->qid = r->pqid;
 			else

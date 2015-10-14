@@ -42,10 +42,12 @@ ${group}NAME_${header:T}?=	${${group}NAME}
 .else
 ${group}NAME_${header:T}?=	${header:T}
 .endif
-STAGE_AS_SETS+= ${group}
+STAGE_AS_SETS+= ${header:T}
 STAGE_AS_${header:T}= ${${group}NAME_${header:T}}
-stage_as.${group}: ${header}
-stage_includes: stage_as.${group}
+# XXX {group}OWN,GRP,MODE
+STAGE_DIR.${header:T}= ${STAGE_OBJTOP}${${group}DIR_${header:T}}
+stage_as.${header:T}: ${header}
+stage_includes: stage_as.${header:T}
 
 installincludes: _${group}INS_${header:T}
 _${group}INS_${header:T}: ${header}
@@ -77,15 +79,10 @@ _${group}INS: ${_${group}INCS}
 
 .if defined(INCSLINKS) && !empty(INCSLINKS)
 installincludes:
-	@set ${INCSLINKS}; \
-	while test $$# -ge 2; do \
-		l=$$1; \
-		shift; \
-		t=${DESTDIR}$$1; \
-		shift; \
-		${ECHO} $$t -\> $$l; \
-		${INSTALL_SYMLINK} $$l $$t; \
-	done; true
+.for s t in ${INCSLINKS}
+	@${ECHO} "$t -> $s" ; \
+	${INSTALL_SYMLINK} $s ${DESTDIR}$t
+.endfor
 .endif
 .endif # !target(installincludes)
 
@@ -94,12 +91,15 @@ realinstall: installincludes
 
 .if ${MK_STAGING} != "no" && !defined(_SKIP_BUILD)
 .if !defined(NO_STAGE_INCLUDES)
-staging: stage_includes
+STAGE_TARGETS+= stage_includes
 .if !empty(INCSLINKS)
-staging: stage_symlinks
+STAGE_TARGETS+= stage_symlinks
 STAGE_SYMLINKS.INCS= ${INCSLINKS}
 .endif
 .endif
 .endif
 
-.endif # ${MK_TOOLCHAIN} != "no"
+includes: buildincludes installincludes
+.ORDER: buildincludes installincludes
+
+.endif # ${MK_INCLUDES} != "no"

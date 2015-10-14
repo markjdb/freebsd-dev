@@ -19,7 +19,7 @@
         aout
         ..
         clang
-            3.6.1
+            3.7.0
                 include
                 ..
                 lib
@@ -37,6 +37,10 @@
         engines
         ..
         i18n
+        ..
+        libxo
+            encoder
+            ..
         ..
     ..
     lib32
@@ -718,6 +722,8 @@
             ja_JP.UTF-8
             ..
             ja_JP.eucJP
+            ..
+            kk_Cyrl_KZ.UTF-8
             ..
             kk_KZ.PT154
             ..

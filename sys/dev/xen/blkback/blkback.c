@@ -2245,7 +2245,6 @@ xbb_dispatch_file(struct xbb_softc *xbb, struct xbb_xen_reqlist *reqlist,
 	struct xbb_file_data *file_data;
 	u_int                 seg_idx;
 	u_int		      nseg;
-	off_t		      sectors_sent;
 	struct uio            xuio;
 	struct xbb_sg        *xbb_sg;
 	struct iovec         *xiovec;
@@ -2256,7 +2255,6 @@ xbb_dispatch_file(struct xbb_softc *xbb, struct xbb_xen_reqlist *reqlist,
 	int                   error;
 
 	file_data = &xbb->backend.file;
-	sectors_sent = 0;
 	error = 0;
 	bzero(&xuio, sizeof(xuio));
 
@@ -2692,18 +2690,7 @@ xbb_open_backend(struct xbb_softc *xbb)
 	if ((xbb->flags & XBBF_READ_ONLY) == 0)
 		flags |= FWRITE;
 
-	if (!curthread->td_proc->p_fd->fd_cdir) {
-		curthread->td_proc->p_fd->fd_cdir = rootvnode;
-		VREF(rootvnode);
-	}
-	if (!curthread->td_proc->p_fd->fd_rdir) {
-		curthread->td_proc->p_fd->fd_rdir = rootvnode;
-		VREF(rootvnode);
-	}
-	if (!curthread->td_proc->p_fd->fd_jdir) {
-		curthread->td_proc->p_fd->fd_jdir = rootvnode;
-		VREF(rootvnode);
-	}
+	pwd_ensure_dirs();
 
  again:
 	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, xbb->dev_name, curthread);

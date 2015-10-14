@@ -99,7 +99,10 @@
 #
 # For more information, see the build(7) manual page.
 #
-.if ${MK_META_MODE:Uno} == "yes"
+
+# Note: we use this awkward construct to be compatible with FreeBSD's
+# old make used in 10.0 and 9.2 and earlier.
+.if defined(MK_META_MODE) && ${MK_META_MODE} == "yes" && !make(showconfig)
 # targets/Makefile plays the role of top-level
 .include "targets/Makefile"
 .else
@@ -118,7 +121,7 @@ TGTS=	all all-man buildenv buildenvvars buildkernel buildworld \
 	_worldtmp _legacy _bootstrap-tools _cleanobj _obj \
 	_build-tools _cross-tools _includes _libraries _depend \
 	build32 builddtb distribute32 install32 xdev xdev-build xdev-install \
-	xdev-links native-xtools \
+	xdev-links native-xtools installconfig \
 
 TGTS+=	${SUBDIR_TARGETS}
 
@@ -240,9 +243,9 @@ cleanworld:
 # Handle the user-driven targets, using the source relative mk files.
 #
 
-.if empty(.MAKEFLAGS:M-n)
+.if !(!empty(.MAKEFLAGS:M-n) && ${.MAKEFLAGS:M-n} == "-n")
 # skip this for -n to avoid changing previous behavior of 
-# 'make -n buildworld' etc.
+# 'make -n buildworld' etc.  Using -n -n will run it.
 ${TGTS}: .MAKE
 tinderbox toolchains kernel-toolchains: .MAKE
 .endif
@@ -378,17 +381,8 @@ kernel-toolchains:
 # existing system is.
 #
 .if make(universe) || make(universe_kernels) || make(tinderbox) || make(targets)
-# XXX Add arm64 to universe only if we have an external binutils installed.
-# It does not build with the in-tree linker.
-.if exists(/usr/local/aarch64-freebsd/bin/ld)
-UNIVERSE_arm64=arm64
-.elif empty(${TARGETS})
-universe: universe_arm64_skip
-universe_epilogue: universe_arm64_skip
-universe_arm64_skip: universe_prologue
-	@echo ">> arm64 skipped - install aarch64-binutils port or package to build"
-.endif
-TARGETS?=amd64 arm ${UNIVERSE_arm64} i386 mips pc98 powerpc sparc64
+TARGETS?=amd64 arm arm64 i386 mips pc98 powerpc sparc64
+_UNIVERSE_TARGETS=	${TARGETS}
 TARGET_ARCHES_arm?=	arm armeb armv6 armv6hf
 TARGET_ARCHES_arm64?=	aarch64
 TARGET_ARCHES_mips?=	mipsel mips mips64el mips64 mipsn32
@@ -398,6 +392,16 @@ TARGET_ARCHES_pc98?=	i386
 TARGET_ARCHES_${target}?= ${target}
 .endfor
 
+# XXX Add arm64 to universe only if we have an external binutils installed.
+# It does not build with the in-tree linker.
+.if !exists(/usr/local/aarch64-freebsd/bin/ld) && empty(${TARGETS})
+_UNIVERSE_TARGETS:= ${_UNIVERSE_TARGETS:Narm64}
+universe: universe_arm64_skip
+universe_epilogue: universe_arm64_skip
+universe_arm64_skip: universe_prologue
+	@echo ">> arm64 skipped - install aarch64-binutils port or package to build"
+.endif
+
 .if defined(UNIVERSE_TARGET)
 MAKE_JUST_WORLDS=	YES
 .else
@@ -405,7 +409,7 @@ UNIVERSE_TARGET?=	buildworld
 .endif
 KERNSRCDIR?=		${.CURDIR}/sys
 
-targets:
+targets:	.PHONY
 	@echo "Supported TARGET/TARGET_ARCH pairs for world and kernel targets"
 .for target in ${TARGETS}
 .for target_arch in ${TARGET_ARCHES_${target}}
@@ -429,15 +433,18 @@ universe_prologue:
 .if defined(DOING_TINDERBOX)
 	@rm -f ${FAILFILE}
 .endif
-.for target in ${TARGETS}
+.for target in ${_UNIVERSE_TARGETS}
 universe: universe_${target}
 universe_epilogue: universe_${target}
 universe_${target}: universe_${target}_prologue
 universe_${target}_prologue: universe_prologue
 	@echo ">> ${target} started on `LC_ALL=C date`"
+universe_${target}_worlds:
+
 .if !defined(MAKE_JUST_KERNELS)
+universe_${target}_done: universe_${target}_worlds
 .for target_arch in ${TARGET_ARCHES_${target}}
-universe_${target}: universe_${target}_${target_arch}
+universe_${target}_worlds: universe_${target}_${target_arch}
 universe_${target}_${target_arch}: universe_${target}_prologue .MAKE
 	@echo ">> ${target}.${target_arch} ${UNIVERSE_TARGET} started on `LC_ALL=C date`"
 	@(cd ${.CURDIR} && env __MAKE_CONF=/dev/null \
@@ -450,15 +457,11 @@ universe_${target}_${target_arch}: universe_${target}_prologue .MAKE
 	    ${MAKEFAIL}))
 	@echo ">> ${target}.${target_arch} ${UNIVERSE_TARGET} completed on `LC_ALL=C date`"
 .endfor
-.endif
+.endif # !MAKE_JUST_KERNELS
+
 .if !defined(MAKE_JUST_WORLDS)
-# If we are building world and kernels wait for the required worlds to finish
-.if !defined(MAKE_JUST_KERNELS)
-.for target_arch in ${TARGET_ARCHES_${target}}
-universe_${target}_kernels: universe_${target}_${target_arch}
-.endfor
-.endif
-universe_${target}: universe_${target}_kernels
+universe_${target}_done: universe_${target}_kernels
+universe_${target}_kernels: universe_${target}_worlds
 universe_${target}_kernels: universe_${target}_prologue .MAKE
 .if exists(${KERNSRCDIR}/${target}/conf/NOTES)
 	@(cd ${KERNSRCDIR}/${target}/conf && env __MAKE_CONF=/dev/null \
@@ -468,7 +471,11 @@ universe_${target}_kernels: universe_${target}_prologue .MAKE
 .endif
 	@cd ${.CURDIR} && ${SUB_MAKE} ${.MAKEFLAGS} TARGET=${target} \
 	    universe_kernels
-.endif
+.endif # !MAKE_JUST_WORLDS
+
+# Tell the user the worlds and kernels have completed
+universe_${target}: universe_${target}_done
+universe_${target}_done:
 	@echo ">> ${target} completed on `LC_ALL=C date`"
 .endfor
 universe_kernels: universe_kernconfs
@@ -521,6 +528,7 @@ universe_epilogue:
 buildLINT:
 	${MAKE} -C ${.CURDIR}/sys/${_TARGET}/conf LINT
 
+.if defined(.PARSEDIR)
 # This makefile does not run in meta mode
 .MAKE.MODE= normal
 # Normally the things we run from here don't either.
@@ -531,12 +539,15 @@ MK_META_MODE= no
 MK_STAGING= no
 # tell meta.autodep.mk to not even think about updating anything.
 UPDATE_DEPENDFILE= NO
+.if !make(showconfig)
 .export MK_META_MODE MK_STAGING UPDATE_DEPENDFILE
+.endif
 
 .if make(universe)
 # we do not want a failure of one branch abort all.
 MAKE_JOB_ERROR_TOKEN= no
 .export MAKE_JOB_ERROR_TOKEN
 .endif
+.endif # bmake
 
 .endif				# META_MODE
