@@ -41,12 +41,6 @@ __FBSDID("$FreeBSD$");
 #include <machine/frame.h>
 #include <machine/pcb.h>
 
-struct lwref {
-	void		*ptr;
-	counter_u64_t	refcnt;
-	struct mtx	mtx;
-};
-
 static void lwref_change_action(void *v);
 
 lwref_t

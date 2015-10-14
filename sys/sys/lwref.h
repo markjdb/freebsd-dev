@@ -27,12 +27,18 @@
  */
 
 #ifndef __SYS_LWREF_H__
-#define __SYS_LWREF_H__
+#define	__SYS_LWREF_H__
 
 #include <sys/counter.h>
+#include <sys/_mutex.h>
 
-struct lwref;
-typedef struct lwref * lwref_t;
+struct lwref {
+	void		*ptr;
+	counter_u64_t	refcnt;
+	struct mtx	mtx;
+};
+
+typedef struct lwref *lwref_t;
 
 lwref_t	lwref_alloc(void *, int);
 int lwref_change(lwref_t, void *, void(*)(void *, void *), void *);
@@ -41,23 +47,13 @@ int lwref_change(lwref_t, void *, void(*)(void *, void *), void *);
 void *lwref_acquire(lwref_t, counter_u64_t *);
 extern char lwref_acquire_ponr[];
 
-extern char timerint_ret[];
-extern char apic_isr1_ret[];
-extern char apic_isr2_ret[];
-extern char apic_isr3_ret[];
-extern char apic_isr4_ret[];
-extern char apic_isr5_ret[];
-extern char apic_isr6_ret[];
-extern char apic_isr7_ret[];
-extern char ipi_intr_bitmap_handler_ret[];
-
 #ifdef INVARIANTS
-#define lwref_release(p, c)	do {	\
+#define	lwref_release(p, c) do {	\
 	p = NULL;			\
 	counter_u64_add(c, -1);		\
 } while (0)
 #else
-#define lwref_release(p, c)	counter_u64_add(c, -1)
+#define	lwref_release(p, c)	counter_u64_add(c, -1)
 #endif
 
-#endif	/* ! __SYS_LWREF_H__ */
+#endif /* ! __SYS_LWREF_H__ */
