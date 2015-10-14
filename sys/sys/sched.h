@@ -150,7 +150,7 @@ void	sched_clear_tdname(struct thread *td);
 /*
  * Used for lwref fixups.
  */
-void sched_foreach_on_runq(void(*)(void *));
+void sched_foreach_on_runq(void(*)(struct thread *, void *), void *);
 
 static __inline void
 sched_pin(void)

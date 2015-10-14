@@ -88,9 +88,8 @@ lwref_fixup_rip(register_t *rip, const char *p)
 }
 
 static void
-lwref_fixup_td(void *arg)
+lwref_fixup_td(struct thread *td, void *arg __unused)
 {
-	struct thread *td = arg;
 
 	if (td->td_intr_nesting_level == 0)
 		/*
@@ -122,7 +121,7 @@ lwref_change_action(void *v)
 	lwr->ptr = ctx->newptr;
 	lwr->refcnt = ctx->newcnt;
 
-	sched_foreach_on_runq(lwref_fixup_td);
+	sched_foreach_on_runq(lwref_fixup_td, NULL);
 
 	td = curthread;
 	if (curthread->td_intr_nesting_level == 0)

@@ -2758,7 +2758,7 @@ sched_fork_exit(struct thread *td)
  * Apply a function to every thread on runqueue.
  */
 void
-sched_foreach_on_runq(void(*func)(void *))
+sched_foreach_on_runq(void(*func)(struct thread *, void *), void *arg)
 {
 	struct tdq *tdq;
 	struct thread *td;
@@ -2767,11 +2767,11 @@ sched_foreach_on_runq(void(*func)(void *))
 
 	for (int i = 0; i < RQ_NQS; i++) {
 		TAILQ_FOREACH(td, &tdq->tdq_realtime.rq_queues[i], td_runq)
-			(func)(td);
+			(func)(td, arg);
 		TAILQ_FOREACH(td, &tdq->tdq_timeshare.rq_queues[i], td_runq)
-			(func)(td);
+			(func)(td, arg);
 		TAILQ_FOREACH(td, &tdq->tdq_idle.rq_queues[i], td_runq)
-			(func)(td);
+			(func)(td, arg);
 	}
 }
 
