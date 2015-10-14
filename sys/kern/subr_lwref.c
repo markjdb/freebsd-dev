@@ -141,8 +141,8 @@ static void
 lwref_change_action(void *v)
 {
 	struct lwref_change_ctx *ctx = v;
+	struct thread *td;
 	lwref_t lwr = ctx->lwr;
-	struct trapframe *tf;
 
 	atomic_add_int(&ctx->oldcnt, *(uint64_t *)zpcpu_get(lwr->refcnt));
 
@@ -151,28 +151,12 @@ lwref_change_action(void *v)
 
 	sched_foreach_on_runq(lwref_fixup_td);
 
+	td = curthread;
 	if (curthread->td_intr_nesting_level == 0)
 		/* We requested the rendezvous, so there's nothing to do. */
 		return;
 
-	/*
-	 *  We are in IPI and we need to check the trap frame of
-	 *  the IPI, whether we interrupted lwref_acquire().
-	 *
-	 *  We are two functions deep below the trap frame:
-	 *  Xrendezvous -> smp_rendezvous_action -> lwref_change_action
-	 */
-	KASSERT(__builtin_return_address(0) > (void *)&smp_rendezvous_action &&
-	    __builtin_return_address(0) <= (void *)((char *)&smp_rendezvous_action + 506) &&
-	    __builtin_return_address(1) > (void *)&Xrendezvous &&
-	    __builtin_return_address(1) <= (void *)((char *)&Xrendezvous + 201),
-	    ("%p called via invalid path: 0 %p 1 %p", __func__,
-	    __builtin_return_address(0), __builtin_return_address(1)));
-
-	/* After pushed %rbp and %rip begins the trap frame. */
-	tf = (struct trapframe *)
-	    ((register_t *)__builtin_frame_address(1) + 2);
-	lwref_fixup_rip(&tf->tf_rip, __func__);
+	lwref_fixup_rip(&td->td_intr_frame->tf_rip, __func__);
 }
 
 int
