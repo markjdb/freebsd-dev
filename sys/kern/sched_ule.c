@@ -2758,13 +2758,14 @@ sched_fork_exit(struct thread *td)
  * Apply a function to every thread on runqueue.
  */
 void
-sched_foreach_on_runq(void(*func)(struct thread *, void *), void *arg)
+sched_foreach_on_runq(void (*func)(struct thread *, void *), void *arg)
 {
 	struct tdq *tdq;
 	struct thread *td;
 
 	tdq = TDQ_SELF();
-
+	TDQ_LOCK(tdq);
+	/* XXX use the runq bits to figure out which queues are non-empty. */
 	for (int i = 0; i < RQ_NQS; i++) {
 		TAILQ_FOREACH(td, &tdq->tdq_realtime.rq_queues[i], td_runq)
 			(func)(td, arg);
@@ -2773,6 +2774,7 @@ sched_foreach_on_runq(void(*func)(struct thread *, void *), void *arg)
 		TAILQ_FOREACH(td, &tdq->tdq_idle.rq_queues[i], td_runq)
 			(func)(td, arg);
 	}
+	TDQ_UNLOCK(tdq);
 }
 
 /*
