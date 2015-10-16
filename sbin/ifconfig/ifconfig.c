@@ -948,10 +948,8 @@ setifflags(const char *vname, int value, int s, const struct afswtch *afp)
 	memset(&my_ifr, 0, sizeof(my_ifr));
 	(void) strlcpy(my_ifr.ifr_name, name, sizeof(my_ifr.ifr_name));
 
- 	if (ioctl(s, SIOCGIFFLAGS, (caddr_t)&my_ifr) < 0) {
- 		Perror("ioctl (SIOCGIFFLAGS)");
- 		exit(1);
- 	}
+	if (ioctl(s, SIOCGIFFLAGS, (caddr_t)&my_ifr) < 0)
+		Perror("ioctl (SIOCGIFFLAGS)");
 	flags = (my_ifr.ifr_flags & 0xffff) | (my_ifr.ifr_flagshigh << 16);
 
 	if (value < 0) {
@@ -970,10 +968,8 @@ setifcap(const char *vname, int value, int s, const struct afswtch *afp)
 {
 	int flags;
 
- 	if (ioctl(s, SIOCGIFCAP, (caddr_t)&ifr) < 0) {
- 		Perror("ioctl (SIOCGIFCAP)");
- 		exit(1);
- 	}
+	if (ioctl(s, SIOCGIFCAP, (caddr_t)&ifr) < 0)
+		Perror("ioctl (SIOCGIFCAP)");
 	flags = ifr.ifr_curcap;
 	if (value < 0) {
 		value = -value;
