@@ -30,30 +30,25 @@
 #define	__SYS_LWREF_H__
 
 #include <sys/counter.h>
-#include <sys/_mutex.h>
+#include <sys/_sx.h>
 
 struct lwref {
-	void		*ptr;
-	counter_u64_t	refcnt;
-	struct mtx	mtx;
+	u_long		lw_idx;
+	counter_u64_t	lw_counters[2];
+	struct sx	lw_lock;
 };
 
 typedef struct lwref *lwref_t;
 
-lwref_t	lwref_alloc(void *, int);
-int lwref_change(lwref_t, void *, void(*)(void *, void *), void *);
+u_long	lwref_acquire(lwref_t);
+int	lwref_init(lwref_t, int);
+int	lwref_switch(lwref_t);
 
-/* asm */
-void *lwref_acquire(lwref_t, counter_u64_t *);
-extern char lwref_acquire_ponr[];
+static inline void
+lwref_release(lwref_t lwr, u_long idx)
+{
 
-#ifdef INVARIANTS
-#define	lwref_release(p, c) do {	\
-	p = NULL;			\
-	counter_u64_add(c, -1);		\
-} while (0)
-#else
-#define	lwref_release(p, c)	counter_u64_add(c, -1)
-#endif
+	counter_u64_add(lwr->lw_counters[idx], -1);
+}
 
 #endif /* ! __SYS_LWREF_H__ */

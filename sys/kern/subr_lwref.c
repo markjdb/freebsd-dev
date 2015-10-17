@@ -30,54 +30,54 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/lock.h>
-#include <sys/malloc.h>		/* XXXGL: M_TEMP */
-#include <sys/mutex.h>
 #include <sys/lwref.h>
+#include <sys/malloc.h>
+#include <sys/pcpu.h>
 #include <sys/proc.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
-#include <sys/pcpu.h>
+#include <sys/sx.h>
 
 #include <machine/frame.h>
 #include <machine/pcb.h>
 
-static void lwref_change_action(void *v);
+#ifdef __amd64__
+CTASSERT(offsetof(struct lwref, lw_counters[0]) == 8);
+CTASSERT(offsetof(struct lwref, lw_counters[1]) == 16);
+#endif
 
-lwref_t
-lwref_alloc(void *ptr, int flags)
+#define	LWR_LOCK(lwr)	sx_xlock(&lwr->lw_lock)
+#define	LWR_UNLOCK(lwr)	sx_xunlock(&lwr->lw_lock)
+
+extern char lwref_acquire_ponr[];
+
+static void	lwref_switch_cpu(void *);
+
+int
+lwref_init(lwref_t lwr, int flags)
 {
-	lwref_t lwr;
 
-	lwr = malloc(sizeof(*lwr), M_TEMP, flags | M_ZERO);
-	if (lwr == NULL)
-		return (NULL);
-	lwr->refcnt = counter_u64_alloc(flags);
-	if (lwr->refcnt == NULL) {
-		free(lwr, M_TEMP);
-		return (NULL);
+	lwr->lw_counters[0] = counter_u64_alloc(flags);
+	lwr->lw_counters[1] = counter_u64_alloc(flags);
+	if (lwr->lw_counters[0] == NULL || lwr->lw_counters[1] == NULL) {
+		counter_u64_free(lwr->lw_counters[0]);
+		counter_u64_free(lwr->lw_counters[1]);
+		return (1);
 	}
-	lwr->ptr = ptr;
-	mtx_init(&lwr->mtx, "lwref", NULL, MTX_DEF);
-
-	return (lwr);
+	lwr->lw_idx = 0;
+	sx_init(&lwr->lw_lock, "lwref");
+	return (0);
 }
-
-struct lwref_change_ctx {
-	lwref_t		lwr;
-	void		*newptr;
-	counter_u64_t	newcnt;
-	u_int		oldcnt;
-};
 
 static void
 lwref_fixup_rip(register_t *rip, const char *p)
 {
 
-	if (*rip >= (register_t )lwref_acquire &&
-	    *rip < (register_t )lwref_acquire_ponr) {
+	if (*rip >= (register_t)lwref_acquire &&
+	    *rip < (register_t)lwref_acquire_ponr) {
 		if (p)
 			printf("%s: %p\n", p, (void *)*rip);
-		*rip = (register_t )lwref_acquire;
+		*rip = (register_t)lwref_acquire;
 	}
 }
 
@@ -104,21 +104,17 @@ lwref_fixup_td(struct thread *td, void *arg __unused)
 }
 
 static void
-lwref_change_action(void *v)
+lwref_switch_cpu(void *arg)
 {
-	struct lwref_change_ctx *ctx = v;
 	struct thread *td;
-	lwref_t lwr = ctx->lwr;
+	lwref_t lwr;
 
-	atomic_add_int(&ctx->oldcnt, *(uint64_t *)zpcpu_get(lwr->refcnt));
-
-	lwr->ptr = ctx->newptr;
-	lwr->refcnt = ctx->newcnt;
+	lwr = arg;
 
 	sched_foreach_on_runq(lwref_fixup_td, NULL);
 
 	td = curthread;
-	if (curthread->td_intr_nesting_level == 0)
+	if (td->td_intr_nesting_level == 0)
 		/* We requested the rendezvous, so there's nothing to do. */
 		return;
 
@@ -126,31 +122,27 @@ lwref_change_action(void *v)
 }
 
 int
-lwref_change(lwref_t lwr, void *newptr, void (*freefn)(void *, void *),
-    void *freearg)
+lwref_switch(lwref_t lwr)
 {
-	struct lwref_change_ctx ctx;
-	counter_u64_t orefcnt;
-	void *optr;
+	long idx;
 
-	ctx.newcnt = counter_u64_alloc(M_WAITOK);	/* XXXGL */
-	ctx.oldcnt = 0;
+	LWR_LOCK(lwr);
 
-	mtx_lock(&lwr->mtx);
-	optr = lwr->ptr;
-	orefcnt = lwr->refcnt;
-	ctx.lwr = lwr;
-	ctx.newptr = newptr;
-	smp_rendezvous(smp_no_rendevous_barrier, lwref_change_action,
-	    smp_no_rendevous_barrier, &ctx);
-	mtx_unlock(&lwr->mtx);
+	idx = lwr->lw_idx;
+	KASSERT(idx == 0 || idx == 1, ("lwref %p invalid index", lwr));
 
-	if (ctx.oldcnt == 0) {
-		(freefn)(freearg, optr);
-		counter_u64_free(orefcnt);
-	} else
-		printf("Leaking %p with cnt %p %u (%ju) refs\n",
-		    optr, orefcnt, ctx.oldcnt, (uintmax_t )counter_u64_fetch(orefcnt));
+	lwr->lw_idx = idx ^ 1;
+	KASSERT(counter_u64_fetch(lwr->lw_counters[lwr->lw_idx]) == 0,
+	    ("non-zero reference on alternate index"));
+
+	smp_rendezvous(smp_no_rendevous_barrier, lwref_switch_cpu,
+	    smp_no_rendevous_barrier, lwr);
+
+	while (counter_u64_fetch(lwr->lw_counters[idx]) != 0)
+		/* XXX */
+		pause("lwref", 1);
+
+	LWR_UNLOCK(lwr);
 
 	return (0);
 }
