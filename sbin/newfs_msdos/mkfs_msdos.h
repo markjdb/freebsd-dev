@@ -1,7 +1,9 @@
 /*-
- * Copyright (c) 2008 Yahoo!, Inc.
+ * Copyright (c) 2015 The FreeBSD Foundation
  * All rights reserved.
- * Written by: John Baldwin <jhb@FreeBSD.org>
+ *
+ * This software was developed by Ed Maste under sponsorship from
+ * the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -11,14 +13,11 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of the author nor the names of any co-contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHORS AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -30,30 +29,33 @@
  * $FreeBSD$
  */
 
-#ifndef __TEST_H__
-#define	__TEST_H__
-
-#include <sys/linker_set.h>
-
-struct regression_test {
-	void	(*rt_function)(void);
-	const char *rt_name;
+struct msdos_options {
+    const char *bootstrap;
+    const char *volume_label;
+    const char *OEM_string;
+    const char *floppy;
+    u_int fat_type;
+    u_int volume_id;
+    u_int bytes_per_sector;
+    u_int sectors_per_fat;
+    u_int block_size;
+    u_int sectors_per_cluster;
+    u_int directory_entries;
+    u_int drive_heads;
+    u_int info_sector;
+    u_int backup_sector;
+    u_int media_descriptor;
+    u_int num_FAT;
+    u_int hidden_sectors;
+    u_int reserved_sectors;
+    u_int size;
+    u_int sectors_per_track;
+    int no_create;
+    off_t create_size;
+    off_t offset;
+    int volume_id_set;
+    int media_descriptor_set;
+    int hidden_sectors_set;
 };
 
-#define	TEST(function, name)						\
-	static struct regression_test _regtest_##function = {		\
-		(function),						\
-		(name)							\
-	};								\
-	DATA_SET(regression_tests_set, _regtest_##function)
-
-void	fail(void);
-void	fail_err(const char *fmt, ...);
-void	pass(void);
-void	run_tests(void);
-void	skip(const char *reason);
-void	todo(const char *reason);
-
-#define	fail_errno(tag)		fail_err("%s: %s", (tag), strerror(errno))
-
-#endif /* !__TEST_H__ */
+int mkfs_msdos(const char *, const char *, const struct msdos_options *);
