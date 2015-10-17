@@ -1459,7 +1459,6 @@ intr_event_handle(struct intr_event *ie, struct trapframe *frame)
 				thread = 1;
 		}
 	}
-	td->td_intr_frame = oldframe;
 
 	if (thread) {
 		if (ie->ie_pre_ithread != NULL)
@@ -1475,6 +1474,7 @@ intr_event_handle(struct intr_event *ie, struct trapframe *frame)
 		KASSERT(error == 0, ("bad stray interrupt"));
 	}
 	critical_exit();
+	td->td_intr_frame = oldframe;
 	td->td_intr_nesting_level--;
 	return (0);
 }
