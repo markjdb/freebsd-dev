@@ -27,8 +27,12 @@
 # $FreeBSD$
 #
 
+#
+# Generate SDT probe stubs and record stub relocation info.
+#
+
 obj=$1
-if [ ! -f "$obj" ]; then
+if [ ! -f "$obj" -o $# -ne 1 ]; then
     echo "usage: $(basename $0) <objfile>" >&2
     exit 1
 fi
