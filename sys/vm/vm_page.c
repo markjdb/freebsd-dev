@@ -387,6 +387,10 @@ vm_page_domain_init(struct vm_domain *vmd)
 	    "vm active pagequeue";
 	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_ACTIVE].pq_vcnt) =
 	    &vm_cnt.v_active_count;
+	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_name) =
+	    "vm laundry pagequeue";
+	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_vcnt) =
+	    &vm_cnt.v_laundry_count;
 	vmd->vmd_page_count = 0;
 	vmd->vmd_free_count = 0;
 	vmd->vmd_segs = 0;
@@ -2520,11 +2524,8 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 		if (m->wire_count == 0) {
 			atomic_subtract_int(&vm_cnt.v_wire_count, 1);
 			if ((m->oflags & VPO_UNMANAGED) == 0 &&
-			    m->object != NULL && queue != PQ_NONE) {
-				if (queue == PQ_INACTIVE)
-					m->flags &= ~PG_WINATCFLS;
+			    m->object != NULL && queue != PQ_NONE)
 				vm_page_enqueue(queue, m);
-			}
 			return (TRUE);
 		} else
 			return (FALSE);
@@ -2577,7 +2578,6 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 		} else {
 			if (queue != PQ_NONE)
 				vm_page_dequeue(m);
-			m->flags &= ~PG_WINATCFLS;
 			vm_pagequeue_lock(pq);
 		}
 		m->queue = PQ_INACTIVE;
@@ -2619,24 +2619,23 @@ vm_page_deactivate_noreuse(vm_page_t m)
 }
 
 /*
- * vm_page_try_to_cache:
- *
- * Returns 0 on failure, 1 on success
+ * XXX
  */
-int
-vm_page_try_to_cache(vm_page_t m)
+void
+vm_page_launder(vm_page_t m)
 {
+	int queue;
 
-	vm_page_lock_assert(m, MA_OWNED);
-	VM_OBJECT_ASSERT_WLOCKED(m->object);
-	if (m->dirty || m->hold_count || m->wire_count ||
-	    (m->oflags & VPO_UNMANAGED) != 0 || vm_page_busied(m))
-		return (0);
-	pmap_remove_all(m);
-	if (m->dirty)
-		return (0);
-	vm_page_cache(m);
-	return (1);
+	vm_page_assert_locked(m);
+	if ((queue = m->queue) != PQ_LAUNDRY) {
+		if (m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0) {
+			if (queue != PQ_NONE)
+				vm_page_dequeue(m);
+			vm_page_enqueue(PQ_LAUNDRY, m);
+		} else
+			KASSERT(queue == PQ_NONE,
+			    ("wired page %p is queued", m));
+	}
 }
 
 /*
@@ -2812,7 +2811,10 @@ vm_page_advise(vm_page_t m, int advice)
 	 * tail, thus defeating the queue's LRU operation and ensuring that the
 	 * page will be reused quickly.
 	 */
-	_vm_page_deactivate(m, m->dirty == 0);
+	if (m->dirty == 0)
+		_vm_page_deactivate(m, TRUE);
+	else
+		vm_page_launder(m);
 }
 
 /*
