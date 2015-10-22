@@ -35,7 +35,7 @@ __FBSDID("$FreeBSD$");
 	ioat_read_1((ioat), IOAT_CHANCNT_OFFSET)
 
 #define	ioat_read_xfercap(ioat) \
-	ioat_read_1((ioat), IOAT_XFERCAP_OFFSET)
+	(ioat_read_1((ioat), IOAT_XFERCAP_OFFSET) & IOAT_XFERCAP_VALID_MASK)
 
 #define	ioat_write_intrctrl(ioat, value) \
 	ioat_write_1((ioat), IOAT_INTRCTRL_OFFSET, (value))
@@ -365,6 +365,9 @@ struct ioat_softc {
 
 	struct mtx		cleanup_lock;
 };
+
+void ioat_test_attach(void);
+void ioat_test_detach(void);
 
 static inline uint64_t
 ioat_get_chansts(struct ioat_softc *ioat)
