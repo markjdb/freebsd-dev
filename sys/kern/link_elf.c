@@ -1191,6 +1191,8 @@ relocate_file(elf_file_t ef)
 	const Elf_Rela *rela;
 	const char *symname;
 
+	printf("Hello!\n");
+
 	/* Perform relocations without addend if there are any: */
 	rel = ef->rel;
 	if (rel != NULL) {

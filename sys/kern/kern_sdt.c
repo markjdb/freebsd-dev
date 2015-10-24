@@ -1,6 +1,6 @@
 /*-
  * Copyright 2006-2008 John Birrell <jb@FreeBSD.org>
- * Copyright (c) 2015 Mark Johnston <markj@FreeBSD.org>
+ * Copyright 2015 Mark Johnston <markj@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,9 +30,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 
-#include <sys/eventhandler.h>
 #include <sys/linker.h>
 #include <sys/kernel.h>
+#include <sys/malloc.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
 
@@ -41,6 +41,8 @@ __FBSDID("$FreeBSD$");
 CTASSERT(sizeof(struct sdt_probedesc) == 16);
 
 SDT_PROVIDER_DEFINE(sdt);
+
+MALLOC_DEFINE(M_SDT, "sdt", "statically-defined tracing");
 
 #define	CALL_SITE_LEN	5
 
@@ -54,95 +56,126 @@ SDT_PROVIDER_DEFINE(sdt);
  */
 void	_sdt_probe_stub(void);
 
-static eventhandler_tag sdt_kld_load_tag;
+static void
+sdt_patch_site(struct sdt_probe *probe, struct sdt_probedesc *desc,
+    uint64_t offset)
+{
+	uintptr_t stubaddr;
+	uint32_t target;
+	uint8_t *callinstr, opcode;
 
+	callinstr = (uint8_t *)(uintptr_t)(offset - 1);
+	opcode = callinstr[0];
+	switch (opcode) {
+	case AMD64_CALL32:
+	case AMD64_JMP32:
+		break;
+	default:
+		printf("sdt: opcode mismatch (0x%x) for %s:::%s@%p\n",
+		    callinstr[0], probe->prov->name, probe->name,
+		    (void *)(uintptr_t)offset);
+		return;
+	}
+
+	/*
+	 * If we've been passed a probe descriptor, verify that the call/jmp
+	 * target is in fact the SDT stub. If it's not, something's wrong and
+	 * we shouldn't touch anything.
+	 */
+	stubaddr = (uintptr_t)_sdt_probe_stub;
+	memcpy(&target, &callinstr[1], sizeof(target));
+	if (desc != NULL &&
+	    roundup2(target + (uintptr_t)callinstr, 16) != stubaddr) {
+		printf("sdt: offset mismatch: %p vs. %p\n",
+		    (void *)roundup2(target + (uintptr_t)callinstr, 16),
+		    (void *)stubaddr);
+		return;
+	}
+
+	switch (opcode) {
+	case AMD64_CALL32:
+		memset(callinstr, AMD64_NOP, CALL_SITE_LEN);
+		break;
+	case AMD64_JMP32:
+		/*
+		 * The probe site is a tail call, so we need a "ret"
+		 * when the probe isn't enabled. We overwrite the second
+		 * byte instead of the first: the first byte will be
+		 * replaced with a breakpoint when the probe is enabled.
+		 */
+		memset(callinstr, AMD64_NOP, CALL_SITE_LEN);
+		callinstr[1] = AMD64_RET;
+		break;
+	}
+
+	/*
+	 * The probe site is patched; now we can associate the site with
+	 * the probe itself.
+	 */
+	if (desc == NULL)
+		desc = malloc(sizeof(*desc), M_SDT, M_WAITOK);
+	desc->spd_offset = (uintptr_t)callinstr;
+	SLIST_INSERT_HEAD(&probe->site_list, desc, li.spd_entry);
+}
+
+/*
+ * Use the SDT probe sites specified in the probe site linker set to overwrite
+ * each probe site with NOPs. At the moment, only the kernel will contain such a
+ * set - probe sites in KLDs are patched when the linker sees a relocation
+ * against a symbol with a prefix of "__dtrace_sdt_".
+ */
 static int
 sdt_patch_linker_file(linker_file_t lf, void *arg __unused)
 {
-	struct sdt_probedesc *spd, *start, *end;
+	struct sdt_probedesc *desc, *start, *end;
 	struct sdt_probe *probe;
-	uintptr_t stubaddr;
-	uint32_t offset;
-	uint8_t *callinstr, opcode;
 
 	if (linker_file_lookup_set(lf, "sdt_probe_site_set", &start, &end,
 	    NULL) != 0)
 		return (0);
-
-	stubaddr = (uintptr_t)_sdt_probe_stub;
 
 	/*
 	 * Linker set iteration here deviates from the normal pattern because
 	 * this linker set is special: it contains the probe info structs
 	 * themselves rather than pointers.
 	 */
-	for (spd = start; spd < end; spd++) {
-		callinstr = (uint8_t *)(uintptr_t)(spd->spd_offset - 1 +
+	for (desc = start; desc < end; desc++) {
+		probe = desc->li.spd_probe;
+		sdt_patch_site(probe, desc, desc->spd_offset +
 		    (uintptr_t)btext);
-		opcode = callinstr[0];
-		switch (opcode) {
-		case AMD64_CALL32:
-		case AMD64_JMP32:
-			break;
-		default:
-			printf("sdt: opcode mismatch (0x%x) for %s:::%s@%p\n",
-			    callinstr[0], spd->li.spd_probe->prov->name,
-			    spd->li.spd_probe->name, (void *)spd->spd_offset);
-			continue;
-		}
-
-		/*
-		 * Verify that the call/jmp target is in fact the SDT stub.
-		 * If it's not, we shouldn't touch anything.
-		 */
-		memcpy(&offset, &callinstr[1], sizeof(offset));
-		if (roundup2(offset + (uintptr_t)callinstr, 16) != stubaddr) {
-			printf("sdt: offset mismatch: %p vs. %p\n",
-			    (void *)roundup2(offset + (uintptr_t)callinstr, 16),
-			    (void *)stubaddr);
-			continue;
-		}
-
-		switch (opcode) {
-		case AMD64_CALL32:
-			memset(callinstr, AMD64_NOP, CALL_SITE_LEN);
-			break;
-		case AMD64_JMP32:
-			/*
-			 * The probe site is a tail call, so we need a "ret"
-			 * when the probe isn't enabled. We overwrite the second
-			 * byte instead of the first: the first byte will be
-			 * replaced with a breakpoint when the probe is enabled.
-			 */
-			memset(callinstr, AMD64_NOP, CALL_SITE_LEN);
-			callinstr[1] = AMD64_RET;
-			break;
-		}
-		spd->spd_offset = (uintptr_t)callinstr;
-
-		/*
-		 * The probe site is patched; now we can associate the site with
-		 * the probe itself.
-		 */
-		probe = spd->li.spd_probe;
-		SLIST_INSERT_HEAD(&probe->site_list, spd, li.spd_entry);
 	}
 	return (0);
 }
 
-static void
-sdt_kld_load(void *arg __unused, linker_file_t lf)
-{
-
-	sdt_patch_linker_file(lf, NULL);
-}
-
+/*
+ * Patch the kernel's probe sites.
+ */
 static void
 sdt_patch_kernel(void *arg __unused)
 {
 
 	linker_file_foreach(sdt_patch_linker_file, NULL);
-	sdt_kld_load_tag = EVENTHANDLER_REGISTER(kld_load, sdt_kld_load, NULL,
-	    EVENTHANDLER_PRI_FIRST);
 }
 SYSINIT(sdt_hotpatch, SI_SUB_KDTRACE, SI_ORDER_FIRST, sdt_patch_kernel, NULL);
+
+void
+sdt_patch_reloc(linker_file_t lf, const char *symname, uint64_t base,
+    uint64_t offset)
+{
+	struct sdt_probe *probe;
+	caddr_t sym;
+
+	KASSERT(strncmp(symname, SDT_PROBE_STUB_PREFIX,
+	    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0,
+	    ("invalid reloc sym %s", symname));
+
+	symname += sizeof("__dtrace_") - 1; /* XXX */
+	sym = linker_file_lookup_symbol(lf, symname, 0);
+	if (sym == 0) {
+		printf("sdt: couldn't find symbol %s\n", symname);
+		return;
+	}
+
+	probe = (struct sdt_probe *)sym;
+	sdt_patch_site(probe, NULL, base + offset);
+}

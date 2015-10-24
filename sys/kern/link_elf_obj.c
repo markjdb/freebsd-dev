@@ -32,16 +32,22 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/fcntl.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/linker.h>
 #include <sys/mutex.h>
 #include <sys/mount.h>
-#include <sys/proc.h>
 #include <sys/namei.h>
-#include <sys/fcntl.h>
+#ifdef KDTRACE_HOOKS
+#include <sys/sdt.h>
+#endif
+#include <sys/proc.h>
 #include <sys/vnode.h>
-#include <sys/linker.h>
+#ifdef DDB_CTF
+#include <sys/zlib.h>
+#endif
 
 #include <machine/elf.h>
 
@@ -58,10 +64,6 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_map.h>
 
 #include <sys/link_elf.h>
-
-#ifdef DDB_CTF
-#include <sys/zlib.h>
-#endif
 
 #include "linker_if.h"
 
@@ -1068,7 +1070,6 @@ relocate_file(elf_file_t ef)
 	Elf_Size symidx;
 	Elf_Addr base;
 
-
 	/* Perform relocations without addend if there are any: */
 	for (i = 0; i < ef->nreltab; i++) {
 		rel = ef->reltab[i].rel;
@@ -1093,6 +1094,15 @@ relocate_file(elf_file_t ef)
 			if (elf_reloc(&ef->lf, base, rel, ELF_RELOC_REL,
 			    elf_obj_lookup)) {
 				symname = symbol_name(ef, rel->r_info);
+#ifdef KDTRACE_HOOKS
+				if (symname != NULL &&
+				    strncmp(symname, SDT_PROBE_STUB_PREFIX,
+				    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0) {
+					sdt_patch_reloc(&ef->lf, symname, base,
+					    rel->r_offset);
+					continue;
+				}
+#endif
 				printf("link_elf_obj: symbol %s undefined\n",
 				    symname);
 				return (ENOENT);
@@ -1125,6 +1135,15 @@ relocate_file(elf_file_t ef)
 			if (elf_reloc(&ef->lf, base, rela, ELF_RELOC_RELA,
 			    elf_obj_lookup)) {
 				symname = symbol_name(ef, rela->r_info);
+#ifdef KDTRACE_HOOKS
+				if (symname != NULL &&
+				    strncmp(symname, SDT_PROBE_STUB_PREFIX,
+				    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0) {
+					sdt_patch_reloc(&ef->lf, symname, base,
+					    rela->r_offset);
+					continue;
+				}
+#endif
 				printf("link_elf_obj: symbol %s undefined\n",
 				    symname);
 				return (ENOENT);

@@ -59,6 +59,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/dtrace.h>
 #include <sys/dtrace_bsd.h>
 
+/* XXX */
 #include "sdt.h"
 
 #define	SDT_TABENTRIES	0x2000
@@ -68,7 +69,7 @@ __FBSDID("$FreeBSD$");
 LIST_HEAD(, sdt_invoprec) *sdt_probetab;
 u_long sdt_hashmask;
 
-static MALLOC_DEFINE(M_SDT, "SDT", "DTrace SDT providers");
+MALLOC_DECLARE(M_SDT);
 
 /* DTrace methods. */
 static void	sdt_getargdesc(void *, dtrace_id_t, void *, dtrace_argdesc_t *);

@@ -47,6 +47,10 @@
  * Utility macros used further down in this file.
  */
 
+#define	_SDT_PROBE_STUB_PREFIX	__dtrace_sdt_
+
+#define	SDT_PROBE_STUB_PREFIX	__XSTRING(_SDT_PROBE_STUB_PREFIX)
+
 #define	_SDT_PROBE_STUB(prov, mod, func, name)				\
 	__dtrace_sdt_##prov##_##mod##_##func##_##name
 
@@ -446,6 +450,8 @@ struct sdt_probedesc {
 };
 
 SDT_PROVIDER_DECLARE(sdt);
+
+void	sdt_patch_reloc(struct linker_file *, const char *, uint64_t, uint64_t);
 
 #else /* !_KERNEL */
 
