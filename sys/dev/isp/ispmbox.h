@@ -574,7 +574,8 @@ typedef struct {
 	uint16_t	abrt_nphdl;
 	uint16_t	abrt_options;
 	uint32_t	abrt_cmd_handle;
-	uint8_t		abrt_reserved[32];
+	uint16_t	abrt_queue_number;
+	uint8_t		abrt_reserved[30];
 	uint16_t	abrt_tidlo;
 	uint8_t		abrt_tidhi;
 	uint8_t		abrt_vpidx;
@@ -632,7 +633,7 @@ typedef struct {
 	uint32_t	req_resid;
 	uint16_t	req_reserved0;
 	uint16_t	req_state_flags;
-	uint16_t	req_reserved1;
+	uint16_t	req_retry_delay;	/* aka Status Qualifier */
 	uint16_t	req_scsi_status;
 	uint32_t	req_fcp_residual;
 	uint32_t	req_sense_len;
@@ -644,11 +645,12 @@ typedef struct {
  * For Qlogic 2X00, the high order byte of SCSI status has
  * additional meaning.
  */
-#define	RQCS_RU	0x800	/* Residual Under */
-#define	RQCS_RO	0x400	/* Residual Over */
+#define	RQCS_CR	0x1000	/* Confirmation Request */
+#define	RQCS_RU	0x0800	/* Residual Under */
+#define	RQCS_RO	0x0400	/* Residual Over */
 #define	RQCS_RESID	(RQCS_RU|RQCS_RO)
-#define	RQCS_SV	0x200	/* Sense Length Valid */
-#define	RQCS_RV	0x100	/* FCP Response Length Valid */
+#define	RQCS_SV	0x0200	/* Sense Length Valid */
+#define	RQCS_RV	0x0100	/* FCP Response Length Valid */
 
 /*
  * CT Passthru IOCB

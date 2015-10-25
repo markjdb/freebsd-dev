@@ -1071,6 +1071,7 @@ isp_put_24xx_abrt(ispsoftc_t *isp, isp24xx_abrt_t *src, isp24xx_abrt_t *dst)
 	ISP_IOXPUT_16(isp, src->abrt_nphdl, &dst->abrt_nphdl);
 	ISP_IOXPUT_16(isp, src->abrt_options, &dst->abrt_options);
 	ISP_IOXPUT_32(isp, src->abrt_cmd_handle, &dst->abrt_cmd_handle);
+	ISP_IOXPUT_16(isp, src->abrt_queue_number, &dst->abrt_queue_number);
 	for (i = 0; i < ASIZE(src->abrt_reserved); i++) {
 		ISP_IOXPUT_8(isp, src->abrt_reserved[i], &dst->abrt_reserved[i]);
 	}
@@ -1158,7 +1159,7 @@ isp_get_24xx_response(ispsoftc_t *isp, isp24xx_statusreq_t *src, isp24xx_statusr
 	ISP_IOXGET_32(isp, &src->req_resid, dst->req_resid);
 	ISP_IOXGET_16(isp, &src->req_reserved0, dst->req_reserved0);
 	ISP_IOXGET_16(isp, &src->req_state_flags, dst->req_state_flags);
-	ISP_IOXGET_16(isp, &src->req_reserved1, dst->req_reserved1);
+	ISP_IOXGET_16(isp, &src->req_retry_delay, dst->req_retry_delay);
 	ISP_IOXGET_16(isp, &src->req_scsi_status, dst->req_scsi_status);
 	ISP_IOXGET_32(isp, &src->req_fcp_residual, dst->req_fcp_residual);
 	ISP_IOXGET_32(isp, &src->req_sense_len, dst->req_sense_len);
@@ -1179,6 +1180,7 @@ isp_get_24xx_abrt(ispsoftc_t *isp, isp24xx_abrt_t *src, isp24xx_abrt_t *dst)
 	ISP_IOXGET_16(isp, &src->abrt_nphdl, dst->abrt_nphdl);
 	ISP_IOXGET_16(isp, &src->abrt_options, dst->abrt_options);
 	ISP_IOXGET_32(isp, &src->abrt_cmd_handle, dst->abrt_cmd_handle);
+	ISP_IOXGET_16(isp, &src->abrt_queue_number, dst->abrt_queue_number);
 	for (i = 0; i < ASIZE(src->abrt_reserved); i++) {
 		ISP_IOXGET_8(isp, &src->abrt_reserved[i], dst->abrt_reserved[i]);
 	}
