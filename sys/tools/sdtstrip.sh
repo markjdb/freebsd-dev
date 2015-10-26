@@ -44,3 +44,4 @@ symfile=$(mktemp)
 ${OBJDUMP} -j .text -t $obj | \
     ${AWK} '$NF ~ /^__dtrace_sdt_/{print $NF}' > $symfile
 ${OBJCOPY} --strip-symbols=${symfile} $obj
+rm -f $symfile
