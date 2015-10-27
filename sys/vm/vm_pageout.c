@@ -432,7 +432,7 @@ more:
 			break;
 		}
 		vm_page_lock(p);
-		if (p->queue != PQ_INACTIVE ||
+		if ((p->queue != PQ_INACTIVE && p->queue != PQ_NOREUSE) ||
 		    p->hold_count != 0) {	/* may be undergoing I/O */
 			vm_page_unlock(p);
 			ib = 0;
@@ -460,7 +460,7 @@ more:
 		if (p->dirty == 0)
 			break;
 		vm_page_lock(p);
-		if (p->queue != PQ_INACTIVE ||
+		if ((p->queue != PQ_INACTIVE && p->queue != PQ_NOREUSE) ||
 		    p->hold_count != 0) {	/* may be undergoing I/O */
 			vm_page_unlock(p);
 			break;
@@ -823,7 +823,8 @@ vm_pageout_object_deactivate_pages(pmap_t pmap, vm_object_t first_object,
 						p->act_count += ACT_ADVANCE;
 					vm_page_requeue(p);
 				}
-			} else if (p->queue == PQ_INACTIVE)
+			} else if (p->queue == PQ_INACTIVE ||
+			    p->queue == PQ_NOREUSE)
 				pmap_remove_all(p);
 			vm_page_unlock(p);
 		}
@@ -984,8 +985,9 @@ vm_pageout_clean(vm_page_t m)
 		 * (3) reallocated to a different offset, or
 		 * (4) cleaned.
 		 */
-		if (m->queue != PQ_INACTIVE || m->object != object ||
-		    m->pindex != pindex || m->dirty == 0) {
+		if ((m->queue != PQ_INACTIVE && m->queue != PQ_NOREUSE) ||
+		    m->object != object || m->pindex != pindex ||
+		    m->dirty == 0) {
 			vm_page_unlock(m);
 			error = ENXIO;
 			goto unlock_all;
@@ -1041,7 +1043,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	vm_object_t object;
 	long min_scan;
 	int act_delta, addl_page_shortage, deficit, error, maxlaunder, maxscan;
-	int page_shortage, scan_tick, scanned, vnodes_skipped;
+	int qindex, page_shortage, scan_tick, scanned, vnodes_skipped;
 	boolean_t pageout_ok, queues_locked;
 
 	/*
@@ -1099,13 +1101,16 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	vnodes_skipped = 0;
 
 	/*
-	 * Start scanning the inactive queue for pages we can move to the
+	 * Start scanning the inactive queues for pages we can move to the
 	 * cache or free.  The scan will stop when the target is reached or
 	 * we have scanned the entire inactive queue.  Note that m->act_count
 	 * is not used to form decisions for the inactive queue, only for the
 	 * active queue.
 	 */
-	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
+	qindex = PQ_NOREUSE;
+inact_scan:
+	pq = &vmd->vmd_pagequeues[qindex];
+	vmd->vmd_marker.queue = qindex;
 	maxscan = pq->pq_cnt;
 	vm_pagequeue_lock(pq);
 	queues_locked = TRUE;
@@ -1114,7 +1119,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	     m = next) {
 		vm_pagequeue_assert_locked(pq);
 		KASSERT(queues_locked, ("unlocked queues"));
-		KASSERT(m->queue == PQ_INACTIVE, ("Inactive queue %p", m));
+		KASSERT(m->queue == qindex, ("Inactive queue %p", m));
 
 		PCPU_INC(cnt.v_pdpages);
 		next = TAILQ_NEXT(m, plinks.q);
@@ -1324,6 +1329,11 @@ relock_queues:
 		TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_marker, plinks.q);
 	}
 	vm_pagequeue_unlock(pq);
+
+	if (qindex == PQ_NOREUSE) {
+		qindex = PQ_INACTIVE;
+		goto inact_scan;
+	}
 
 #if !defined(NO_SWAPPING)
 	/*

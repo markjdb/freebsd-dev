@@ -306,6 +306,7 @@ VM_STATS_VM(v_inactive_count, "Inactive pages");
 VM_STATS_VM(v_cache_count, "Pages on cache queue");
 VM_STATS_VM(v_pageout_free_min, "Min pages reserved for kernel");
 VM_STATS_VM(v_interrupt_free_min, "Reserved pages for interrupt code");
+VM_STATS_VM(v_noreuse_count, "Inactive noreuse pages");
 VM_STATS_VM(v_forks, "Number of fork() calls");
 VM_STATS_VM(v_vforks, "Number of vfork() calls");
 VM_STATS_VM(v_rforks, "Number of rfork() calls");

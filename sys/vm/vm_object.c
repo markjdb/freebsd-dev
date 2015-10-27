@@ -2341,7 +2341,8 @@ sysctl_vm_object_list(SYSCTL_HANDLER_ARGS)
 			 */
 			if (m->queue == PQ_ACTIVE)
 				kvo.kvo_active++;
-			else if (m->queue == PQ_INACTIVE)
+			else if (m->queue == PQ_INACTIVE ||
+			    m->queue == PQ_NOREUSE)
 				kvo.kvo_inactive++;
 		}
 
