@@ -174,6 +174,7 @@ static dtrace_pops_t systrace_pops = {
 
 static dtrace_provider_id_t	systrace_id;
 
+#ifdef NATIVE_ABI
 /*
  * Probe callback function.
  *
