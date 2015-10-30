@@ -382,14 +382,16 @@ isp_freeze_loopdown(ispsoftc_t *isp, int chan, char *msg)
 	if (IS_FC(isp)) {
 		struct isp_fc *fc = ISP_FC_PC(isp, chan);
 		if (fc->simqfrozen == 0) {
-			isp_prt(isp, ISP_LOGDEBUG0, "%s: freeze simq (loopdown) chan %d", msg, chan);
+			isp_prt(isp, ISP_LOGDEBUG0,
+			    "Chan %d %s -- freeze simq (loopdown)", chan, msg);
 			fc->simqfrozen = SIMQFRZ_LOOPDOWN;
 #if __FreeBSD_version >= 1000039
 			xpt_hold_boot();
 #endif
 			xpt_freeze_simq(fc->sim, 1);
 		} else {
-			isp_prt(isp, ISP_LOGDEBUG0, "%s: mark frozen (loopdown) chan %d", msg, chan);
+			isp_prt(isp, ISP_LOGDEBUG0,
+			    "Chan %d %s -- mark frozen (loopdown)", chan, msg);
 			fc->simqfrozen |= SIMQFRZ_LOOPDOWN;
 		}
 	}
@@ -1412,7 +1414,8 @@ isp_enable_deferred(ispsoftc_t *isp, int bus, lun_id_t lun)
 
 	ISP_GET_PC(isp, bus, tm_luns_enabled, luns_already_enabled);
 	isp_prt(isp, ISP_LOGTINFO, "%s: bus %d lun %jx luns_enabled %d", __func__, bus, (uintmax_t)lun, luns_already_enabled);
-	if (IS_24XX(isp) || (IS_FC(isp) && luns_already_enabled)) {
+	if (IS_23XX(isp) || IS_24XX(isp) ||
+	    (IS_FC(isp) && luns_already_enabled)) {
 		status = CAM_REQ_CMP;
 	} else {
 		int cmd_cnt, not_cnt;
@@ -1483,7 +1486,7 @@ isp_disable_lun(ispsoftc_t *isp, union ccb *ccb)
 	/*
 	 * If we're a 24XX card, we're done.
 	 */
-	if (IS_24XX(isp)) {
+	if (IS_23XX(isp) || IS_24XX(isp)) {
 		status = CAM_REQ_CMP;
 		goto done;
 	}
@@ -1499,7 +1502,7 @@ isp_disable_lun(ispsoftc_t *isp, union ccb *ccb)
 	if (isp_lun_cmd(isp, RQSTYPE_ENABLE_LUN, bus, lun, 0, 0)) {
 		status = CAM_RESRC_UNAVAIL;
 	} else {
-		mtx_sleep(ccb, &isp->isp_lock, PRIBIO, "isp_disable_lun", 0);
+		mtx_sleep(&status, &isp->isp_lock, PRIBIO, "isp_disable_lun", 0);
 	}
 	isp->isp_osinfo.rptr = NULL;
 done:
@@ -4029,19 +4032,6 @@ isp_action(struct cam_sim *sim, union ccb *ccb)
 	isp_prt(isp, ISP_LOGDEBUG2, "isp_action code %x", ccb->ccb_h.func_code);
 	ISP_PCMD(ccb) = NULL;
 
-	if (isp->isp_state != ISP_RUNSTATE && ccb->ccb_h.func_code == XPT_SCSI_IO) {
-		isp_init(isp);
-		if (isp->isp_state != ISP_INITSTATE) {
-			/*
-			 * Lie. Say it was a selection timeout.
-			 */
-			ccb->ccb_h.status = CAM_SEL_TIMEOUT;
-			isp_done((struct ccb_scsiio *) ccb);
-			return;
-		}
-		isp->isp_state = ISP_RUNSTATE;
-	}
-
 	switch (ccb->ccb_h.func_code) {
 	case XPT_SCSI_IO:	/* Execute the requested I/O operation */
 		bus = XS_CHANNEL(ccb);
@@ -5001,11 +4991,11 @@ changed:
 		fc = ISP_FC_PC(isp, bus);
 
 		if (evt == ISPASYNC_CHANGE_PDB) {
-			msg = "Chan %d Port Database Changed";
+			msg = "Port Database Changed";
 		} else if (evt == ISPASYNC_CHANGE_SNS) {
-			msg = "Chan %d Name Server Database Changed";
+			msg = "Name Server Database Changed";
 		} else {
-			msg = "Chan %d Other Change Notify";
+			msg = "Other Change Notify";
 		}
 
 		/*
@@ -5015,7 +5005,7 @@ changed:
 			isp_prt(isp, ISP_LOG_SANCFG|ISP_LOGDEBUG0, "Stopping Loop Down Timer @ %lu", (unsigned long) time_uptime);
 			callout_stop(&fc->ldt);
 		}
-		isp_prt(isp, ISP_LOGINFO, msg, bus);
+		isp_prt(isp, ISP_LOGINFO, "Chan %d %s", bus, msg);
 		if (FCPARAM(isp, bus)->role & ISP_ROLE_INITIATOR) {
 			isp_freeze_loopdown(isp, bus, msg);
 		}
