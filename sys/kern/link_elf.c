@@ -1010,9 +1010,6 @@ link_elf_load_file(linker_class_t cls, const char* filename,
 	vn_lock(nd.ni_vp, LK_EXCLUSIVE | LK_RETRY);
 	if (error != 0)
 		goto out;
-	error = relocate_file(ef);
-	if (error != 0)
-		goto out;
 
 	/*
 	 * Try and load the symbol table if it's present.  (you can
@@ -1080,6 +1077,10 @@ link_elf_load_file(linker_class_t cls, const char* filename,
 	ef->ddbsymtab = (const Elf_Sym *)ef->symbase;
 	ef->ddbstrcnt = strcnt;
 	ef->ddbstrtab = ef->strbase;
+
+	error = relocate_file(ef);
+	if (error != 0)
+		goto out;
 
 nosyms:
 	error = link_elf_link_common_finish(lf);
