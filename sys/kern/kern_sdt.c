@@ -30,6 +30,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 
+#include <sys/eventhandler.h>
 #include <sys/linker.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
@@ -42,7 +43,29 @@ CTASSERT(sizeof(struct sdt_probedesc) == 16);
 
 SDT_PROVIDER_DEFINE(sdt);
 
-MALLOC_DEFINE(M_SDT, "sdt", "statically-defined tracing");
+static MALLOC_DEFINE(M_SDT, "sdt", "statically-defined tracing");
+
+static eventhandler_tag sdt_kld_unload_try_tag;
+
+static void
+sdt_kld_unload_try(void *arg __unused, linker_file_t lf, int *error)
+{
+	struct sdt_probe **probe, **start, **end;
+	struct sdt_probedesc *desc;
+
+	if (linker_file_lookup_set(lf, "sdt_probes_set", &start, &end,
+	    NULL) != 0)
+		return;
+	if (*error != 0)
+		return;
+
+	for (probe = start; probe < end; probe++) {
+		while ((desc = SLIST_FIRST(&(*probe)->site_list)) != NULL) {
+			SLIST_REMOVE_HEAD(&(*probe)->site_list, li.spd_entry);
+			free(*probe, M_SDT);
+		}
+	}
+}
 
 static void
 sdt_patch_callsite(struct sdt_probe *probe, struct sdt_probedesc *desc,
@@ -55,9 +78,8 @@ sdt_patch_callsite(struct sdt_probe *probe, struct sdt_probedesc *desc,
 
 	/*
 	 * The probe site is patched; now we can associate the site with
-	 * the probe itself.
-	 *
-	 * XXX need to free these
+	 * the probe itself. Descriptors allocated here are freed in the
+	 * kld_unload event handler.
 	 */
 	if (desc == NULL)
 		desc = malloc(sizeof(*desc), M_SDT, M_WAITOK);
@@ -102,6 +124,8 @@ sdt_patch_kernel(void *arg __unused)
 {
 
 	linker_file_foreach(sdt_patch_linker_file, NULL);
+	sdt_kld_unload_try_tag = EVENTHANDLER_REGISTER(kld_unload_try,
+	    sdt_kld_unload_try, NULL, EVENTHANDLER_PRI_ANY);
 }
 SYSINIT(sdt_hotpatch, SI_SUB_KDTRACE, SI_ORDER_FIRST, sdt_patch_kernel, NULL);
 
