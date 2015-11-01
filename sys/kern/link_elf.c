@@ -42,6 +42,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/mount.h>
 #include <sys/pcpu.h>
 #include <sys/proc.h>
+#ifdef KDTRACE_HOOKS
+#include <sys/sdt.h>
+#endif
 #include <sys/namei.h>
 #include <sys/fcntl.h>
 #include <sys/vnode.h>
@@ -1191,8 +1194,6 @@ relocate_file(elf_file_t ef)
 	const Elf_Rela *rela;
 	const char *symname;
 
-	printf("Hello!\n");
-
 	/* Perform relocations without addend if there are any: */
 	rel = ef->rel;
 	if (rel != NULL) {
@@ -1202,6 +1203,16 @@ relocate_file(elf_file_t ef)
 			if (elf_reloc(&ef->lf, (Elf_Addr)ef->address, rel,
 			    ELF_RELOC_REL, elf_lookup)) {
 				symname = symbol_name(ef, rel->r_info);
+#ifdef KDTRACE_HOOKS
+				if (symname != NULL &&
+				    strncmp(symname, SDT_PROBE_STUB_PREFIX,
+				    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0) {
+					sdt_patch_reloc(&ef->lf, symname,
+					    (uint64_t)ef->address,
+					    rel->r_offset);
+					continue;
+				}
+#endif
 				printf("link_elf: symbol %s undefined\n", symname);
 				return (ENOENT);
 			}
@@ -1218,6 +1229,16 @@ relocate_file(elf_file_t ef)
 			if (elf_reloc(&ef->lf, (Elf_Addr)ef->address, rela,
 			    ELF_RELOC_RELA, elf_lookup)) {
 				symname = symbol_name(ef, rela->r_info);
+#ifdef KDTRACE_HOOKS
+				if (symname != NULL &&
+				    strncmp(symname, SDT_PROBE_STUB_PREFIX,
+				    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0) {
+					sdt_patch_reloc(&ef->lf, symname,
+					    (uint64_t)ef->address,
+					    rel->r_offset);
+					continue;
+				}
+#endif
 				printf("link_elf: symbol %s undefined\n",
 				    symname);
 				return (ENOENT);
@@ -1235,6 +1256,16 @@ relocate_file(elf_file_t ef)
 			if (elf_reloc(&ef->lf, (Elf_Addr)ef->address, rel,
 			    ELF_RELOC_REL, elf_lookup)) {
 				symname = symbol_name(ef, rel->r_info);
+#ifdef KDTRACE_HOOKS
+				if (symname != NULL &&
+				    strncmp(symname, SDT_PROBE_STUB_PREFIX,
+				    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0) {
+					sdt_patch_reloc(&ef->lf, symname,
+					    (uint64_t)ef->address,
+					    rel->r_offset);
+					continue;
+				}
+#endif
 				printf("link_elf: symbol %s undefined\n",
 				    symname);
 				return (ENOENT);
@@ -1252,6 +1283,16 @@ relocate_file(elf_file_t ef)
 			if (elf_reloc(&ef->lf, (Elf_Addr)ef->address, rela,
 			    ELF_RELOC_RELA, elf_lookup)) {
 				symname = symbol_name(ef, rela->r_info);
+#ifdef KDTRACE_HOOKS
+				if (symname != NULL &&
+				    strncmp(symname, SDT_PROBE_STUB_PREFIX,
+				    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0) {
+					sdt_patch_reloc(&ef->lf, symname,
+					    (uint64_t)ef->address,
+					    rel->r_offset);
+					continue;
+				}
+#endif
 				printf("link_elf: symbol %s undefined\n",
 				    symname);
 				return (ENOENT);
