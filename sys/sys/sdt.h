@@ -451,6 +451,7 @@ struct sdt_probedesc {
 
 SDT_PROVIDER_DECLARE(sdt);
 
+uint64_t sdt_md_patch_callsite(struct sdt_probe *, uint64_t, bool);
 void	sdt_patch_reloc(struct linker_file *, const char *, uint64_t, uint64_t);
 
 #else /* !_KERNEL */
