@@ -25,8 +25,13 @@ sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t rval)
 		return (0);
 
 	tf = (struct trapframe *)(stack + 1);
+#ifdef __amd64__
 	dtrace_probe(rec->sr_id, tf->tf_rdi, tf->tf_rsi, tf->tf_rdx, tf->tf_rcx,
 	    tf->tf_r8);
+#else
+	dtrace_probe(rec->sr_id, stack[0], stack[1], stack[2], stack[3],
+	    stack[4]);
+#endif
 	return (DTRACE_INVOP_NOP);
 }
 

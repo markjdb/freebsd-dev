@@ -156,7 +156,7 @@ ${FULLKERNEL}: ${FULLKERNEL}.reloc sdtstubs.o vers.o
 .if !defined(DEBUG)
 	${OBJCOPY} --strip-debug ${.TARGET}
 .endif
-	AWK='${AWK}' OBJCOPY='${OBJCOPY}' OBJDUMP='${OBJDUMP}' \
+	@AWK='${AWK}' OBJCOPY='${OBJCOPY}' OBJDUMP='${OBJDUMP}' \
 	    sh $S/tools/sdtstrip.sh ${.TARGET}
 	${SYSTEM_LD_TAIL}
 

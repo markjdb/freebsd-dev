@@ -31,6 +31,10 @@
 # Strip SDT probe stub symbols. After the kernel has been linked, they
 # are not needed.
 #
+# Ideally we'd be able to do this with a simple pipeline in which we use
+# objcopy --strip-symbols=/dev/stdin, but objcopy pouts if the argument
+# to --strip-symbols isn't a regular file.
+#
 
 obj=$1
 if [ ! -f "$obj" -o $# -ne 1 ]; then

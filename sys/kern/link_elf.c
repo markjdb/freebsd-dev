@@ -1203,7 +1203,7 @@ sdt_taste_reloc(elf_file_t ef, const char *symname, Elf_Addr offset)
 	}
 	return (0);
 }
-#endif
+#endif /* KDTRACE_HOOKS */
 
 static int
 relocate_file(elf_file_t ef)
@@ -1219,7 +1219,7 @@ relocate_file(elf_file_t ef)
 	if (rel != NULL) {
 		rellim = (const Elf_Rel *)
 		    ((const char *)ef->rel + ef->relsize);
-		while (rel < rellim) {
+		for (; rel < rellim; rel++) {
 			if (elf_reloc(&ef->lf, (Elf_Addr)ef->address, rel,
 			    ELF_RELOC_REL, elf_lookup)) {
 				symname = symbol_name(ef, rel->r_info);
@@ -1230,7 +1230,6 @@ relocate_file(elf_file_t ef)
 				printf("link_elf: symbol %s undefined\n", symname);
 				return (ENOENT);
 			}
-			rel++;
 		}
 	}
 
@@ -1239,7 +1238,7 @@ relocate_file(elf_file_t ef)
 	if (rela != NULL) {
 		relalim = (const Elf_Rela *)
 		    ((const char *)ef->rela + ef->relasize);
-		while (rela < relalim) {
+		for (; rela < relalim; rela++) {
 			if (elf_reloc(&ef->lf, (Elf_Addr)ef->address, rela,
 			    ELF_RELOC_RELA, elf_lookup)) {
 				symname = symbol_name(ef, rela->r_info);
@@ -1252,7 +1251,6 @@ relocate_file(elf_file_t ef)
 				    symname);
 				return (ENOENT);
 			}
-			rela++;
 		}
 	}
 
@@ -1261,7 +1259,7 @@ relocate_file(elf_file_t ef)
 	if (rel != NULL) {
 		rellim = (const Elf_Rel *)
 		    ((const char *)ef->pltrel + ef->pltrelsize);
-		while (rel < rellim) {
+		for (; rel < rellim; rel++) {
 			if (elf_reloc(&ef->lf, (Elf_Addr)ef->address, rel,
 			    ELF_RELOC_REL, elf_lookup)) {
 				symname = symbol_name(ef, rel->r_info);
@@ -1273,7 +1271,6 @@ relocate_file(elf_file_t ef)
 				    symname);
 				return (ENOENT);
 			}
-			rel++;
 		}
 	}
 
@@ -1282,7 +1279,7 @@ relocate_file(elf_file_t ef)
 	if (rela != NULL) {
 		relalim = (const Elf_Rela *)
 		    ((const char *)ef->pltrela + ef->pltrelasize);
-		while (rela < relalim) {
+		for (; rela < relalim; rela++) {
 			if (elf_reloc(&ef->lf, (Elf_Addr)ef->address, rela,
 			    ELF_RELOC_RELA, elf_lookup)) {
 				symname = symbol_name(ef, rela->r_info);
@@ -1295,7 +1292,6 @@ relocate_file(elf_file_t ef)
 				    symname);
 				return (ENOENT);
 			}
-			rela++;
 		}
 	}
 
