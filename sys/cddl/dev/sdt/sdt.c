@@ -360,6 +360,12 @@ sdt_destroy(void *arg, dtrace_id_t id, void *parg)
 	}
 }
 
+#define	SDT_LINKER_SET_FOREACH(lf, set, it)				\
+	__typeof(it) __##set##_start, __##set##_end;			\
+	if (linker_file_lookup_set(lf, #set, &__##set##_start,		\
+	    &__##set##_end, NULL) == 0)					\
+		for (it = __##set##_start; it < __##set##_end; it++)
+
 /*
  * Called from the kernel linker when a module is loaded, before
  * dtrace_module_loaded() is called. This is done so that it's possible to
@@ -370,52 +376,40 @@ sdt_destroy(void *arg, dtrace_id_t id, void *parg)
 static void
 sdt_kld_load(void *arg __unused, struct linker_file *lf)
 {
-	struct sdt_provider **prov, **begin, **end;
-	struct sdt_probe **probe, **p_begin, **p_end;
-	struct sdt_argtype **argtype, **a_begin, **a_end;
+	struct sdt_provider **prov;
+	struct sdt_probe **probe;
+	struct sdt_argtype **argtype;
 
-	if (linker_file_lookup_set(lf, "sdt_providers_set", &begin, &end,
-	    NULL) == 0) {
-		for (prov = begin; prov < end; prov++)
-			sdt_create_provider(*prov);
+	SDT_LINKER_SET_FOREACH(lf, sdt_providers_set, prov) {
+		sdt_create_provider(*prov);
 	}
 
-	if (linker_file_lookup_set(lf, "sdt_probes_set", &p_begin, &p_end,
-	    NULL) == 0) {
-		for (probe = p_begin; probe < p_end; probe++) {
-			sdt_create_probe(*probe, lf);
-			TAILQ_INIT(&(*probe)->argtype_list);
-		}
+	SDT_LINKER_SET_FOREACH(lf, sdt_probes_set, probe) {
+		sdt_create_probe(*probe, lf);
+		TAILQ_INIT(&(*probe)->argtype_list);
 	}
 
-	if (linker_file_lookup_set(lf, "sdt_argtypes_set", &a_begin, &a_end,
-	    NULL) == 0) {
-		for (argtype = a_begin; argtype < a_end; argtype++) {
-			(*argtype)->probe->n_args++;
-			TAILQ_INSERT_TAIL(&(*argtype)->probe->argtype_list,
-			    *argtype, argtype_entry);
-		}
+	SDT_LINKER_SET_FOREACH(lf, sdt_argtypes_set, argtype) {
+		(*argtype)->probe->n_args++;
+		TAILQ_INSERT_TAIL(&(*argtype)->probe->argtype_list, *argtype,
+		    argtype_entry);
 	}
 }
 
 static void
 sdt_kld_unload_try(void *arg __unused, struct linker_file *lf, int *error)
 {
-	struct sdt_provider *prov, **curr, **begin, **end, *tmp;
+	struct sdt_provider *prov, **curr, *tmp;
 
 	if (*error != 0)
 		/* We already have an error, so don't do anything. */
-		return;
-	else if (linker_file_lookup_set(lf, "sdt_providers_set", &begin, &end,
-	    NULL))
-		/* No DTrace providers are declared in this file. */
 		return;
 
 	/*
 	 * Go through all the providers declared in this linker file and
 	 * unregister any that aren't declared in another loaded file.
 	 */
-	for (curr = begin; curr < end; curr++) {
+	SDT_LINKER_SET_FOREACH(lf, sdt_providers_set, curr) {
 		TAILQ_FOREACH_SAFE(prov, &sdt_prov_list, prov_entry, tmp) {
 			if (strcmp(prov->name, (*curr)->name) != 0)
 				continue;
