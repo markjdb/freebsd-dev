@@ -39,8 +39,6 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/cpu.h>
 
-CTASSERT(sizeof(struct sdt_probedesc) == 16);
-
 SDT_PROVIDER_DEFINE(sdt);
 
 static MALLOC_DEFINE(M_SDT, "sdt", "statically-defined tracing");
@@ -53,10 +51,10 @@ sdt_kld_unload_try(void *arg __unused, linker_file_t lf, int *error)
 	struct sdt_probe **probe, **start, **end;
 	struct sdt_probedesc *desc;
 
+	if (*error != 0)
+		return;
 	if (linker_file_lookup_set(lf, "sdt_probes_set", &start, &end,
 	    NULL) != 0)
-		return;
-	if (*error != 0)
 		return;
 
 	for (probe = start; probe < end; probe++) {

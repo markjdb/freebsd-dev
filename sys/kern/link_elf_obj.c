@@ -1074,7 +1074,7 @@ sdt_taste_reloc(elf_file_t ef, const char *symname, Elf_Addr offset,
 	}
 	return (0);
 }
-#endif
+#endif /* KDTRACE_HOOKS */
 
 static int
 relocate_file(elf_file_t ef)

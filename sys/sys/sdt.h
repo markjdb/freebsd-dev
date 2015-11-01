@@ -446,7 +446,7 @@ struct sdt_probedesc {
 		SLIST_ENTRY(sdt_probedesc) spd_entry;
 		struct sdt_probe *spd_probe;
 	} li;
-	uint64_t	spd_offset;
+	u_long	spd_offset;
 };
 
 SDT_PROVIDER_DECLARE(sdt);

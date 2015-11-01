@@ -37,6 +37,22 @@ if [ ! -f "$obj" -o $# -ne 1 ]; then
     exit 1
 fi
 
+set -e
+
+case $(elfdump -e "$obj" | ${AWK} '/e_machine: /{print $2}') in
+EM_386)
+    extype=long
+    ;;
+EM_X86_64)
+    extype=quad
+    ;;
+*)
+    echo "$(basename $0): unknown machine type" >&2
+    exit 1
+    ;;
+esac
+
+# Emit the preamble.
 cat <<__EOF__
 /*
  * This is a machine-generated file - do not edit it!
@@ -55,22 +71,34 @@ _sdt_probe_stub(void)
 
 __EOF__
 
+# Generate aliases for each probe stub so that relocations against them
+# can be resolved in the final link. These symbols will be removed by
+# sdtstrip.sh after linking.
 ${NM} -u "$obj" | \
-    ${AWK} '/^[[:space:]]*U __dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*$/ \
-            {printf "__strong_reference(_sdt_probe_stub, %s);\n", $2;}'
+    ${AWK} '/^[[:space:]]*U __dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*$/ {
+                printf "__strong_reference(_sdt_probe_stub, %s);\n", $2;
+            }'
 
-cat <<__EOF__
-__asm__(
-    ".pushsection set_sdt_probe_site_set, \"a\"\n"
-    ".align 8\n"
-    ".globl __start_set_sdt_probe_site_set\n"
-    ".globl __stop_set_sdt_probe_site_set\n"
-__EOF__
-
+# Emit a linker set containing a struct sdt_probedesc for each relocation
+# against an SDT probe stub.
 ${OBJDUMP} -r -j .text "$obj" | \
-    ${AWK} '$3 ~ /^__dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*\+?/ \
-            {match($3, /sdt_[_[:alpha:]]+[_[:alnum:]]*/); \
-             printf "    \".quad %s\\n\"\n    \".quad 0x%s\\n\"\n", \
-                 substr($3, 10, RLENGTH), $1;}'
+    ${AWK} 'BEGIN {
+                print "__asm__(";
+                print "    \".pushsection set_sdt_probe_site_set, \\\"a\\\"\\n\"";
+                print "    \".align 8\\n\"";
+                print "    \".globl __start_set_sdt_probe_site_set\\n\"";
+                print "    \".globl __stop_set_sdt_probe_site_set\\n\"";
+            }
 
-printf "    \".popsection\");"
+            $3 ~ /^__dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*\+?/ {
+                match($3, /sdt_[_[:alpha:]]+[_[:alnum:]]*/);
+                symname = substr($3, 10, RLENGTH);
+                directive = "'${extype}'";
+                printf "    \".globl %s\\n\"\n", symname;
+                printf "    \".%s %s\\n\"\n    \".%s 0x%s\\n\"\n",
+                    directive, symname, directive, $1;
+            }
+
+            END {
+                print "    \".popsection\");";
+            }'
