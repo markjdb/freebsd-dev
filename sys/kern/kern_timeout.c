@@ -1155,10 +1155,12 @@ _callout_stop_safe(struct callout *c, int safe)
 	if (safe) {
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
 		    "calling callout_drain");
+#if 0
 		if (c->c_lock != NULL) {
 			class = LOCK_CLASS(c->c_lock);
 			class->lc_assert(c->c_lock, LA_UNLOCKED);
 		}
+#endif
 	}
 
 	/*
