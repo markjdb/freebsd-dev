@@ -1057,6 +1057,25 @@ findbase(elf_file_t ef, int sec)
 	return base;
 }
 
+#ifdef KDTRACE_HOOKS
+/*
+ * Relocations against symbols whose names start with "__dtrace_sdt_"
+ * correspond to static DTrace probe sites and are handled specially.
+ */
+static int
+sdt_taste_reloc(elf_file_t ef, const char *symname, Elf_Addr offset,
+    Elf_Addr base)
+{
+
+	if (symname != NULL && strncmp(symname, SDT_PROBE_STUB_PREFIX,
+	    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0) {
+		sdt_patch_reloc(&ef->lf, symname, base, offset);
+		return (1);
+	}
+	return (0);
+}
+#endif
+
 static int
 relocate_file(elf_file_t ef)
 {
@@ -1095,13 +1114,9 @@ relocate_file(elf_file_t ef)
 			    elf_obj_lookup)) {
 				symname = symbol_name(ef, rel->r_info);
 #ifdef KDTRACE_HOOKS
-				if (symname != NULL &&
-				    strncmp(symname, SDT_PROBE_STUB_PREFIX,
-				    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0) {
-					sdt_patch_reloc(&ef->lf, symname, base,
-					    rel->r_offset);
+				if (sdt_taste_reloc(ef, symname, rel->r_offset,
+				    base))
 					continue;
-				}
 #endif
 				printf("link_elf_obj: symbol %s undefined\n",
 				    symname);
@@ -1136,13 +1151,9 @@ relocate_file(elf_file_t ef)
 			    elf_obj_lookup)) {
 				symname = symbol_name(ef, rela->r_info);
 #ifdef KDTRACE_HOOKS
-				if (symname != NULL &&
-				    strncmp(symname, SDT_PROBE_STUB_PREFIX,
-				    sizeof(SDT_PROBE_STUB_PREFIX) - 1) == 0) {
-					sdt_patch_reloc(&ef->lf, symname, base,
-					    rela->r_offset);
+				if (sdt_taste_reloc(ef, symname, rela->r_offset,
+				    base))
 					continue;
-				}
 #endif
 				printf("link_elf_obj: symbol %s undefined\n",
 				    symname);
