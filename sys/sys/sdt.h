@@ -342,14 +342,14 @@ SET_DECLARE(sdt_argtypes_set, struct sdt_argtype);
     arg4, t5, arg5) do {						\
 	static _SDT_PROBE_DEFINE6(sdt, , , name, t0, t1, t2, t3, t4,	\
 	    t5);							\
-	SDT_PROBE5(sdt, , , name, arg0, arg1, arg2, arg3, arg4, arg5);	\
+	SDT_PROBE6(sdt, , , name, arg0, arg1, arg2, arg3, arg4, arg5);	\
 } while (0)
 
 #define	DTRACE_PROBE7(name, t0, arg0, t1, arg1, t2, arg2, t3, arg3, t4,	\
     arg4, t5, arg5, t6, arg6) do {					\
 	static _SDT_PROBE_DEFINE7(sdt, , , name, t0, t1, t2, t3, t4,	\
 	    t5, t6);							\
-	SDT_PROBE5(sdt, , , name, arg0, arg1, arg2, arg3, arg4, arg5,	\
+	SDT_PROBE7(sdt, , , name, arg0, arg1, arg2, arg3, arg4, arg5,	\
 	    arg6);							\
 } while (0)
 
