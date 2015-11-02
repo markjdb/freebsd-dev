@@ -2515,7 +2515,7 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 			atomic_subtract_int(&vm_cnt.v_wire_count, 1);
 			if ((m->oflags & VPO_UNMANAGED) == 0 &&
 			    m->object != NULL && queue != PQ_NONE) {
-				if (queue == PQ_INACTIVE)
+				if (queue == PQ_INACTIVE || queue == PQ_NOREUSE)
 					m->flags &= ~PG_WINATCFLS;
 				vm_page_enqueue(queue, m);
 			}
@@ -2564,7 +2564,7 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 		toqueue = noreuse ? PQ_NOREUSE : PQ_INACTIVE;
 		pq = &vm_phys_domain(m)->vmd_pagequeues[toqueue];
 		/* Avoid multiple acquisitions of the inactive queue lock. */
-		if (queue == PQ_INACTIVE) {
+		if (queue == PQ_INACTIVE && toqueue == PQ_INACTIVE) {
 			vm_pagequeue_lock(pq);
 			vm_page_dequeue_locked(m);
 		} else {
