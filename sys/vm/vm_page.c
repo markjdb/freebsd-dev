@@ -2536,8 +2536,8 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
  * processes.  This optimization causes one-time-use metadata to be
  * reused more quickly.
  *
- * Normally noreuse is 0, resulting in LRU operation.  noreuse is set
- * to 1 if we want this page to be 'as if it were placed in the cache',
+ * Normally noreuse is FALSE, resulting in LRU operation.  noreuse is set
+ * to TRUE if we want this page to be 'as if it were placed in the cache',
  * except without unmapping it from the process address space.  In
  * practice this is implemented by inserting the page at the head of the
  * queue, using a marker page to guide FIFO insertion ordering.
@@ -2590,7 +2590,7 @@ void
 vm_page_deactivate(vm_page_t m)
 {
 
-	_vm_page_deactivate(m, 0);
+	_vm_page_deactivate(m, FALSE);
 }
 
 /*
@@ -2603,7 +2603,7 @@ void
 vm_page_deactivate_noreuse(vm_page_t m)
 {
 
-	_vm_page_deactivate(m, 1);
+	_vm_page_deactivate(m, TRUE);
 }
 
 /*
