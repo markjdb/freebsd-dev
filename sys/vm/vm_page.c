@@ -2512,7 +2512,8 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 			if ((m->oflags & VPO_UNMANAGED) == 0 &&
 			    m->object != NULL && queue != PQ_NONE) {
 				if (queue == PQ_INACTIVE)
-					m->flags &= ~PG_WINATCFLS;
+					m->flags &= ~(PG_WINATCFLS |
+					    PG_NOREUSE);
 				vm_page_enqueue(queue, m);
 			}
 			return (TRUE);
@@ -2554,9 +2555,10 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 
 	/*
 	 * Ignore if the page is already inactive, unless it is unlikely to be
-	 * reactivated.
+	 * reactivated or it has already been marked as such.
 	 */
-	if ((queue = m->queue) == PQ_INACTIVE && !noreuse)
+	queue = m->queue;
+	if (queue == PQ_INACTIVE && (!noreuse || (m->flags & PG_NOREUSE) != 0))
 		return;
 	if (m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0) {
 		pq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
@@ -2571,11 +2573,14 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 			vm_pagequeue_lock(pq);
 		}
 		m->queue = PQ_INACTIVE;
-		if (noreuse)
+		if (noreuse) {
+			m->flags |= PG_NOREUSE;
 			TAILQ_INSERT_BEFORE(&vm_phys_domain(m)->vmd_inacthead,
 			    m, plinks.q);
-		else
+		} else {
+			m->flags &= ~PG_NOREUSE;
 			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+		}
 		vm_pagequeue_cnt_inc(pq);
 		vm_pagequeue_unlock(pq);
 	}
