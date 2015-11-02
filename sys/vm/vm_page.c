@@ -2574,6 +2574,8 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 			vm_pagequeue_lock(pq);
 		}
 		m->queue = toqueue;
+		if (toqueue == PQ_NOREUSE)
+			PCPU_INC(cnt.v_noreuse_total);
 		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
 		vm_pagequeue_unlock(pq);
