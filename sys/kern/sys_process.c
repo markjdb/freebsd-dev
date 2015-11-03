@@ -328,6 +328,45 @@ proc_rwmem(struct proc *p, struct uio *uio)
 }
 
 static int
+proc_iop(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
+    size_t len, enum uio_rw rw)
+{
+	struct iovec iov;
+	struct uio uio;
+	int error;
+
+	iov.iov_base = (caddr_t)buf;
+	iov.iov_len = len;
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_offset = va;
+	uio.uio_resid = (ssize_t)len;
+	uio.uio_segflg = UIO_SYSSPACE;
+	uio.uio_rw = rw;
+	uio.uio_td = td;
+	error = proc_rwmem(p, &uio);
+	KASSERT(error != 0 || uio.uio_resid == 0,
+	    ("proc_iop: truncated op, %zd bytes left", uio.uio_resid));
+	return (error);
+}
+
+int
+proc_readmem(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
+    size_t len)
+{
+
+	return (proc_iop(td, p, va, buf, len, UIO_READ));
+}
+
+int
+proc_writemem(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
+    size_t len)
+{
+
+	return (proc_iop(td, p, va, buf, len, UIO_WRITE));
+}
+
+static int
 ptrace_vm_entry(struct thread *td, struct proc *p, struct ptrace_vm_entry *pve)
 {
 	struct vattr vattr;
@@ -1040,31 +1079,14 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		PROC_UNLOCK(p);
 		tmp = 0;
 		/* write = 0 set above */
-		iov.iov_base = write ? (caddr_t)&data : (caddr_t)&tmp;
-		iov.iov_len = sizeof(int);
-		uio.uio_iov = &iov;
-		uio.uio_iovcnt = 1;
-		uio.uio_offset = (off_t)(uintptr_t)addr;
-		uio.uio_resid = sizeof(int);
-		uio.uio_segflg = UIO_SYSSPACE;	/* i.e.: the uap */
-		uio.uio_rw = write ? UIO_WRITE : UIO_READ;
-		uio.uio_td = td;
-		error = proc_rwmem(p, &uio);
-		if (uio.uio_resid != 0) {
-			/*
-			 * XXX proc_rwmem() doesn't currently return ENOSPC,
-			 * so I think write() can bogusly return 0.
-			 * XXX what happens for short writes?  We don't want
-			 * to write partial data.
-			 * XXX proc_rwmem() returns EPERM for other invalid
-			 * addresses.  Convert this to EINVAL.  Does this
-			 * clobber returns of EPERM for other reasons?
-			 */
-			if (error == 0 || error == ENOSPC || error == EPERM)
-				error = EINVAL;	/* EOF */
-		}
-		if (!write)
+		if (write) {
+			error = proc_writemem(td, p, (off_t)(uintptr_t)addr,
+			    &data, sizeof(int));
+		} else {
+			error = proc_readmem(td, p, (off_t)(uintptr_t)addr,
+			    &tmp, sizeof(int));
 			td->td_retval[0] = tmp;
+		}
 		if (error == 0) {
 			if (write)
 				CTR3(KTR_PTRACE, "PT_WRITE: pid %d: %p <= %#x",

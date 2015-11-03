@@ -597,16 +597,7 @@ ptrace_read_int(struct thread *td, vm_offset_t addr, u_int32_t *v)
 	struct uio uio;
 
 	PROC_LOCK_ASSERT(td->td_proc, MA_NOTOWNED);
-	iov.iov_base = (caddr_t) v;
-	iov.iov_len = sizeof(u_int32_t);
-	uio.uio_iov = &iov;
-	uio.uio_iovcnt = 1;
-	uio.uio_offset = (off_t)addr;
-	uio.uio_resid = sizeof(u_int32_t);
-	uio.uio_segflg = UIO_SYSSPACE;
-	uio.uio_rw = UIO_READ;
-	uio.uio_td = td;
-	return proc_rwmem(td->td_proc, &uio);
+	return (proc_readmem(td, td->td_proc, (off_t)addr, v, sizeof(*v)));
 }
 
 static int
@@ -616,16 +607,7 @@ ptrace_write_int(struct thread *td, vm_offset_t addr, u_int32_t v)
 	struct uio uio;
 
 	PROC_LOCK_ASSERT(td->td_proc, MA_NOTOWNED);
-	iov.iov_base = (caddr_t) &v;
-	iov.iov_len = sizeof(u_int32_t);
-	uio.uio_iov = &iov;
-	uio.uio_iovcnt = 1;
-	uio.uio_offset = (off_t)addr;
-	uio.uio_resid = sizeof(u_int32_t);
-	uio.uio_segflg = UIO_SYSSPACE;
-	uio.uio_rw = UIO_WRITE;
-	uio.uio_td = td;
-	return proc_rwmem(td->td_proc, &uio);
+	return (proc_writemem(td, td->td_proc, (off_t)addr, &v, sizeof(v)));
 }
 
 static u_int
