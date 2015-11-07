@@ -1270,7 +1270,6 @@ free_page:
 			 * the thrash point for a heavily loaded machine.
 			 */
 			m->flags |= PG_WINATCFLS;
-			m->flags &= ~PG_NOREUSE;
 requeue_page:
 			vm_pagequeue_lock(pq);
 			queues_locked = TRUE;
