@@ -508,9 +508,8 @@ DoFile(const char *savedir, const char *device)
 	}
 
 	lasthd = mediasize - sectorsize;
-	lseek(fd, lasthd, SEEK_SET);
-	error = read(fd, &kdhl, sizeof kdhl);
-	if (error != sizeof kdhl) {
+	if (lseek(fd, lasthd, SEEK_SET) != lasthd ||
+	    read(fd, &kdhl, sizeof(kdhl)) != sizeof(kdhl)) {
 		syslog(LOG_ERR,
 		    "error reading last dump header at offset %lld in %s: %m",
 		    (long long)lasthd, device);
@@ -591,9 +590,8 @@ DoFile(const char *savedir, const char *device)
 	dumpextent = dtoh64(kdhl.dumpextent);
 	dumplength = dtoh64(kdhl.dumplength);
 	firsthd = lasthd - dumpextent - sizeof kdhf;
-	lseek(fd, firsthd, SEEK_SET);
-	error = read(fd, &kdhf, sizeof kdhf);
-	if (error != sizeof kdhf) {
+	if (lseek(fd, firsthd, SEEK_SET) != firsthd ||
+	    read(fd, &kdhf, sizeof(kdhf)) != sizeof(kdhf)) {
 		syslog(LOG_ERR,
 		    "error reading first dump header at offset %lld in %s: %m",
 		    (long long)firsthd, device);
