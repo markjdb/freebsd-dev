@@ -2132,8 +2132,10 @@ vm_wait(void)
 			vm_pages_needed = 1;
 			wakeup(&vm_pages_needed);
 		}
+		DTRACE_PROBE(vmwait__start);
 		msleep(&vm_cnt.v_free_count, &vm_page_queue_free_mtx, PDROP | PVM,
 		    "vmwait", 0);
+		DTRACE_PROBE(vmwait__end);
 	}
 }
 

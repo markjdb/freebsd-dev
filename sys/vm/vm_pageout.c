@@ -76,7 +76,7 @@
 __FBSDID("$FreeBSD$");
 
 #include "opt_vm.h"
-#include "opt_kdtrace.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -1042,6 +1042,7 @@ vm_pageout_launder1(struct vm_domain *vmd)
 	if (launder < 0)
 		launder = 5;
 	launder /= 5;
+	DTRACE_PROBE1(page__launder, "int", launder);
 
 	vnodes_skipped = 0;
 
