@@ -2132,8 +2132,10 @@ vm_wait(void)
 			vm_pages_needed = 1;
 			wakeup(&vm_pages_needed);
 		}
+		DTRACE_PROBE(vmwait__start);
 		msleep(&vm_cnt.v_free_count, &vm_page_queue_free_mtx, PDROP | PVM,
 		    "vmwait", 0);
+		DTRACE_PROBE(vmwait__end);
 	}
 }
 
@@ -3311,6 +3313,7 @@ DB_SHOW_COMMAND(page, vm_page_print_page_info)
 	db_printf("vm_cnt.v_cache_count: %d\n", vm_cnt.v_cache_count);
 	db_printf("vm_cnt.v_inactive_count: %d\n", vm_cnt.v_inactive_count);
 	db_printf("vm_cnt.v_active_count: %d\n", vm_cnt.v_active_count);
+	db_printf("vm_cnt.v_laundry_count: %d\n", vm_cnt.v_laundry_count);
 	db_printf("vm_cnt.v_wire_count: %d\n", vm_cnt.v_wire_count);
 	db_printf("vm_cnt.v_free_reserved: %d\n", vm_cnt.v_free_reserved);
 	db_printf("vm_cnt.v_free_min: %d\n", vm_cnt.v_free_min);
@@ -3326,12 +3329,13 @@ DB_SHOW_COMMAND(pageq, vm_page_print_pageq_info)
 	    vm_cnt.v_free_count, vm_cnt.v_cache_count);
 	for (dom = 0; dom < vm_ndomains; dom++) {
 		db_printf(
-	"dom %d page_cnt %d free %d pq_act %d pq_inact %d pass %d\n",
+	"dom %d page_cnt %d free %d pq_act %d pq_inact %d pq_laund %d pass %d\n",
 		    dom,
 		    vm_dom[dom].vmd_page_count,
 		    vm_dom[dom].vmd_free_count,
 		    vm_dom[dom].vmd_pagequeues[PQ_ACTIVE].pq_cnt,
 		    vm_dom[dom].vmd_pagequeues[PQ_INACTIVE].pq_cnt,
+		    vm_dom[dom].vmd_pagequeues[PQ_LAUNDRY].pq_cnt,
 		    vm_dom[dom].vmd_pass);
 	}
 }

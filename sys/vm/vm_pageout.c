@@ -76,7 +76,7 @@
 __FBSDID("$FreeBSD$");
 
 #include "opt_vm.h"
-#include "opt_kdtrace.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -1022,6 +1022,10 @@ unlock_mp:
 	return (error);
 }
 
+static int null_launder_count = 5;
+SYSCTL_INT(_vm, OID_AUTO, null_launder_count,
+    CTLFLAG_RWTUN, &null_launder_count, 0, "");
+
 /*
  * XXX
  */
@@ -1040,8 +1044,9 @@ vm_pageout_launder1(struct vm_domain *vmd)
 	launder = vm_cnt.v_inactive_target - vm_cnt.v_inactive_count +
 	    vm_paging_target() + vm_pageout_deficit;
 	if (launder < 0)
-		launder = 5;
+		launder = null_launder_count;
 	launder /= 5;
+	DTRACE_PROBE1(page__launder, "int", launder);
 
 	vnodes_skipped = 0;
 
