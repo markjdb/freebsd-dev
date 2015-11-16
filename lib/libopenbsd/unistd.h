@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2015 Oleksandr Tymoshenko
+ * Copyright (c) 2015 Craig Rodrigues
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -23,16 +23,14 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	$FreeBSD$
+ * $FreeBSD$
  */
 
-#ifndef _HDMI_H_
-#define _HDMI_H_
+#ifndef _LIBOPENBSD_UNISTD_H_
+#define _LIBOPENBSD_UNISTD_H_
 
-#include <sys/eventhandler.h>
+#include_next <unistd.h>
 
-typedef void (*hdmi_event_hook)(void *, int);
-EVENTHANDLER_DECLARE(hdmi_event, hdmi_event_hook);
+int	 getdtablecount(void);
 
-#endif	/* !_HDMI_H_ */
-
+#endif
