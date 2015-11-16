@@ -430,7 +430,7 @@ enum witness_channel {
 
 static enum witness_channel witness_channel = WITNESS_CONSOLE;
 SYSCTL_PROC(_debug_witness, OID_AUTO, output_channel, CTLTYPE_STRING |
-    CTLFLAG_RW, NULL, 0, sysctl_debug_witness_channel, "A",
+    CTLFLAG_RWTUN, NULL, 0, sysctl_debug_witness_channel, "A",
     "Output channel for warnings");
 
 /*
@@ -2689,7 +2689,7 @@ restart:
 static int
 sysctl_debug_witness_channel(SYSCTL_HANDLER_ARGS)
 {
-	static struct {
+	static const struct {
 		enum witness_channel channel;
 		const char *name;
 	} channels[] = {
@@ -2698,7 +2698,8 @@ sysctl_debug_witness_channel(SYSCTL_HANDLER_ARGS)
 		{ WITNESS_NONE, "none" },
 	};
 	char buf[16];
-	int error, i;
+	u_int i;
+	int error;
 
 	buf[0] = '\0';
 	for (i = 0; i < nitems(channels); i++)
@@ -2716,6 +2717,7 @@ sysctl_debug_witness_channel(SYSCTL_HANDLER_ARGS)
 		if (strcmp(channels[i].name, buf) == 0) {
 			witness_channel = channels[i].channel;
 			error = 0;
+			break;
 		}
 	return (error);
 }
