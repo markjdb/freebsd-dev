@@ -315,8 +315,6 @@ witness_lock_order_key_equal(const struct witness_lock_order_key *a,
 
 static int	_isitmyx(struct witness *w1, struct witness *w2, int rmask,
 		    const char *fname);
-static void	_witness_debugger(int cond, const char *msg);
-#define	witness_debugger(c)	_witness_debugger(c, __func__)
 static void	adopt(struct witness *parent, struct witness *child);
 #ifdef BLESSING
 static int	blessed(struct witness *, struct witness *);
@@ -344,6 +342,7 @@ static void	witness_ddb_display_list(int(*prnt)(const char *fmt, ...),
 static void	witness_ddb_level_descendants(struct witness *parent, int l);
 static void	witness_ddb_list(struct thread *td);
 #endif
+static void	witness_debugger(int cond, const char *msg);
 static void	witness_free(struct witness *m);
 static struct witness	*witness_get(void);
 static uint32_t	witness_hash_djb2(const uint8_t *key, uint32_t size);
@@ -1219,7 +1218,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 			    fixup_filename(plock->li_file), plock->li_line);
 			witness_output(" 2nd %s @ %s:%d\n", lock->lo_name,
 			    fixup_filename(file), line);
-			witness_debugger(1);
+			witness_debugger(1, __func__);
 		} else
 			mtx_unlock_spin(&w_mtx);
 		return;
@@ -1388,7 +1387,7 @@ witness_checkorder(struct lock_object *lock, int flags, const char *file,
 				    lock->lo_name, w->w_name,
 				    fixup_filename(file), line);
 			}
-			witness_debugger(1);
+			witness_debugger(1, __func__);
 			return;
 		}
 	}
@@ -1771,7 +1770,7 @@ witness_warn(int flags, struct lock_object *lock, const char *fmt, ...)
 	if (flags & WARN_PANIC && n)
 		kassert_panic("%s", __func__);
 	else
-		witness_debugger(n);
+		witness_debugger(n, __func__);
 	return (n);
 }
 
@@ -2993,18 +2992,15 @@ witness_output_drain(void *arg __unused, const char *data, int len)
 }
 
 static void
-_witness_debugger(int cond, const char *msg)
+witness_debugger(int cond, const char *msg)
 {
-#ifdef DDB
 	char buf[32];
 	struct sbuf sb;
 	struct stack st;
-#endif
 
 	if (!cond)
 		return;
 
-#ifdef DDB
 	if (witness_trace) {
 		sbuf_new(&sb, buf, sizeof(buf), SBUF_FIXEDLEN);
 		sbuf_set_drain(&sb, witness_output_drain, NULL);
@@ -3016,10 +3012,6 @@ _witness_debugger(int cond, const char *msg)
 
 		sbuf_finish(&sb);
 	}
-#elif KDB
-	if (witness_trace)
-		kdb_backtrace();
-#endif
 
 #ifdef KDB
 	if (witness_kdb)
