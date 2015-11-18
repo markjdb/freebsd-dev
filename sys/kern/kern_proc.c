@@ -1526,33 +1526,13 @@ pargs_drop(struct pargs *pa)
 }
 
 static int
-proc_read_mem(struct thread *td, struct proc *p, vm_offset_t offset, void* buf,
-    size_t len)
-{
-	struct iovec iov;
-	struct uio uio;
-
-	iov.iov_base = (caddr_t)buf;
-	iov.iov_len = len;
-	uio.uio_iov = &iov;
-	uio.uio_iovcnt = 1;
-	uio.uio_offset = offset;
-	uio.uio_resid = (ssize_t)len;
-	uio.uio_segflg = UIO_SYSSPACE;
-	uio.uio_rw = UIO_READ;
-	uio.uio_td = td;
-
-	return (proc_rwmem(p, &uio));
-}
-
-static int
 proc_read_string(struct thread *td, struct proc *p, const char *sptr, char *buf,
     size_t len)
 {
 	size_t i;
 	int error;
 
-	error = proc_read_mem(td, p, (vm_offset_t)sptr, buf, len);
+	error = proc_readmem(td, p, (vm_offset_t)sptr, buf, len);
 	/*
 	 * Reading the chunk may validly return EFAULT if the string is shorter
 	 * than the chunk and is aligned at the end of the page, assuming the
@@ -1561,7 +1541,7 @@ proc_read_string(struct thread *td, struct proc *p, const char *sptr, char *buf,
 	 */
 	if (error == EFAULT) {
 		for (i = 0; i < len; i++, buf++, sptr++) {
-			error = proc_read_mem(td, p, (vm_offset_t)sptr, buf, 1);
+			error = proc_readmem(td, p, (vm_offset_t)sptr, buf, 1);
 			if (error != 0)
 				return (error);
 			if (*buf == '\0')
@@ -1593,7 +1573,7 @@ get_proc_vector32(struct thread *td, struct proc *p, char ***proc_vectorp,
 	size_t vsize, size;
 	int i, error;
 
-	error = proc_read_mem(td, p, (vm_offset_t)(p->p_sysent->sv_psstrings),
+	error = proc_readmem(td, p, (vm_offset_t)p->p_sysent->sv_psstrings,
 	    &pss, sizeof(pss));
 	if (error != 0)
 		return (error);
@@ -1618,7 +1598,7 @@ get_proc_vector32(struct thread *td, struct proc *p, char ***proc_vectorp,
 		if (vptr % 4 != 0)
 			return (ENOEXEC);
 		for (ptr = vptr, i = 0; i < PROC_AUXV_MAX; i++) {
-			error = proc_read_mem(td, p, ptr, &aux, sizeof(aux));
+			error = proc_readmem(td, p, ptr, &aux, sizeof(aux));
 			if (error != 0)
 				return (error);
 			if (aux.a_type == AT_NULL)
@@ -1635,7 +1615,7 @@ get_proc_vector32(struct thread *td, struct proc *p, char ***proc_vectorp,
 		return (EINVAL);
 	}
 	proc_vector32 = malloc(size, M_TEMP, M_WAITOK);
-	error = proc_read_mem(td, p, vptr, proc_vector32, size);
+	error = proc_readmem(td, p, vptr, proc_vector32, size);
 	if (error != 0)
 		goto done;
 	if (type == PROC_AUX) {
@@ -1669,7 +1649,7 @@ get_proc_vector(struct thread *td, struct proc *p, char ***proc_vectorp,
 	if (SV_PROC_FLAG(p, SV_ILP32) != 0)
 		return (get_proc_vector32(td, p, proc_vectorp, vsizep, type));
 #endif
-	error = proc_read_mem(td, p, (vm_offset_t)(p->p_sysent->sv_psstrings),
+	error = proc_readmem(td, p, (vm_offset_t)p->p_sysent->sv_psstrings,
 	    &pss, sizeof(pss));
 	if (error != 0)
 		return (error);
@@ -1709,7 +1689,7 @@ get_proc_vector(struct thread *td, struct proc *p, char ***proc_vectorp,
 		 * to the allocated proc_vector.
 		 */
 		for (ptr = vptr, i = 0; i < PROC_AUXV_MAX; i++) {
-			error = proc_read_mem(td, p, ptr, &aux, sizeof(aux));
+			error = proc_readmem(td, p, ptr, &aux, sizeof(aux));
 			if (error != 0)
 				return (error);
 			if (aux.a_type == AT_NULL)
@@ -1734,7 +1714,7 @@ get_proc_vector(struct thread *td, struct proc *p, char ***proc_vectorp,
 	proc_vector = malloc(size, M_TEMP, M_WAITOK);
 	if (proc_vector == NULL)
 		return (ENOMEM);
-	error = proc_read_mem(td, p, vptr, proc_vector, size);
+	error = proc_readmem(td, p, vptr, proc_vector, size);
 	if (error != 0) {
 		free(proc_vector, M_TEMP);
 		return (error);
