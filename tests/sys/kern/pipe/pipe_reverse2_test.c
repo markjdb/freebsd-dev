@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2011 Giovanni Trematerra <giovanni.trematerra@gmail.com>
+ * Copyright (c) 2010 Jilles Tjoelker
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -22,44 +22,45 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- */
-
-/*
+ *
  * $FreeBSD$
- * Test conformance to stat(2) SUSv4 description:
- *  "For all other file types defined in this volume of POSIX.1-2008, the
- *  structure members st_mode, st_ino, st_dev, st_uid, st_gid, st_atim,
- *  st_ctim, and st_mtim shall have meaningful values ...".
- * Check that st_dev and st_ino are meaningful.
  */
 
-#include <sys/types.h>
-#include <sys/stat.h>
+#include <sys/select.h>
+
 #include <err.h>
 #include <stdio.h>
 #include <unistd.h>
 
+/*
+ * Check that pipes can be selected for writing in the reverse direction.
+ */
 int
-main(int argc, char **argv)
+main(void)
 {
-	int pipefd[2];
-	struct stat st1, st2;
+	int pip[2];
+	fd_set set;
+	int n;
 
-	if (pipe(pipefd) == -1)
+	if (pipe(pip) == -1)
 		err(1, "FAIL: pipe");
 
-	if (fstat(pipefd[0], &st1) == -1)
-		err(1, "FAIL: fstat st1");
-	if (fstat(pipefd[1], &st2) == -1)
-		err(1, "FAIL: fstat st2");
-	if (st1.st_dev != st2.st_dev || st1.st_dev == 0 || st2.st_dev == 0) {
-		errx(1, "FAIL: wrong dev number %d %d",
-		    st1.st_dev, st2.st_dev);
-	}
-	if (st1.st_ino == st2.st_ino)
-		errx(1, "FAIL: inode numbers are equal: %d", st1.st_ino);
-	close(pipefd[0]);
-	close(pipefd[1]);
+	FD_ZERO(&set);
+	FD_SET(pip[0], &set);
+	n = select(pip[1] + 1, NULL, &set, NULL, &(struct timeval){ 0, 0 });
+	if (n != 1)
+		errx(1, "FAIL: select initial reverse direction");
+
+	n = write(pip[0], "x", 1);
+	if (n != 1)
+		err(1, "FAIL: write reverse direction");
+
+	FD_ZERO(&set);
+	FD_SET(pip[0], &set);
+	n = select(pip[1] + 1, NULL, &set, NULL, &(struct timeval){ 0, 0 });
+	if (n != 1)
+		errx(1, "FAIL: select reverse direction after write");
+
 	printf("PASS\n");
 
 	return (0);
