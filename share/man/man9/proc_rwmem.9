@@ -37,9 +37,15 @@
 .Ft int
 .Fn proc_rwmem "struct proc *p" "struct uio *uio"
 .Ft int
-.Fn proc_readmem "struct thread *td" "struct proc *p" "vm_offset_t va" "void *buf" "size_t len"
+.Fo proc_readmem
+.Fa "struct thread *td" "struct proc *p" "vm_offset_t va" "void *buf"
+.Fa "size_t len"
+.Fc
 .Ft int
-.Fn proc_writemem "struct thread *td" "struct proc *p" "vm_offset_t va" "void *buf" "size_t len"
+.Fo proc_writemem
+.Fa "struct thread *td" "struct proc *p" "vm_offset_t va" "void *buf"
+.Fa "size_t len"
+.Fc
 .Sh DESCRIPTION
 These functions are used to read to or write from the address space of process
 .Fa p .
