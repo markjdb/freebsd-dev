@@ -328,7 +328,7 @@ proc_rwmem(struct proc *p, struct uio *uio)
 	return (error);
 }
 
-static int
+static ssize_t
 proc_iop(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
     size_t len, enum uio_rw rw)
 {
@@ -355,7 +355,7 @@ proc_iop(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
 	return (slen - uio.uio_resid);
 }
 
-int
+ssize_t
 proc_readmem(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
     size_t len)
 {
@@ -363,7 +363,7 @@ proc_readmem(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
 	return (proc_iop(td, p, va, buf, len, UIO_READ));
 }
 
-int
+ssize_t
 proc_writemem(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
     size_t len)
 {
