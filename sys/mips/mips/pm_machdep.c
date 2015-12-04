@@ -215,14 +215,18 @@ static int
 ptrace_read_int(struct thread *td, off_t addr, int *v)
 {
 
-	return (proc_readmem(td, td->proc, addr, v, sizeof(*v)));
+	if (proc_readmem(td, td->proc, addr, v, sizeof(*v)) != sizeof(*v))
+		return (ENOMEM);
+	return (0);
 }
 
 static int
 ptrace_write_int(struct thread *td, off_t addr, int v)
 {
 
-	return (proc_writemem(td, td->proc, addr, &v, sizeof(v)));
+	if (proc_writemem(td, td->proc, addr, &v, sizeof(v)) != sizeof(v))
+		return (ENOMEM);
+	return (0);
 }
 
 int

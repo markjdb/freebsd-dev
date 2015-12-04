@@ -62,23 +62,27 @@
 static int
 uread(proc_t *p, void *kaddr, size_t len, uintptr_t uaddr)
 {
-	int error;
+	ssize_t n;
 
 	PHOLD(p);
-	error = proc_readmem(curthread, p, uaddr, kaddr, len);
+	n = proc_readmem(curthread, p, uaddr, kaddr, len);
 	PRELE(p);
-	return (error);
+	if (n != len)
+		return (ENOMEM);
+	return (0);
 }
 
 static int
 uwrite(proc_t *p, void *kaddr, size_t len, uintptr_t uaddr)
 {
-	int error;
+	ssize_t n;
 
 	PHOLD(p);
-	error = proc_writemem(curthread, p, uaddr, kaddr, len);
+	n = proc_writemem(curthread, p, uaddr, kaddr, len);
 	PRELE(p);
-	return (error);
+	if (n != len)
+		return (ENOMEM);
+	return (0);
 }
 
 #endif /* illumos */

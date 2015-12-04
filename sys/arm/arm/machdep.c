@@ -594,14 +594,18 @@ static int
 ptrace_read_int(struct thread *td, vm_offset_t addr, uint32_t *v)
 {
 
-	return (proc_readmem(td, td->td_proc, addr, v, sizeof(*v)));
+	if (proc_readmem(td, td->td_proc, addr, v, sizeof(*v)) != sizeof(*v))
+		return (ENOMEM);
+	return (0);
 }
 
 static int
 ptrace_write_int(struct thread *td, vm_offset_t addr, uint32_t v)
 {
 
-	return (proc_writemem(td, td->td_proc, addr, &v, sizeof(v)));
+	if (proc_writemem(td, td->td_proc, addr, &v, sizeof(v)) != sizeof(v))
+		return (ENOMEM);
+	return (0);
 }
 
 static u_int
