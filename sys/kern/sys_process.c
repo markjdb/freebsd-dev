@@ -334,21 +334,25 @@ proc_iop(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
 {
 	struct iovec iov;
 	struct uio uio;
+	ssize_t slen;
 	int error;
+
+	MPASS(len < SSIZE_MAX);
+	slen = (ssize_t)len;
 
 	iov.iov_base = (caddr_t)buf;
 	iov.iov_len = len;
 	uio.uio_iov = &iov;
 	uio.uio_iovcnt = 1;
 	uio.uio_offset = va;
-	uio.uio_resid = (ssize_t)len;
+	uio.uio_resid = slen;
 	uio.uio_segflg = UIO_SYSSPACE;
 	uio.uio_rw = rw;
 	uio.uio_td = td;
 	error = proc_rwmem(p, &uio);
-	KASSERT(error != 0 || uio.uio_resid == 0,
-	    ("proc_iop: truncated op, %zd bytes left", uio.uio_resid));
-	return (error);
+	if (uio.uio_resid == slen)
+		return (-1);
+	return (slen - uio.uio_resid);
 }
 
 int
@@ -684,7 +688,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 	struct thread *td2 = NULL, *td3;
 	struct ptrace_io_desc *piod = NULL;
 	struct ptrace_lwpinfo *pl;
-	int error, write, tmp, num;
+	int error, num, tmp;
 	int proctree_locked = 0;
 	lwpid_t tid = 0, *buf;
 #ifdef COMPAT_FREEBSD32
@@ -714,7 +718,6 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		break;
 	}
 
-	write = 0;
 	if (req == PT_TRACE_ME) {
 		p = td->td_proc;
 		PROC_LOCK(p);
@@ -1073,29 +1076,28 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 	case PT_WRITE_I:
 	case PT_WRITE_D:
 		td2->td_dbgflags |= TDB_USERWR;
-		write = 1;
-		/* FALLTHROUGH */
+		PROC_UNLOCK(p);
+		error = 0;
+		if (proc_writemem(td, p, (off_t)(uintptr_t)addr, &data,
+		    sizeof(int)) != sizeof(int))
+			error = ENOMEM;
+		else
+			CTR3(KTR_PTRACE, "PT_WRITE: pid %d: %p <= %#x",
+			    p->p_pid, addr, data);
+		PROC_LOCK(p);
+		break;
+
 	case PT_READ_I:
 	case PT_READ_D:
 		PROC_UNLOCK(p);
-		tmp = 0;
-		/* write = 0 set above */
-		if (write) {
-			error = proc_writemem(td, p, (off_t)(uintptr_t)addr,
-			    &data, sizeof(int));
-		} else {
-			error = proc_readmem(td, p, (off_t)(uintptr_t)addr,
-			    &tmp, sizeof(int));
-			td->td_retval[0] = tmp;
-		}
-		if (error == 0) {
-			if (write)
-				CTR3(KTR_PTRACE, "PT_WRITE: pid %d: %p <= %#x",
-				    p->p_pid, addr, data);
-			else
-				CTR3(KTR_PTRACE, "PT_READ: pid %d: %p >= %#x",
-				    p->p_pid, addr, tmp);
-		}
+		error = tmp = 0;
+		if (proc_readmem(td, p, (off_t)(uintptr_t)addr, &tmp,
+		    sizeof(int)) != sizeof(int))
+			error = ENOMEM;
+		else
+			CTR3(KTR_PTRACE, "PT_READ: pid %d: %p >= %#x",
+			    p->p_pid, addr, tmp);
+		td->td_retval[0] = tmp;
 		PROC_LOCK(p);
 		break;
 

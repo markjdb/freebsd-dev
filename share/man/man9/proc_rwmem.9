@@ -23,7 +23,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd November 17, 2015
+.Dd December 4, 2015
 .Dt PROC_RWMEM 9
 .Os
 .Sh NAME
@@ -36,18 +36,19 @@
 .In sys/ptrace.h
 .Ft int
 .Fn proc_rwmem "struct proc *p" "struct uio *uio"
-.Ft int
+.Ft ssize_t
 .Fo proc_readmem
 .Fa "struct thread *td" "struct proc *p" "vm_offset_t va" "void *buf"
 .Fa "size_t len"
 .Fc
-.Ft int
+.Ft ssize_t
 .Fo proc_writemem
 .Fa "struct thread *td" "struct proc *p" "vm_offset_t va" "void *buf"
 .Fa "size_t len"
 .Fc
 .Sh DESCRIPTION
-These functions are used to read to or write from the address space of process
+These functions are used to read to or write from the address space of the
+process
 .Fa p .
 The
 .Fn proc_rwmem
@@ -60,11 +61,11 @@ The
 and
 .Fn proc_writemem
 functions provide a simpler, less general interface which allows the caller to
-read or write the kernel buffer
+read into or write the kernel buffer
 .Fa buf
 of size
 .Fa len
-to the memory at offset
+from or to the memory at offset
 .Fa va
 in the address space of
 .Fa p .
@@ -76,14 +77,12 @@ These functions may sleep and thus may not be called with any non-sleepable
 locks held.
 The process
 .Fa p
-must be held by the caller.
+must be held by the caller using
+.Xr PHOLD 9 .
 .Sh RETURN VALUES
 The
-.Fn proc_rwmem ,
-.Fn proc_readmem
-and
-.Fn proc_writemem
-functions return
+.Fn proc_rwmem
+function returns
 .Dv 0
 on success.
 .Dv EFAULT
@@ -91,8 +90,19 @@ is returned if the specified user address is invalid, and
 .Dv ENOMEM
 is returned if the target pages could not be faulted in due to a resource
 shortage.
+.Pp
+The
+.Fn proc_readmem
+and
+.Fn proc_writemem
+functions return the number of bytes read or written, respectively.
+This may be smaller than the number of bytes requested, for example if the
+request spans multiple pages in the process address space and one of them after
+the first is not mapped.
+Otherwise, -1 is returned.
 .Sh SEE ALSO
 .Xr copyin 9 ,
+.Xr locking 9 ,
 .Xr PHOLD 9 ,
 .Xr uio 9
 .Sh AUTHORS
