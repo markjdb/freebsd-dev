@@ -188,8 +188,6 @@ vnode_destroy_vobject(struct vnode *vp)
 /*
  * Allocate (or lookup) pager for a vnode.
  * Handle is a vnode pointer.
- *
- * MPSAFE
  */
 vm_object_t
 vnode_pager_alloc(void *handle, vm_ooffset_t size, vm_prot_t prot,

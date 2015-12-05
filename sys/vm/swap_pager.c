@@ -600,8 +600,6 @@ swap_pager_swap_init(void)
  *
  *	This routine may block in vm_object_allocate() and create a named
  *	object lookup race, so we must interlock.
- *
- * MPSAFE
  */
 static vm_object_t
 swap_pager_alloc(void *handle, vm_ooffset_t size, vm_prot_t prot,
@@ -2078,9 +2076,6 @@ struct swapon_args {
 };
 #endif
 
-/*
- * MPSAFE
- */
 /* ARGSUSED */
 int
 sys_swapon(struct thread *td, struct swapon_args *uap)
@@ -2245,9 +2240,6 @@ struct swapoff_args {
 };
 #endif
 
-/*
- * MPSAFE
- */
 /* ARGSUSED */
 int
 sys_swapoff(struct thread *td, struct swapoff_args *uap)
