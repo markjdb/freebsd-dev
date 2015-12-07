@@ -47,7 +47,9 @@ dtrace_ioctl_helper(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		/* FALLTHROUGH */
 	case DTRACEHIOC_ADD:
 		p = curproc;
-		if (p->p_pid != dhp->dofhp_pid) {
+		if (p->p_pid == dhp->dofhp_pid) {
+			dof = dtrace_dof_copyin((uintptr_t)addr, &rval);
+		} else {
 			p = pfind(dhp->dofhp_pid);
 			if (p == NULL)
 				return (EINVAL);
@@ -59,11 +61,14 @@ dtrace_ioctl_helper(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 			}
 			_PHOLD(p);
 			PROC_UNLOCK(p);
+			dof = dtrace_dof_copyin_proc(p, (uintptr_t)addr, &rval);
 		}
 
-		dof = dtrace_dof_copyin_proc(p, (uintptr_t)addr, &rval);
-		if (dof == NULL)
-			return (rval);
+		if (dof == NULL) {
+			if (p != curproc)
+				PRELE(p);
+			break;
+		}
 
 		mutex_enter(&dtrace_lock);
 		if ((rval = dtrace_helper_slurp(dof, dhp, p)) != -1) {
@@ -76,7 +81,8 @@ dtrace_ioctl_helper(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 			rval = EINVAL;
 		}
 		mutex_exit(&dtrace_lock);
-		PRELE(p);
+		if (p != curproc)
+			PRELE(p);
 		break;
 	case DTRACEHIOC_REMOVE:
 		mutex_enter(&dtrace_lock);
