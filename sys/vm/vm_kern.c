@@ -181,7 +181,10 @@ retry:
 		if (m == NULL) {
 			VM_OBJECT_WUNLOCK(object);
 			if (tries < ((flags & M_NOWAIT) != 0 ? 1 : 3)) {
-				vm_pageout_grow_cache(tries, low, high);
+				if (!vm_page_reclaim_contig(pflags, 1,
+				    low, high, PAGE_SIZE, 0) &&
+				    (flags & M_WAITOK) != 0)
+					VM_WAIT;
 				VM_OBJECT_WLOCK(object);
 				tries++;
 				goto retry;
@@ -217,6 +220,7 @@ kmem_alloc_contig(struct vmem *vmem, vm_size_t size, int flags, vm_paddr_t low,
 	vm_offset_t addr, tmp;
 	vm_ooffset_t offset;
 	vm_page_t end_m, m;
+	u_long npages;
 	int pflags, tries;
  
 	size = round_page(size);
@@ -224,15 +228,18 @@ kmem_alloc_contig(struct vmem *vmem, vm_size_t size, int flags, vm_paddr_t low,
 		return (0);
 	offset = addr - VM_MIN_KERNEL_ADDRESS;
 	pflags = malloc2vm_flags(flags) | VM_ALLOC_NOBUSY | VM_ALLOC_WIRED;
+	npages = atop(size);
 	VM_OBJECT_WLOCK(object);
 	tries = 0;
 retry:
 	m = vm_page_alloc_contig(object, OFF_TO_IDX(offset), pflags,
-	    atop(size), low, high, alignment, boundary, memattr);
+	    npages, low, high, alignment, boundary, memattr);
 	if (m == NULL) {
 		VM_OBJECT_WUNLOCK(object);
 		if (tries < ((flags & M_NOWAIT) != 0 ? 1 : 3)) {
-			vm_pageout_grow_cache(tries, low, high);
+			if (!vm_page_reclaim_contig(pflags, npages, low, high,
+			    alignment, boundary) && (flags & M_WAITOK) != 0)
+				VM_WAIT;
 			VM_OBJECT_WLOCK(object);
 			tries++;
 			goto retry;
@@ -240,7 +247,7 @@ retry:
 		vmem_free(vmem, addr, size);
 		return (0);
 	}
-	end_m = m + atop(size);
+	end_m = m + npages;
 	tmp = addr;
 	for (; m < end_m; m++) {
 		if ((flags & M_ZERO) && (m->flags & PG_ZERO) == 0)
@@ -527,6 +534,36 @@ kmem_init(start, end)
 	/* ... and ending with the completion of the above `insert' */
 	vm_map_unlock(m);
 }
+
+/*
+ * XXX
+ */
+static int
+debug_vm_compact(SYSCTL_HANDLER_ARGS)
+{
+	vm_offset_t va;
+	vm_paddr_t pa;
+	int error, i;
+
+	i = 0;
+	error = sysctl_handle_int(oidp, &i, 0, req);
+	if (error != 0)
+		return (error);
+	if (i != 0) {
+		pa = 0;
+		va = kmem_alloc_contig(kernel_arena, 1024 * PAGE_SIZE, M_WAITOK,
+		    0, 0xffffffff, 1024 * PAGE_SIZE, 0, VM_MEMATTR_DEFAULT);
+		if (va != 0) {
+			pa = pmap_kextract(va);
+			kmem_free(kernel_arena, va, 1024 * PAGE_SIZE);
+		}
+		printf("va: %#jx -> pa: %#jx\n", (uintmax_t)va, (uintmax_t)pa);
+	}
+	return (0);
+}
+
+SYSCTL_PROC(_debug, OID_AUTO, vm_compact, CTLTYPE_INT | CTLFLAG_RW, 0, 0,
+    debug_vm_compact, "I", "set to trigger vm_compact event");
 
 #ifdef DIAGNOSTIC
 /*

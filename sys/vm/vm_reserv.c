@@ -866,6 +866,19 @@ vm_reserv_init(void)
 }
 
 /*
+ * Returns either the level of the reservation containing the given page or -1
+ * if the page is not contained by a reservation.
+ */
+int
+vm_reserv_level(vm_page_t m)
+{
+	vm_reserv_t rv;
+
+	rv = vm_reserv_from_page(m);
+	return (rv->object != NULL ? 0 : -1);
+}
+
+/*
  * Returns a reservation level if the given page belongs to a fully-populated
  * reservation and -1 otherwise.
  */
@@ -934,6 +947,23 @@ vm_reserv_reclaim(vm_reserv_t rv)
 	rv->inpartpopq = FALSE;
 	vm_reserv_break(rv, NULL);
 	vm_reserv_reclaimed++;
+}
+
+/*
+ * XXX
+ */
+boolean_t
+vm_reserv_reclaim_ifpartpop(vm_page_t m)
+{
+	vm_reserv_t rv;
+
+	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
+	rv = vm_reserv_from_page(m);
+	if (rv->object != NULL && rv->inpartpopq) {
+		vm_reserv_reclaim(rv);
+		return (TRUE);
+	} else
+		return (FALSE);
 }
 
 /*
@@ -1072,6 +1102,23 @@ vm_reserv_rename(vm_page_t m, vm_object_t new_object, vm_object_t old_object,
 			rv->pindex -= old_object_offset;
 		}
 		mtx_unlock(&vm_page_queue_free_mtx);
+	}
+}
+
+/*
+ * Returns the size (in bytes) of a reservation of the specified level.
+ */
+int
+vm_reserv_size(int level)
+{
+
+	switch (level) {
+	case 0:
+		return (VM_LEVEL_0_SIZE);
+	case -1:
+		return (PAGE_SIZE);
+	default:
+		return (0);
 	}
 }
 

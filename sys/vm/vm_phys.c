@@ -1163,6 +1163,56 @@ vm_phys_free_contig(vm_page_t m, u_long npages)
 }
 
 /*
+ * Scan physical memory between the specified addresses "low" and "high" for a
+ * contiguous set of physical pages that satisfy the specified conditions, and
+ * return the lowest page in the set.  The specified "alignment" determines
+ * the alignment of the lowest physical page in the set.  If the specified
+ * "boundary" is non-zero, then the set of physical pages cannot span a
+ * physical address that is a multiple of "boundary".
+ *
+ * "npages" must be greater than zero.  Both "alignment" and "boundary" must
+ * be a power of two.
+ */
+vm_page_t
+vm_phys_scan_contig(u_long npages, vm_paddr_t low, vm_paddr_t high,
+    u_long alignment, vm_paddr_t boundary, int options)
+{
+	vm_paddr_t pa_end;
+	vm_page_t m_end, m_run, m_start;
+	struct vm_phys_seg *seg;
+	int segind;
+
+	KASSERT(npages > 0, ("npages is 0"));
+	KASSERT(powerof2(alignment), ("alignment is not a power of 2"));
+	KASSERT(powerof2(boundary), ("boundary is not a power of 2"));
+	if (low >= high)
+		return (NULL);
+	for (segind = 0; segind < vm_phys_nsegs; segind++) {
+		seg = &vm_phys_segs[segind];
+		if (seg->start >= high)
+			break;
+		if (low >= seg->end)
+			continue;
+		if (low <= seg->start)
+			m_start = seg->first_page;
+		else
+			m_start = &seg->first_page[atop(low - seg->start)];
+		if (high < seg->end)
+			pa_end = high;
+		else
+			pa_end = seg->end;
+		if (pa_end - VM_PAGE_TO_PHYS(m_start) < ptoa(npages))
+			continue;
+		m_end = &seg->first_page[atop(pa_end - seg->start)];
+		m_run = vm_page_scan_contig(npages, m_start, m_end,
+		    alignment, boundary, options);
+		if (m_run != NULL)
+			return (m_run);
+	}
+	return (NULL);
+}
+
+/*
  * Set the pool for a contiguous, power of two-sized set of physical pages. 
  */
 void
