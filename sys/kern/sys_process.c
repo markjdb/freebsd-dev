@@ -328,6 +328,49 @@ proc_rwmem(struct proc *p, struct uio *uio)
 	return (error);
 }
 
+static ssize_t
+proc_iop(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
+    size_t len, enum uio_rw rw)
+{
+	struct iovec iov;
+	struct uio uio;
+	ssize_t slen;
+	int error;
+
+	MPASS(len < SSIZE_MAX);
+	slen = (ssize_t)len;
+
+	iov.iov_base = (caddr_t)buf;
+	iov.iov_len = len;
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_offset = va;
+	uio.uio_resid = slen;
+	uio.uio_segflg = UIO_SYSSPACE;
+	uio.uio_rw = rw;
+	uio.uio_td = td;
+	error = proc_rwmem(p, &uio);
+	if (uio.uio_resid == slen)
+		return (-1);
+	return (slen - uio.uio_resid);
+}
+
+ssize_t
+proc_readmem(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
+    size_t len)
+{
+
+	return (proc_iop(td, p, va, buf, len, UIO_READ));
+}
+
+ssize_t
+proc_writemem(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
+    size_t len)
+{
+
+	return (proc_iop(td, p, va, buf, len, UIO_WRITE));
+}
+
 static int
 proc_iop(struct thread *td, struct proc *p, vm_offset_t va, void *buf,
     size_t len, enum uio_rw rw)
