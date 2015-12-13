@@ -119,6 +119,12 @@ struct xswdev {
 #endif	/* !SMP */
 #endif	/* !PA_LOCK_COUNT */
 
+#ifdef SMP
+#define	PQ_DINACT_COUNT	PA_LOCK_COUNT
+#else
+#define	PQ_DINACT_COUNT	0
+#endif
+
 #ifndef ASSEMBLER
 #ifdef _KERNEL
 #define num_pages(x) \

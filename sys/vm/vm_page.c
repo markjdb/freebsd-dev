@@ -144,6 +144,12 @@ static int pa_tryrelock_restart;
 SYSCTL_INT(_vm, OID_AUTO, tryrelock_restart, CTLFLAG_RD,
     &pa_tryrelock_restart, 0, "Number of tryrelock restarts");
 
+#if PQ_DINACT_COUNT > 0
+static int dinact_thresh = 16;
+SYSCTL_INT(_vm, OID_AUTO, dinact_thresh, CTLFLAG_RW,
+    &dinact_thresh, 0, "Maximum pages in a deferred inactive queue");
+#endif
+
 static TAILQ_HEAD(, vm_page) blacklist_head;
 static int sysctl_vm_page_blacklist(SYSCTL_HANDLER_ARGS);
 SYSCTL_PROC(_vm, OID_AUTO, page_blacklist, CTLTYPE_STRING | CTLFLAG_RD |
@@ -158,6 +164,7 @@ static struct vnode *vm_page_alloc_init(vm_page_t m);
 static void vm_page_cache_turn_free(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(uint8_t queue, vm_page_t m);
+static void vm_page_enqueue_deferred(vm_page_t m);
 static void vm_page_free_wakeup(void);
 static void vm_page_init_fakepg(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
@@ -404,6 +411,14 @@ vm_page_domain_init(struct vm_domain *vmd)
 		TAILQ_INIT(&pq->pq_pl);
 		mtx_init(&pq->pq_mutex, pq->pq_name, "vm pagequeue",
 		    MTX_DEF | MTX_DUPOK);
+		pq->pq_mutex_ptr = &pq->pq_mutex;
+	}
+	for (i = 0; i < PQ_DINACT_COUNT; i++) {
+		pq = &vmd->vmd_dinactqueues[i];
+		TAILQ_INIT(&pq->pq_pl);
+		pq->pq_mutex_ptr = &pa_lock[i];
+		*__DECONST(char **, pq->pq_name) = "vm deferred pagequeue";
+		*__DECONST(int **, pq->pq_vcnt) = &vm_cnt.v_dinactive_count;
 	}
 }
 
@@ -2702,8 +2717,11 @@ vm_waitpfault(void)
 struct vm_pagequeue *
 vm_page_pagequeue(vm_page_t m)
 {
+	struct vm_domain *vmd;
 
-	return (&vm_phys_domain(m)->vmd_pagequeues[m->queue]);
+	vmd = vm_phys_domain(m);
+	return ((m->flags & PG_DINACT) == 0 ? &vmd->vmd_pagequeues[m->queue] :
+	    &vmd->vmd_dinactqueues[PQ_DINACT_IDX(m)]);
 }
 
 /*
@@ -2721,12 +2739,22 @@ vm_page_dequeue(vm_page_t m)
 	vm_page_assert_locked(m);
 	KASSERT(m->queue < PQ_COUNT, ("vm_page_dequeue: page %p is not queued",
 	    m));
+	KASSERT((m->flags & PG_DINACT) == 0 || m->queue == PQ_INACTIVE,
+	    ("vm_page_dequeue: deferred inact page %p in wrong queue", m));
+
 	pq = vm_page_pagequeue(m);
-	vm_pagequeue_lock(pq);
+	if ((m->flags & PG_DINACT) != 0) {
+		vm_pagequeue_assert_locked(pq);
+		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
+		vm_pagequeue_cnt_dec(pq);
+		m->flags &= ~PG_DINACT;
+	} else {
+		vm_pagequeue_lock(pq);
+		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
+		vm_pagequeue_cnt_dec(pq);
+		vm_pagequeue_unlock(pq);
+	}
 	m->queue = PQ_NONE;
-	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
-	vm_pagequeue_cnt_dec(pq);
-	vm_pagequeue_unlock(pq);
 }
 
 /*
@@ -2744,6 +2772,7 @@ vm_page_dequeue_locked(vm_page_t m)
 	vm_page_lock_assert(m, MA_OWNED);
 	pq = vm_page_pagequeue(m);
 	vm_pagequeue_assert_locked(pq);
+	m->flags &= ~PG_DINACT;
 	m->queue = PQ_NONE;
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	vm_pagequeue_cnt_dec(pq);
@@ -2761,16 +2790,69 @@ vm_page_enqueue(uint8_t queue, vm_page_t m)
 {
 	struct vm_pagequeue *pq;
 
-	vm_page_lock_assert(m, MA_OWNED);
+	vm_page_assert_locked(m);
 	KASSERT(queue < PQ_COUNT,
 	    ("vm_page_enqueue: invalid queue %u request for page %p",
 	    queue, m));
-	pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
-	vm_pagequeue_lock(pq);
-	m->queue = queue;
-	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-	vm_pagequeue_cnt_inc(pq);
-	vm_pagequeue_unlock(pq);
+
+	if (queue == PQ_INACTIVE)
+		vm_page_enqueue_deferred(m);
+	else {
+		pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
+		vm_pagequeue_lock(pq);
+		m->queue = queue;
+		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+		vm_pagequeue_cnt_inc(pq);
+		vm_pagequeue_unlock(pq);
+	}
+}
+
+/*
+ *	vm_page_enqueue_deferred:
+ *
+ *	Add the given page to its corresponding deferred inactive queue.
+ *
+ *	The page must be locked.  This implies that the deferred queue
+ *	is locked as well.
+ */
+static void
+vm_page_enqueue_deferred(vm_page_t m)
+{
+	struct vm_domain *vmd;
+	struct vm_pagequeue *dpq, *ipq;
+	int cnt;
+
+	vm_page_assert_locked(m);
+
+#if PQ_DINACT_COUNT > 0
+	vmd = vm_phys_domain(m);
+	dpq = &vmd->vmd_dinactqueues[PQ_DINACT_IDX(m)];
+	vm_pagequeue_assert_locked(dpq);
+	m->flags |= PG_DINACT;
+	m->queue = PQ_INACTIVE;
+	TAILQ_INSERT_TAIL(&dpq->pq_pl, m, plinks.q);
+	vm_pagequeue_cnt_inc(dpq);
+	/*
+	 * If we've hit the per-queue threshold, push the deferred pages into
+	 * the inactive queue.
+	 */
+	cnt = dpq->pq_cnt;
+	if (cnt >= dinact_thresh) {
+		TAILQ_FOREACH(m, &dpq->pq_pl, plinks.q) {
+			vm_page_assert_locked(m);
+			MPASS(m->queue == PQ_INACTIVE);
+			m->flags &= ~PG_DINACT;
+		}
+		vm_pagequeue_cnt_add(dpq, -cnt);
+		ipq = &vmd->vmd_pagequeues[PQ_INACTIVE];
+		vm_pagequeue_lock(ipq);
+		TAILQ_CONCAT(&ipq->pq_pl, &dpq->pq_pl, plinks.q);
+		vm_pagequeue_cnt_add(ipq, cnt);
+		vm_pagequeue_unlock(ipq);
+	}
+#else
+	vm_page_enqueue(PQ_INACTIVE, m);
+#endif
 }
 
 /*
@@ -2785,14 +2867,19 @@ vm_page_requeue(vm_page_t m)
 {
 	struct vm_pagequeue *pq;
 
-	vm_page_lock_assert(m, MA_OWNED);
+	vm_page_assert_locked(m);
 	KASSERT(m->queue != PQ_NONE,
 	    ("vm_page_requeue: page %p is not queued", m));
+
 	pq = vm_page_pagequeue(m);
-	vm_pagequeue_lock(pq);
+	if ((m->flags & PG_DINACT) == 0)
+		vm_pagequeue_lock(pq);
+	else
+		vm_pagequeue_assert_locked(pq);
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-	vm_pagequeue_unlock(pq);
+	if ((m->flags & PG_DINACT) == 0)
+		vm_pagequeue_unlock(pq);
 }
 
 /*
@@ -3087,6 +3174,7 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 static inline void
 _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 {
+	struct vm_domain *vmd;
 	struct vm_pagequeue *pq;
 	int queue;
 
@@ -3099,25 +3187,33 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 	if ((queue = m->queue) == PQ_INACTIVE && !noreuse)
 		return;
 	if (m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0) {
-		pq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
-		/* Avoid multiple acquisitions of the inactive queue lock. */
-		if (queue == PQ_INACTIVE) {
+		vmd = vm_phys_domain(m);
+		if (noreuse) {
+			/*
+			 * If the page is already in the inactive queue, we must
+			 * be moving it to the head, in which case we skip the
+			 * deferred queues.
+			 */
+			pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 			vm_pagequeue_lock(pq);
-			vm_page_dequeue_locked(m);
+			if (queue == PQ_INACTIVE)
+				/*
+				 * The page is either already in the inactive
+				 * queue, or is in a deferred queue.  Either
+				 * way, its pagequeue lock is held.
+				 */
+				vm_page_dequeue_locked(m);
+			else if (queue != PQ_NONE)
+				vm_page_dequeue(m);
+			m->queue = PQ_INACTIVE;
+			TAILQ_INSERT_BEFORE(&vmd->vmd_inacthead, m, plinks.q);
+			vm_pagequeue_cnt_inc(pq);
+			vm_pagequeue_unlock(pq);
 		} else {
 			if (queue != PQ_NONE)
 				vm_page_dequeue(m);
-			vm_pagequeue_lock(pq);
+			vm_page_enqueue_deferred(m);
 		}
-		m->queue = PQ_INACTIVE;
-		if (noreuse) {
-			PCPU_INC(cnt.v_noreuse);
-			TAILQ_INSERT_BEFORE(&vm_phys_domain(m)->vmd_inacthead,
-			    m, plinks.q);
-		} else
-			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-		vm_pagequeue_cnt_inc(pq);
-		vm_pagequeue_unlock(pq);
 	}
 }
 

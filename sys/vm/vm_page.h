@@ -67,6 +67,7 @@
 #ifndef	_VM_PAGE_
 #define	_VM_PAGE_
 
+#include <vm/vm_param.h>
 #include <vm/pmap.h>
 
 /*
@@ -209,20 +210,23 @@ struct vm_page {
 #define	PQ_LAUNDRY	2
 #define	PQ_COUNT	3
 
+#define	PQ_DINACT_IDX(m)	(pa_index(VM_PAGE_TO_PHYS(m)) % PQ_DINACT_COUNT)
+
 TAILQ_HEAD(pglist, vm_page);
 SLIST_HEAD(spglist, vm_page);
 
 struct vm_pagequeue {
-	struct mtx	pq_mutex;
+	struct mtx_padalign pq_mutex;
+	struct mtx_padalign *pq_mutex_ptr;
 	struct pglist	pq_pl;
 	int		pq_cnt;
 	int		* const pq_vcnt;
 	const char	* const pq_name;
-} __aligned(CACHE_LINE_SIZE);
-
+};
 
 struct vm_domain {
 	struct vm_pagequeue vmd_pagequeues[PQ_COUNT];
+	struct vm_pagequeue vmd_dinactqueues[PQ_DINACT_COUNT];
 	u_int vmd_page_count;
 	u_int vmd_free_count;
 	long vmd_segs;	/* bitmask of the segments */
@@ -237,21 +241,17 @@ struct vm_domain {
 
 extern struct vm_domain vm_dom[MAXMEMDOM];
 
-#define	vm_pagequeue_assert_locked(pq)	mtx_assert(&(pq)->pq_mutex, MA_OWNED)
-#define	vm_pagequeue_lock(pq)		mtx_lock(&(pq)->pq_mutex)
-#define	vm_pagequeue_unlock(pq)		mtx_unlock(&(pq)->pq_mutex)
+#define	vm_pagequeue_assert_locked(pq)	mtx_assert((pq)->pq_mutex_ptr, MA_OWNED)
+#define	vm_pagequeue_lock(pq)		mtx_lock((pq)->pq_mutex_ptr)
+#define	vm_pagequeue_unlock(pq)		mtx_unlock((pq)->pq_mutex_ptr)
 
 #ifdef _KERNEL
-static __inline void
-vm_pagequeue_cnt_add(struct vm_pagequeue *pq, int addend)
-{
+#define	vm_pagequeue_cnt_add(pq, addend) do {		\
+	vm_pagequeue_assert_locked(pq);			\
+	pq->pq_cnt += addend;				\
+	atomic_add_int(pq->pq_vcnt, addend);		\
+} while (0)
 
-#ifdef notyet
-	vm_pagequeue_assert_locked(pq);
-#endif
-	pq->pq_cnt += addend;
-	atomic_add_int(pq->pq_vcnt, addend);
-}
 #define	vm_pagequeue_cnt_inc(pq)	vm_pagequeue_cnt_add((pq), 1)
 #define	vm_pagequeue_cnt_dec(pq)	vm_pagequeue_cnt_add((pq), -1)
 #endif	/* _KERNEL */
@@ -327,6 +327,7 @@ extern struct mtx_padalign pa_lock[];
  * freeing, the modification must be protected by the vm_page lock.
  */
 #define	PG_CACHED	0x0001		/* page is cached */
+#define	PG_DINACT	0x0002		/* page in a deferred inactive queue */
 #define	PG_FICTITIOUS	0x0004		/* physical page doesn't exist */
 #define	PG_ZERO		0x0008		/* page is zeroed */
 #define	PG_MARKER	0x0010		/* special queue marker page */
