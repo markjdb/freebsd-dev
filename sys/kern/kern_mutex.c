@@ -381,10 +381,8 @@ __mtx_lock_sleep(volatile uintptr_t *c, uintptr_t tid, int opts,
 	uint64_t waittime = 0;
 #endif
 #ifdef KDTRACE_HOOKS
-	uint64_t spin_cnt = 0;
-	uint64_t sleep_cnt = 0;
-	int64_t sleep_time = 0;
-	int64_t all_time = 0;
+	uint64_t spin_cnt;
+	int64_t all_time, sleep_time;
 #endif
 
 	if (SCHEDULER_STOPPED())
@@ -416,13 +414,11 @@ __mtx_lock_sleep(volatile uintptr_t *c, uintptr_t tid, int opts,
 		    "_mtx_lock_sleep: %s contested (lock=%p) at %s:%d",
 		    m->lock_object.lo_name, (void *)m->mtx_lock, file, line);
 #ifdef KDTRACE_HOOKS
-	all_time -= lockstat_nsecs(&m->lock_object);
+	all_time = -lockstat_nsecs(&m->lock_object);
+	sleep_time = spin_cnt = 0;
 #endif
 
 	while (!_mtx_obtain_lock(m, tid)) {
-#ifdef KDTRACE_HOOKS
-		spin_cnt++;
-#endif
 #ifdef ADAPTIVE_MUTEXES
 		/*
 		 * If the owner is running on another CPU, spin until the
@@ -440,13 +436,12 @@ __mtx_lock_sleep(volatile uintptr_t *c, uintptr_t tid, int opts,
 				    sched_tdname((struct thread *)tid),
 				    "spinning", "lockname:\"%s\"",
 				    m->lock_object.lo_name);
-				while (mtx_owner(m) == owner &&
-				    TD_IS_RUNNING(owner)) {
-					cpu_spinwait();
 #ifdef KDTRACE_HOOKS
-					spin_cnt++;
+				spin_cnt++;
 #endif
-				}
+				while (mtx_owner(m) == owner &&
+				    TD_IS_RUNNING(owner))
+					cpu_spinwait();
 				KTR_STATE0(KTR_SCHED, "thread",
 				    sched_tdname((struct thread *)tid),
 				    "running");
@@ -518,7 +513,6 @@ __mtx_lock_sleep(volatile uintptr_t *c, uintptr_t tid, int opts,
 		turnstile_wait(ts, mtx_owner(m), TS_EXCLUSIVE_QUEUE);
 #ifdef KDTRACE_HOOKS
 		sleep_time += lockstat_nsecs(&m->lock_object);
-		sleep_cnt++;
 #endif
 	}
 #ifdef KDTRACE_HOOKS
@@ -534,13 +528,9 @@ __mtx_lock_sleep(volatile uintptr_t *c, uintptr_t tid, int opts,
 	LOCKSTAT_PROFILE_OBTAIN_LOCK_SUCCESS(adaptive__acquire, m, contested,
 	    waittime, file, line);
 #ifdef KDTRACE_HOOKS
-	if (sleep_time)
+	if (sleep_time != 0)
 		LOCKSTAT_RECORD1(adaptive__block, m, sleep_time);
-
-	/*
-	 * Only record the loops spinning and not sleeping. 
-	 */
-	if (spin_cnt > sleep_cnt)
+	if (spin_cnt > 0)
 		LOCKSTAT_RECORD1(adaptive__spin, m, all_time - sleep_time);
 #endif
 }
@@ -582,7 +572,7 @@ _mtx_lock_spin_cookie(volatile uintptr_t *c, uintptr_t tid, int opts,
 	uint64_t waittime = 0;
 #endif
 #ifdef KDTRACE_HOOKS
-	int64_t spin_time = 0;
+	int64_t spin_time;
 #endif
 
 	if (SCHEDULER_STOPPED())
@@ -600,7 +590,7 @@ _mtx_lock_spin_cookie(volatile uintptr_t *c, uintptr_t tid, int opts,
 #endif
 	lock_profile_obtain_lock_failed(&m->lock_object, &contested, &waittime);
 #ifdef KDTRACE_HOOKS
-	spin_time -= lockstat_nsecs(&m->lock_object);
+	spin_time = -lockstat_nsecs(&m->lock_object);
 #endif
 	while (!_mtx_obtain_lock(m, tid)) {
 
@@ -648,7 +638,7 @@ thread_lock_flags_(struct thread *td, int opts, const char *file, int line)
 	uint64_t waittime = 0;
 #endif
 #ifdef KDTRACE_HOOKS
-	int64_t spin_time = 0;
+	int64_t spin_time;
 #endif
 
 	i = 0;
@@ -658,7 +648,7 @@ thread_lock_flags_(struct thread *td, int opts, const char *file, int line)
 		return;
 
 #ifdef KDTRACE_HOOKS
-	spin_time -= lockstat_nsecs(&td->td_lock->lock_object);
+	spin_time = -lockstat_nsecs(&td->td_lock->lock_object);
 #endif
 	for (;;) {
 retry:
