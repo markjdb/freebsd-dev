@@ -417,8 +417,8 @@ vm_page_domain_init(struct vm_domain *vmd)
 		pq = &vmd->vmd_dinactqueues[i];
 		TAILQ_INIT(&pq->pq_pl);
 		pq->pq_mutex_ptr = &pa_lock[i];
-		*__DECONST(char **, pq->pq_name) = "vm deferred pagequeue";
-		*__DECONST(int **, pq->pq_vcnt) = &vm_cnt.v_dinactive_count;
+		*__DECONST(char **, &pq->pq_name) = "vm deferred pagequeue";
+		*__DECONST(int **, &pq->pq_vcnt) = &vm_cnt.v_dinactive_count;
 	}
 }
 
