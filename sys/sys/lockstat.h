@@ -45,6 +45,15 @@ SDT_PROBE_DECLARE(lockstat, , , adaptive__release);
 SDT_PROBE_DECLARE(lockstat, , , adaptive__spin);
 SDT_PROBE_DECLARE(lockstat, , , adaptive__block);
 
+SDT_PROBE_DECLARE(lockstat, , , lockmgr__acquire);
+SDT_PROBE_DECLARE(lockstat, , , lockmgr__release);
+SDT_PROBE_DECLARE(lockstat, , , lockmgr__block);
+SDT_PROBE_DECLARE(lockstat, , , lockmgr__spin);
+SDT_PROBE_DECLARE(lockstat, , , lockmgr__upgrade);
+SDT_PROBE_DECLARE(lockstat, , , lockmgr__downgrade);
+SDT_PROBE_DECLARE(lockstat, , , lockmgr__disown);
+SDT_PROBE_DECLARE(lockstat, , , lockmgr__drain);
+
 SDT_PROBE_DECLARE(lockstat, , , spin__acquire);
 SDT_PROBE_DECLARE(lockstat, , , spin__release);
 SDT_PROBE_DECLARE(lockstat, , , spin__spin);

@@ -39,6 +39,17 @@ SDT_PROBE_DEFINE1(lockstat, , , adaptive__release, "struct mtx *");
 SDT_PROBE_DEFINE2(lockstat, , , adaptive__spin, "struct mtx *", "uint64_t");
 SDT_PROBE_DEFINE2(lockstat, , , adaptive__block, "struct mtx *", "uint64_t");
 
+SDT_PROBE_DEFINE2(lockstat, , , lockmgr__acquire, "struct lock *", "int");
+SDT_PROBE_DEFINE2(lockstat, , , lockmgr__release, "struct lock *", "int");
+SDT_PROBE_DEFINE5(lockstat, , , lockmgr__block, "struct lock *", "uint64_t",
+    "int", "int", "int");
+SDT_PROBE_DEFINE5(lockstat, , , lockmgr__spin, "struct lock *", "uint64_t",
+    "int", "int", "int");
+SDT_PROBE_DEFINE1(lockstat, , , lockmgr__upgrade, "struct lock *");
+SDT_PROBE_DEFINE1(lockstat, , , lockmgr__downgrade, "struct lock *");
+SDT_PROBE_DEFINE1(lockstat, , , lockmgr__disown, "struct lock *");
+SDT_PROBE_DEFINE1(lockstat, , , lockmgr__drain, "struct lock *");
+
 SDT_PROBE_DEFINE1(lockstat, , , spin__acquire, "struct mtx *");
 SDT_PROBE_DEFINE1(lockstat, , , spin__release, "struct mtx *");
 SDT_PROBE_DEFINE2(lockstat, , , spin__spin, "struct mtx *", "uint64_t");
