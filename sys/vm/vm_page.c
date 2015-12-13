@@ -2840,7 +2840,8 @@ vm_page_enqueue_deferred(vm_page_t m)
 	if (cnt >= dinact_thresh) {
 		TAILQ_FOREACH(m, &dpq->pq_pl, plinks.q) {
 			vm_page_assert_locked(m);
-			MPASS(m->queue == PQ_INACTIVE);
+			KASSERT(m->queue == PQ_INACTIVE,
+			    ("page %p not inactive", m));
 			m->flags &= ~PG_DINACT;
 		}
 		vm_pagequeue_cnt_add(dpq, -cnt);
@@ -3195,16 +3196,18 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 			 * deferred queues.
 			 */
 			pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
-			vm_pagequeue_lock(pq);
-			if (queue == PQ_INACTIVE)
+			if (queue == PQ_INACTIVE) {
+				vm_pagequeue_lock(pq);
 				/*
 				 * The page is either already in the inactive
 				 * queue, or is in a deferred queue.  Either
 				 * way, its pagequeue lock is held.
 				 */
 				vm_page_dequeue_locked(m);
-			else if (queue != PQ_NONE)
+			} else if (queue != PQ_NONE) {
 				vm_page_dequeue(m);
+				vm_pagequeue_lock(pq);
+			}
 			m->queue = PQ_INACTIVE;
 			TAILQ_INSERT_BEFORE(&vmd->vmd_inacthead, m, plinks.q);
 			vm_pagequeue_cnt_inc(pq);
