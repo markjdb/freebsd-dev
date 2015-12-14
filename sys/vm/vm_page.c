@@ -72,6 +72,11 @@
  *		* The page daemon can acquire and hold any pair of page queue
  *		  locks in any order.
  *
+ *		* Deferred queues are used to batch insertions of pages into the
+ *		  inactive page queue, with the aim of reducing lock contention.
+ *		  Only a page lock is needed to insert or remove a page from its
+ *		  corresponding deferred queue.
+ *
  *	- The object lock is required when inserting or removing
  *	  pages from an object (vm_page_insert() or vm_page_remove()).
  *
@@ -171,6 +176,8 @@ static int vm_page_insert_after(vm_page_t m, vm_object_t object,
     vm_pindex_t pindex, vm_page_t mpred);
 static void vm_page_insert_radixdone(vm_page_t m, vm_object_t object,
     vm_page_t mpred);
+static void vm_page_push_deferred(struct vm_domain *vmd,
+    struct vm_pagequeue *pq);
 static int vm_page_reclaim_run(int req_class, u_long npages, vm_page_t m_run,
     vm_paddr_t high);
 
@@ -2819,41 +2826,77 @@ static void
 vm_page_enqueue_deferred(vm_page_t m)
 {
 	struct vm_domain *vmd;
-	struct vm_pagequeue *dpq, *ipq;
-	int cnt;
+	struct vm_pagequeue *pq;
 
 	vm_page_assert_locked(m);
 
 #if PQ_DINACT_COUNT > 0
 	vmd = vm_phys_domain(m);
-	dpq = &vmd->vmd_dinactqueues[PQ_DINACT_IDX(m)];
-	vm_pagequeue_assert_locked(dpq);
+	pq = &vmd->vmd_dinactqueues[PQ_DINACT_IDX(m)];
+	vm_pagequeue_assert_locked(pq);
 	m->flags |= PG_DINACT;
 	m->queue = PQ_INACTIVE;
-	TAILQ_INSERT_TAIL(&dpq->pq_pl, m, plinks.q);
-	vm_pagequeue_cnt_inc(dpq);
+	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+	vm_pagequeue_cnt_inc(pq);
 	/*
 	 * If we've hit the per-queue threshold, push the deferred pages into
 	 * the inactive queue.
 	 */
-	cnt = dpq->pq_cnt;
-	if (cnt >= dinact_thresh) {
-		TAILQ_FOREACH(m, &dpq->pq_pl, plinks.q) {
-			vm_page_assert_locked(m);
-			KASSERT(m->queue == PQ_INACTIVE,
-			    ("page %p not inactive", m));
-			m->flags &= ~PG_DINACT;
-		}
-		vm_pagequeue_cnt_add(dpq, -cnt);
-		ipq = &vmd->vmd_pagequeues[PQ_INACTIVE];
-		vm_pagequeue_lock(ipq);
-		TAILQ_CONCAT(&ipq->pq_pl, &dpq->pq_pl, plinks.q);
-		vm_pagequeue_cnt_add(ipq, cnt);
-		vm_pagequeue_unlock(ipq);
-	}
+	if (pq->pq_cnt >= dinact_thresh)
+		vm_page_push_deferred(vmd, pq);
 #else
 	vm_page_enqueue(PQ_INACTIVE, m);
 #endif
+}
+
+/*
+ *	vm_page_push_deferred:
+ *
+ *	Move pages from the specified deferred queue into the inactive queue.
+ *
+ *	The pagequeue must be locked.
+ */
+static void
+vm_page_push_deferred(struct vm_domain *vmd, struct vm_pagequeue *pq)
+{
+	struct vm_pagequeue *ipq;
+	vm_page_t m;
+	int cnt;
+
+	vm_pagequeue_assert_locked(pq);
+
+	TAILQ_FOREACH(m, &pq->pq_pl, plinks.q) {
+		vm_page_assert_locked(m);
+		KASSERT(m->queue == PQ_INACTIVE && (m->flags & PG_DINACT) != 0,
+		    ("page %p not deferred", m));
+		m->flags &= ~PG_DINACT;
+	}
+	cnt = pq->pq_cnt;
+	vm_pagequeue_cnt_add(pq, -cnt);
+	ipq = &vmd->vmd_pagequeues[PQ_INACTIVE];
+	vm_pagequeue_lock(ipq);
+	TAILQ_CONCAT(&ipq->pq_pl, &pq->pq_pl, plinks.q);
+	vm_pagequeue_cnt_add(ipq, cnt);
+	vm_pagequeue_unlock(ipq);
+}
+
+/*
+ *	vm_page_purge_deferred:
+ *
+ *	Move deferred inactive pages into the inactive queue.
+ */
+void
+vm_page_purge_deferred(struct vm_domain *vmd)
+{
+	struct vm_pagequeue *pq;
+	int i;
+
+	for (i = 0; i < PQ_DINACT_COUNT; i++) {
+		pq = &vmd->vmd_dinactqueues[i];
+		vm_pagequeue_lock(pq);
+		vm_page_push_deferred(vmd, pq);
+		vm_pagequeue_unlock(pq);
+	}
 }
 
 /*

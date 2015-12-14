@@ -1298,10 +1298,13 @@ drop_page:
 
 	/*
 	 * Wakeup the laundry thread(s) if we didn't free the targeted number
-	 * of pages.
+	 * of pages.  Also purge the deferred inactive queues so that lingering
+	 * pages will be reclaimed on the next pass.
 	 */
-	if (page_shortage > 0)
+	if (page_shortage > 0) {
 		wakeup(&vm_cnt.v_laundry_count);
+		vm_page_purge_deferred(vmd);
+	}
 
 #if !defined(NO_SWAPPING)
 	/*

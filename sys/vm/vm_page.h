@@ -246,10 +246,10 @@ extern struct vm_domain vm_dom[MAXMEMDOM];
 #define	vm_pagequeue_unlock(pq)		mtx_unlock((pq)->pq_mutex_ptr)
 
 #ifdef _KERNEL
-#define	vm_pagequeue_cnt_add(pq, addend) do {		\
-	vm_pagequeue_assert_locked(pq);			\
-	pq->pq_cnt += addend;				\
-	atomic_add_int(pq->pq_vcnt, addend);		\
+#define	vm_pagequeue_cnt_add(pq, addend) do {	\
+	vm_pagequeue_assert_locked(pq);		\
+	pq->pq_cnt += addend;			\
+	atomic_add_int(pq->pq_vcnt, addend);	\
 } while (0)
 
 #define	vm_pagequeue_cnt_inc(pq)	vm_pagequeue_cnt_add((pq), 1)
@@ -474,6 +474,7 @@ int vm_page_pa_tryrelock(pmap_t, vm_paddr_t, vm_paddr_t *);
 struct vm_pagequeue *vm_page_pagequeue(vm_page_t m);
 vm_page_t vm_page_prev(vm_page_t m);
 boolean_t vm_page_ps_is_valid(vm_page_t m);
+void vm_page_purge_deferred(struct vm_domain *vmd);
 void vm_page_putfake(vm_page_t m);
 void vm_page_readahead_finish(vm_page_t m);
 bool vm_page_reclaim_contig(int req, u_long npages, vm_paddr_t low,
