@@ -344,6 +344,8 @@ vm_pageout_page_lock(vm_page_t m, vm_page_t *next)
 	unchanged = m == TAILQ_PREV(&marker, pglist, plinks.q);
 	KASSERT(!unchanged || m->queue == queue,
 	    ("page %p queue %d %d", m, queue, m->queue));
+	KASSERT((m->flags & PG_DINACT) == 0,
+	    ("deferred page %p on pageout queue", m));
 	TAILQ_REMOVE(&pq->pq_pl, &marker, plinks.q);
 	return (unchanged);
 }
