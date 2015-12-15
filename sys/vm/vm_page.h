@@ -207,7 +207,8 @@ struct vm_page {
 #define	PQ_INACTIVE	0
 #define	PQ_ACTIVE	1
 #define	PQ_LAUNDRY	2
-#define	PQ_COUNT	3
+#define	PQ_STASIS	3
+#define	PQ_COUNT	4
 
 TAILQ_HEAD(pglist, vm_page);
 SLIST_HEAD(spglist, vm_page);
@@ -460,6 +461,7 @@ void vm_page_deactivate (vm_page_t);
 void vm_page_deactivate_noreuse(vm_page_t);
 void vm_page_dequeue(vm_page_t m);
 void vm_page_dequeue_locked(vm_page_t m);
+void vm_page_enter_stasis(vm_page_t m);
 vm_page_t vm_page_find_least(vm_object_t, vm_pindex_t);
 vm_page_t vm_page_getfake(vm_paddr_t paddr, vm_memattr_t memattr);
 void vm_page_initfake(vm_page_t m, vm_paddr_t paddr, vm_memattr_t memattr);
@@ -715,7 +717,7 @@ static inline bool
 vm_page_in_laundry(vm_page_t m)
 {
 
-	return (m->queue == PQ_LAUNDRY);
+	return (m->queue == PQ_LAUNDRY || m->queue == PQ_STASIS);
 }
 
 #endif				/* _KERNEL */

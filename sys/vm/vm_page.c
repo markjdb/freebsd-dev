@@ -394,6 +394,11 @@ vm_page_domain_init(struct vm_domain *vmd)
 	    "vm laundry pagequeue";
 	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_vcnt) =
 	    &vm_cnt.v_laundry_count;
+	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_STASIS].pq_name) =
+	    "vm stasis pagequeue";
+	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_STASIS].pq_vcnt) =
+	    &vm_cnt.v_stasis_count;
+
 	vmd->vmd_page_count = 0;
 	vmd->vmd_free_count = 0;
 	vmd->vmd_segs = 0;
@@ -3207,6 +3212,30 @@ vm_page_launder(vm_page_t m)
 			KASSERT(queue == PQ_NONE,
 			    ("wired page %p is queued", m));
 	}
+}
+
+/*
+ * vm_page_enter_stasis
+ *
+ *	Put a page in stasis.  Such pages are swap-backed and cannot be
+ *	reclaimed because zero swap devices are configured, or all available
+ *	devices are full.  If the page is already in stasis, it will be
+ *	requeued.
+ */
+void
+vm_page_enter_stasis(vm_page_t m)
+{
+
+	KASSERT(m->wire_count == 0, ("page %p is wired", m));
+	KASSERT(m->dirty != 0, ("page %p is clean", m));
+	KASSERT((m->oflags & VPO_UNMANAGED) == 0, ("page %p is unmanaged", m));
+	KASSERT(m->object->type == OBJT_DEFAULT || m->object->type == OBJT_SWAP,
+	    ("invalid object type %d", m->object->type));
+
+	vm_page_assert_locked(m);
+	if (m->queue != PQ_NONE)
+		vm_page_dequeue(m);
+	vm_page_enqueue(PQ_STASIS, m);
 }
 
 /*

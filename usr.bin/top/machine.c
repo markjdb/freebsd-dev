@@ -174,10 +174,10 @@ char *cpustatenames[] = {
 
 /* these are for detailing the memory statistics */
 
-int memory_stats[7];
+int memory_stats[8];
 char *memorynames[] = {
-	"K Active, ", "K Inact, ", "K Laundry, ", "K Wired, ", "K Buf, ",
-	"K Free", NULL
+	"K Active, ", "K Inact, ", "K Laundry, ", "K Stasis, ", "K Wired, ",
+	"K Buf, ", "K Free", NULL
 };
 
 int arc_stats[7];
@@ -491,8 +491,9 @@ get_system_info(struct system_info *si)
 		GETSYSCTL("vm.stats.vm.v_active_count", memory_stats[0]);
 		GETSYSCTL("vm.stats.vm.v_inactive_count", memory_stats[1]);
 		GETSYSCTL("vm.stats.vm.v_laundry_count", memory_stats[2]);
-		GETSYSCTL("vm.stats.vm.v_wire_count", memory_stats[3]);
-		GETSYSCTL("vm.stats.vm.v_free_count", memory_stats[5]);
+		GETSYSCTL("vm.stats.vm.v_stasis_count", memory_stats[3]);
+		GETSYSCTL("vm.stats.vm.v_wire_count", memory_stats[4]);
+		GETSYSCTL("vm.stats.vm.v_free_count", memory_stats[6]);
 		GETSYSCTL("vm.stats.vm.v_swappgsin", nspgsin);
 		GETSYSCTL("vm.stats.vm.v_swappgsout", nspgsout);
 		/* convert memory stats to Kbytes */
@@ -500,9 +501,10 @@ get_system_info(struct system_info *si)
 		memory_stats[1] = pagetok(memory_stats[1]);
 		memory_stats[2] = pagetok(memory_stats[2]);
 		memory_stats[3] = pagetok(memory_stats[3]);
-		memory_stats[4] = bufspace / 1024;
-		memory_stats[5] = pagetok(memory_stats[5]);
-		memory_stats[6] = -1;
+		memory_stats[4] = pagetok(memory_stats[4]);
+		memory_stats[5] = bufspace / 1024;
+		memory_stats[6] = pagetok(memory_stats[6]);
+		memory_stats[7] = -1;
 
 		/* first interval */
 		if (swappgsin < 0) {

@@ -185,6 +185,7 @@ static int vm_swap_idle_enabled = 0;
 static int vm_swap_enabled = 1;
 static int vm_swap_idle_enabled = 0;
 #endif
+static int vm_swapdev_cnt = 0;
 
 static int vm_panic_on_oom = 0;
 
@@ -256,6 +257,8 @@ SYSCTL_INT(_vm, OID_AUTO, max_wired,
 static boolean_t vm_pageout_fallback_object_lock(vm_page_t, vm_page_t *);
 static int vm_pageout_launder(struct vm_domain *vmd, int launder);
 static void vm_pageout_laundry_worker(void *arg);
+static void vm_pageout_swapon(void *arg, struct swdevt *sp __unused);
+static void vm_pageout_swapoff(void *arg __unused, struct swdevt *sp __unused);
 #if !defined(NO_SWAPPING)
 static void vm_pageout_map_deactivate_pages(vm_map_t, long);
 static void vm_pageout_object_deactivate_pages(pmap_t, vm_object_t, long);
@@ -585,12 +588,21 @@ vm_pageout_flush(vm_page_t *mc, int count, int flags, int mreq, int *prunlen,
 		case VM_PAGER_ERROR:
 		case VM_PAGER_FAIL:
 			/*
-			 * If page couldn't be paged out, then reactivate the
-			 * page so it doesn't clog the XXX list.  (We
-			 * will try paging out it again later).
+			 * If no swap devices exist, place the page in stasis.
+			 * It'll go back into the laundry if a swap device is
+			 * configured at some point in the future.  For other
+			 * types of errors, reactivate the page to avoid
+			 * clogging the laundry queue.  This ensures that the
+			 * pagedaemon will continue aggressively scanning
+			 * the active queue for other pages to reclaim.
 			 */
 			vm_page_lock(mt);
-			vm_page_activate(mt);	// XXX
+			if (pageout_status[i] == VM_PAGER_FAIL &&
+			    mt->dirty != 0 && (object->type == OBJT_DEFAULT ||
+			    object->type == OBJT_SWAP) && vm_swapdev_cnt == 0)
+				vm_page_enter_stasis(mt);
+			else
+				vm_page_activate(mt);
 			vm_page_unlock(mt);
 			if (eio != NULL && i >= mreq && i - mreq < runlen)
 				*eio = TRUE;
@@ -912,12 +924,14 @@ vm_pageout_launder(struct vm_domain *vmd, int launder)
 	/*
 	 * Scan the laundry queue for pages eligible to be laundered.  We stop
 	 * once the target number of dirty pages have been laundered, or once
-	 * we've reached the end of the queue.  A single iteration of this loop
-	 * may cause more than one page to be laundered because of clustering.
+	 * we've reached the ends of the queues.  A single iteration of this
+	 * loop may cause more than one page to be laundered because of
+	 * clustering.
 	 *
-	 * maxscan ensures that we don't re-examine requeued pages.  Any
-	 * additional pages written as part of a cluster are subtracted from
-	 * maxscan since they must be taken from the laundry queue.
+	 * During a queue scan, maxscan ensures that we don't re-examine
+	 * requeued pages.  Any additional pages written as part of
+	 * a cluster are subtracted from maxscan since they are removed from
+	 * the queue before I/O is initiated.
 	 */
 	pq = &vmd->vmd_pagequeues[PQ_LAUNDRY];
 	maxscan = pq->pq_cnt;
@@ -936,9 +950,11 @@ vm_pageout_launder(struct vm_domain *vmd, int launder)
 		if ((m->flags & PG_MARKER) != 0)
 			continue;
 		KASSERT((m->flags & PG_FICTITIOUS) == 0,
-		    ("PG_FICTITIOUS page %p cannot be in laundry queue", m));
+		    ("PG_FICTITIOUS page %p cannot be in queue %d", m,
+		    m->queue));
 		KASSERT((m->oflags & VPO_UNMANAGED) == 0,
-		    ("VPO_UNMANAGED page %p cannot be in laundry queue", m));
+		    ("VPO_UNMANAGED page %p cannot be in queue %d", m,
+		    m->queue));
 		if (!vm_pageout_page_lock(m, &next) || m->hold_count != 0) {
 			vm_page_unlock(m);
 			continue;
@@ -953,9 +969,8 @@ vm_pageout_launder(struct vm_domain *vmd, int launder)
 		}
 
 		/*
-		 * We unlock the laundry queue, invalidating the
-		 * 'next' pointer.  Use our marker to remember our
-		 * place.
+		 * We unlock the queue, invalidating the 'next' pointer.  Use
+		 * our marker to remember our place.
 		 */
 		TAILQ_INSERT_AFTER(&pq->pq_pl, m, &vmd->vmd_laundry_marker,
 		    plinks.q);
@@ -1111,6 +1126,14 @@ vm_pageout_laundry_worker(void *arg)
 	if (bkgrd_launder_thresh == 0)
 		bkgrd_launder_thresh = max(vm_cnt.v_free_target / 2,
 		    3 * vm_pageout_wakeup_thresh / 2);
+
+	/*
+	 * Calls to these handlers are serialized by the swapconf lock.
+	 */
+	(void)EVENTHANDLER_REGISTER(swapon, vm_pageout_swapon, domain,
+	    EVENTHANDLER_PRI_ANY);
+	(void)EVENTHANDLER_REGISTER(swapoff, vm_pageout_swapoff, domain,
+	    EVENTHANDLER_PRI_ANY);
 
 	/*
 	 * The pageout laundry worker is never done, so loop forever.
@@ -1891,6 +1914,44 @@ vm_pageout_worker(void *arg)
 		mtx_unlock(&vm_page_queue_free_mtx);
 		vm_pageout_scan(domain, domain->vmd_pass);
 	}
+}
+
+static void
+vm_pageout_swapon(void *arg, struct swdevt *sp __unused)
+{
+	struct vm_domain *vmd;
+	struct vm_pagequeue *pq;
+	vm_page_t m, next;
+
+	vmd = arg;
+	if (vm_swapdev_cnt++ == 0) {
+		pq = &vmd->vmd_pagequeues[PQ_STASIS];
+		/*
+		 * We now have a swap device, so migrate pages back to the
+		 * laundry queue.  Locking rules make this somewhat awkward, but
+		 * this is a rare operation.
+		 */
+		vm_pagequeue_lock(pq);
+		while ((m = TAILQ_FIRST(&pq->pq_pl)) != NULL) {
+			if (!vm_pageout_page_lock(m, &next)) {
+				vm_page_unlock(m);
+				continue;
+			}
+			vm_page_dequeue_locked(m);
+			vm_pagequeue_unlock(pq);
+			vm_page_launder(m);
+			vm_page_unlock(m);
+			vm_pagequeue_lock(pq);
+		}
+		vm_pagequeue_unlock(pq);
+	}
+}
+
+static void
+vm_pageout_swapoff(void *arg __unused, struct swdevt *sp __unused)
+{
+
+	vm_swapdev_cnt--;
 }
 
 /*
