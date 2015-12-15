@@ -2223,6 +2223,7 @@ swaponsomething(struct vnode *vp, void *id, u_long nblks,
 	swapon_check_swzone(swap_total / PAGE_SIZE);
 	swp_sizecheck();
 	mtx_unlock(&sw_dev_mtx);
+	EVENTHANDLER_INVOKE(swapon, sp);
 }
 
 /*
@@ -2322,6 +2323,7 @@ swapoff_one(struct swdevt *sp, struct ucred *cred)
 	}
 	swap_total -= (vm_ooffset_t)nblks * PAGE_SIZE;
 	mtx_unlock(&sw_dev_mtx);
+	EVENTHANDLER_INVOKE(swapoff, sp);
 
 	/*
 	 * Page in the contents of the device and close it.

@@ -391,6 +391,11 @@ vm_page_domain_init(struct vm_domain *vmd)
 	    "vm laundry pagequeue";
 	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_vcnt) =
 	    &vm_cnt.v_laundry_count;
+	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_STASIS].pq_name) =
+	    "vm stasis pagequeue";
+	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_STASIS].pq_vcnt) =
+	    &vm_cnt.v_stasis_count;
+
 	vmd->vmd_page_count = 0;
 	vmd->vmd_free_count = 0;
 	vmd->vmd_segs = 0;
@@ -2623,6 +2628,24 @@ vm_page_launder(vm_page_t m)
 		} else
 			KASSERT(queue == PQ_NONE,
 			    ("wired page %p is queued", m));
+	}
+}
+
+/*
+ * XXX
+ */
+void
+vm_page_unreclaimable(vm_page_t m)
+{
+	int queue;
+
+	KASSERT(m->wire_count == 0, ("vm_page_unreclaimable: page %p is wired",
+	    m));
+	vm_page_assert_locked(m);
+	if ((queue = m->queue) != PQ_STASIS) {
+		if (queue != PQ_NONE)
+			vm_page_dequeue(m);
+		vm_page_enqueue(PQ_STASIS, m);
 	}
 }
 

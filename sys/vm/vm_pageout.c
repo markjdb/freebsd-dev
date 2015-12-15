@@ -185,6 +185,7 @@ static int vm_swap_idle_enabled = 0;
 static int vm_swap_enabled = 1;
 static int vm_swap_idle_enabled = 0;
 #endif
+static int vm_swapdev_cnt = 0;
 
 static int vm_panic_on_oom = 0;
 
@@ -572,6 +573,9 @@ vm_pageout_flush(vm_page_t *mc, int count, int flags, int mreq, int *prunlen,
 			 * If page couldn't be paged out, then reactivate the
 			 * page so it doesn't clog the XXX list.  (We
 			 * will try paging out it again later).
+			 *
+			 * XXX place in stasis queue if PAGER_FAIL and
+			 * OBJT_DEFAULT|SWAP?
 			 */
 			vm_page_lock(mt);
 			vm_page_activate(mt);	// XXX
@@ -1013,6 +1017,25 @@ vm_pageout_clean(vm_page_t m, int *numpagedout)
 			error = EBUSY;
 			goto unlock_all;
 		}
+	} else {
+		KASSERT(object->type == OBJT_DEFAULT ||
+		    object->type == OBJT_SWAP, ("object %p has wrong type",
+		    object));
+		if (vm_swapdev_cnt == 0) {
+			/*
+			 * We won't be able to launder this page since we don't
+			 * have any swap devices available.  Place this page in
+			 * the stasis queue so that the laundry thread doesn't
+			 * see it, and make sure we didn't race with a
+			 * concurrent swapon.
+			 */
+			vm_page_unreclaimable(m);
+			if (vm_swapdev_cnt == 0) {
+				vm_page_unlock(m);
+				goto unlock_all;
+			}
+			vm_page_dequeue(m);
+		}
 	}
 
 	/*
@@ -1225,6 +1248,51 @@ relock_queues:
  * XXX
  */
 static void
+vm_pageout_swapon(void *arg, struct swdevt *sp __unused)
+{
+	struct pglist pl;
+	struct vm_domain *vmd;
+	struct vm_pagequeue *pq;
+	vm_page_t m, next;
+
+	vmd = arg;
+	TAILQ_INIT(&pl);
+	if (vm_swapdev_cnt++ == 0) {
+		pq = &vmd->vmd_pagequeues[PQ_STASIS];
+		/*
+		 * We now have a swap device, so migrate pages back to the
+		 * inactive queue.
+		 */
+		vm_pagequeue_lock(pq);
+		while ((m = TAILQ_FIRST(&pq->pq_pl)) != NULL) {
+			if (!vm_pageout_page_lock(m, &next)) {
+				vm_page_unlock(m);
+				continue;
+			}
+			vm_page_dequeue_locked(m);
+			vm_pagequeue_unlock(pq);
+			vm_page_launder(m);
+			vm_page_unlock(m);
+			vm_pagequeue_lock(pq);
+		}
+		vm_pagequeue_unlock(pq);
+	}
+}
+
+/*
+ * XXX
+ */
+static void
+vm_pageout_swapoff(void *arg __unused, struct swdevt *sp __unused)
+{
+
+	vm_swapdev_cnt--;
+}
+
+/*
+ * XXX
+ */
+static void
 vm_pageout_laundry_worker(void *arg)
 {
 	struct vm_domain *domain;
@@ -1234,6 +1302,14 @@ vm_pageout_laundry_worker(void *arg)
 	domain = &vm_dom[domidx];
 	KASSERT(domain->vmd_segs != 0, ("domain without segments"));
 	vm_pageout_init_marker(&domain->vmd_laundry_marker, PQ_LAUNDRY);
+
+	/*
+	 * Calls to these handlers are serialized by the swapconf lock.
+	 */
+	(void)EVENTHANDLER_REGISTER(swapon, vm_pageout_swapon, domain,
+	    EVENTHANDLER_PRI_ANY);
+	(void)EVENTHANDLER_REGISTER(swapoff, vm_pageout_swapoff, domain,
+	    EVENTHANDLER_PRI_ANY);
 
 	/*
 	 * The pageout laundry worker is never done, so loop forever.
@@ -1510,8 +1586,9 @@ drop_page:
 	 * ensuring that they can eventually be reused.
 	 */
 	page_shortage = vm_cnt.v_inactive_target - (vm_cnt.v_inactive_count +
-	    vm_cnt.v_laundry_count / act_scan_laundry_weight) +
-	    vm_paging_target() + deficit + addl_page_shortage;
+	    vm_cnt.v_laundry_count / act_scan_laundry_weight) -
+	    vm_cnt.v_stasis_count + vm_paging_target() + deficit +
+	    addl_page_shortage;
 	page_shortage *= act_scan_laundry_weight;
 
 	pq = &vmd->vmd_pagequeues[PQ_ACTIVE];

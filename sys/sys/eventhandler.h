@@ -211,7 +211,6 @@ EVENTHANDLER_DECLARE(vfs_unmounted, vfs_unmounted_notify_fn);
  */
 struct proc;
 struct image_params;
-
 typedef void (*exitlist_fn)(void *, struct proc *);
 typedef void (*forklist_fn)(void *, struct proc *, struct proc *, int);
 typedef void (*execlist_fn)(void *, struct proc *, struct image_params *);
@@ -234,7 +233,6 @@ typedef void (*app_coredump_start_fn)(void *, struct thread *, char *name);
 typedef void (*app_coredump_progress_fn)(void *, struct thread *td, int byte_count);
 typedef void (*app_coredump_finish_fn)(void *, struct thread *td);
 typedef void (*app_coredump_error_fn)(void *, struct thread *td, char *msg, ...);
-
 EVENTHANDLER_DECLARE(app_coredump_start, app_coredump_start_fn);
 EVENTHANDLER_DECLARE(app_coredump_progress, app_coredump_progress_fn);
 EVENTHANDLER_DECLARE(app_coredump_finish, app_coredump_finish_fn);
@@ -269,5 +267,12 @@ typedef void (*register_framebuffer_fn)(void *, struct fb_info *);
 typedef void (*unregister_framebuffer_fn)(void *, struct fb_info *);
 EVENTHANDLER_DECLARE(register_framebuffer, register_framebuffer_fn);
 EVENTHANDLER_DECLARE(unregister_framebuffer, unregister_framebuffer_fn);
+
+/* Swap pager device events */
+struct swdevt;
+typedef void (*swapon_fn)(void *, struct swdevt *);
+typedef void (*swapoff_fn)(void *, struct swdevt *);
+EVENTHANDLER_DECLARE(swapon, swapon_fn);
+EVENTHANDLER_DECLARE(swapoff, swapoff_fn);
 
 #endif /* _SYS_EVENTHANDLER_H_ */
