@@ -1079,8 +1079,8 @@ vm_pageout_launder1(struct vm_domain *vmd)
 	 * the inactive queue.  If there is no shortage of clean, inactive
 	 * pages, we allow laundering to proceed at a trickle to ensure that
 	 * dirty pages will eventually be reused.  Otherwise, the inactive queue
-	 * target is scaled by ratio of the sleep intervals of the laundry queue
-	 * and inactive queue worker threads.
+	 * target is scaled by the ratio of the sleep intervals of the laundry
+	 * queue and inactive queue worker threads.
 	 */
 	launder = vm_cnt.v_inactive_target - vm_cnt.v_inactive_count +
 	    vm_paging_target() + vm_pageout_deficit;
@@ -1565,7 +1565,6 @@ drop_page:
 	if (vm_swap_enabled && page_shortage > 0)
 		vm_req_vmdaemon(VM_SWAP_NORMAL);
 #endif
-
 
 	/*
 	 * If the inactive queue scan fails repeatedly to meet its
