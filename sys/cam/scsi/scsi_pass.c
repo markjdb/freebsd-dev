@@ -1915,7 +1915,7 @@ passdoioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag, struct thread 
 		 * it is a pointer to a kernel data structure.
 		 */
 		xpt_setup_ccb_flags(&ccb->ccb_h, periph->path, priority,
-				    ccb->ccb_h.flags);
+				    ccb->ccb_h.flags, 0);
 
 		/*
 		 * Setup our done routine.  There is no way for the user to

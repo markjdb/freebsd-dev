@@ -1253,7 +1253,6 @@ cam_fill_csio(struct ccb_scsiio *csio, u_int32_t retries,
 {
 	csio->ccb_h.func_code = XPT_SCSI_IO;
 	csio->ccb_h.flags = flags;
-	csio->ccb_h.xflags = 0;
 	csio->ccb_h.retry_count = retries;	
 	csio->ccb_h.cbfcnp = cbfcnp;
 	csio->ccb_h.timeout = timeout;
@@ -1273,7 +1272,6 @@ cam_fill_ctio(struct ccb_scsiio *csio, u_int32_t retries,
 {
 	csio->ccb_h.func_code = XPT_CONT_TARGET_IO;
 	csio->ccb_h.flags = flags;
-	csio->ccb_h.xflags = 0;
 	csio->ccb_h.retry_count = retries;	
 	csio->ccb_h.cbfcnp = cbfcnp;
 	csio->ccb_h.timeout = timeout;

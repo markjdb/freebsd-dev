@@ -72,8 +72,8 @@ union ccb		*xpt_alloc_ccb_nowait(void);
 void			xpt_free_ccb(union ccb *free_ccb);
 void			xpt_setup_ccb_flags(struct ccb_hdr *ccb_h,
 					    struct cam_path *path,
-					    u_int32_t priority,
-					    u_int32_t flags);
+					    uint32_t priority,
+					    uint32_t flags, uint32_t xflags);
 void			xpt_setup_ccb(struct ccb_hdr *ccb_h,
 				      struct cam_path *path,
 				      u_int32_t priority);
