@@ -805,7 +805,8 @@ adadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t len
 	}
 
 	if (length > 0) {
-		xpt_setup_ccb(&ccb.ccb_h, periph->path, CAM_PRIORITY_NORMAL);
+		xpt_setup_ccb_flags(&ccb.ccb_h, periph->path,
+		    CAM_PRIORITY_NORMAL, 0, CAM_CCB_DUMP);
 		ccb.ccb_h.ccb_state = ADA_CCB_DUMP;
 		cam_fill_ataio(&ccb.ataio,
 		    0,
@@ -839,7 +840,8 @@ adadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t len
 	}
 
 	if (softc->flags & ADA_FLAG_CAN_FLUSHCACHE) {
-		xpt_setup_ccb(&ccb.ccb_h, periph->path, CAM_PRIORITY_NORMAL);
+		xpt_setup_ccb_flags(&ccb.ccb_h, periph->path,
+		    CAM_PRIORITY_NORMAL, 0, CAM_CCB_DUMP);
 
 		ccb.ccb_h.ccb_state = ADA_CCB_DUMP;
 		cam_fill_ataio(&ccb.ataio,

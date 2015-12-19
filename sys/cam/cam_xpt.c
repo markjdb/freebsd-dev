@@ -165,6 +165,7 @@ struct cam_doneq {
 };
 
 static struct cam_doneq cam_doneqs[MAXCPU];
+static struct cam_doneq cam_dumpq;
 static int cam_num_doneqs;
 static struct proc *cam_proc;
 
@@ -256,7 +257,8 @@ static int	 xpt_schedule_dev(struct camq *queue, cam_pinfo *dev_pinfo,
 static xpt_devicefunc_t xptpassannouncefunc;
 static void	 xptaction(struct cam_sim *sim, union ccb *work_ccb);
 static void	 xptpoll(struct cam_sim *sim);
-static void	 camisr_runqueue(void);
+static void	 camisr_runqueue(struct cam_doneq *queue);
+static void	 camisr_runqueues(void);
 static void	 xpt_done_process(struct ccb_hdr *ccb_h);
 static void	 xpt_done_td(void *);
 static dev_match_ret	xptbusmatch(struct dev_match_pattern *patterns,
@@ -928,6 +930,8 @@ xpt_init(void *dummy)
 		       "- failing attach\n");
 		return (ENOMEM);
 	}
+	mtx_init(&cam_dumpq.cam_doneq_mtx, "CAM dumpq", NULL, MTX_DEF);
+	STAILQ_INIT(&cam_dumpq.cam_doneq);
 	/*
 	 * Register a callback for when interrupts are enabled.
 	 */
@@ -3036,7 +3040,7 @@ xpt_polled_action(union ccb *start_ccb)
 		CAM_SIM_LOCK(sim);
 		(*(sim->sim_poll))(sim);
 		CAM_SIM_UNLOCK(sim);
-		camisr_runqueue();
+		camisr_runqueues();
 		mtx_lock(&devq->send_mtx);
 	}
 	dev->ccbq.dev_openings++;
@@ -3048,9 +3052,9 @@ xpt_polled_action(union ccb *start_ccb)
 			CAM_SIM_LOCK(sim);
 			(*(sim->sim_poll))(sim);
 			CAM_SIM_UNLOCK(sim);
-			camisr_runqueue();
-			if ((start_ccb->ccb_h.status  & CAM_STATUS_MASK)
-			    != CAM_REQ_INPROG)
+			camisr_runqueues();
+			if ((start_ccb->ccb_h.status & CAM_STATUS_MASK) !=
+			    CAM_REQ_INPROG)
 				break;
 			DELAY(100);
 		}
@@ -4439,9 +4443,13 @@ xpt_done(union ccb *done_ccb)
 	if ((done_ccb->ccb_h.func_code & XPT_FC_QUEUED) == 0)
 		return;
 
-	hash = (done_ccb->ccb_h.path_id + done_ccb->ccb_h.target_id +
-	    done_ccb->ccb_h.target_lun) % cam_num_doneqs;
-	queue = &cam_doneqs[hash];
+	if (__predict_false((done_ccb->ccb_h.xflags & CAM_CCB_DUMP) != 0))
+		queue = &cam_dumpq;
+	else {
+		hash = (done_ccb->ccb_h.path_id + done_ccb->ccb_h.target_id +
+		    done_ccb->ccb_h.target_lun) % cam_num_doneqs;
+		queue = &cam_doneqs[hash];
+	}
 	mtx_lock(&queue->cam_doneq_mtx);
 	run = (queue->cam_doneq_sleep && STAILQ_EMPTY(&queue->cam_doneq));
 	STAILQ_INSERT_TAIL(&queue->cam_doneq, &done_ccb->ccb_h, sim_links.stqe);
@@ -5272,22 +5280,31 @@ xpt_done_td(void *arg)
 }
 
 static void
-camisr_runqueue(void)
+camisr_runqueue(struct cam_doneq *queue)
 {
-	struct	ccb_hdr *ccb_h;
-	struct cam_doneq *queue;
+	struct ccb_hdr *ccb_h;
+
+	mtx_lock(&queue->cam_doneq_mtx);
+	while ((ccb_h = STAILQ_FIRST(&queue->cam_doneq)) != NULL) {
+		STAILQ_REMOVE_HEAD(&queue->cam_doneq, sim_links.stqe);
+		mtx_unlock(&queue->cam_doneq_mtx);
+		xpt_done_process(ccb_h);
+		mtx_lock(&queue->cam_doneq_mtx);
+	}
+	mtx_unlock(&queue->cam_doneq_mtx);
+}
+
+static void
+camisr_runqueues(void)
+{
 	int i;
 
-	/* Process global queues. */
-	for (i = 0; i < cam_num_doneqs; i++) {
-		queue = &cam_doneqs[i];
-		mtx_lock(&queue->cam_doneq_mtx);
-		while ((ccb_h = STAILQ_FIRST(&queue->cam_doneq)) != NULL) {
-			STAILQ_REMOVE_HEAD(&queue->cam_doneq, sim_links.stqe);
-			mtx_unlock(&queue->cam_doneq_mtx);
-			xpt_done_process(ccb_h);
-			mtx_lock(&queue->cam_doneq_mtx);
-		}
-		mtx_unlock(&queue->cam_doneq_mtx);
+	if (dumping) {
+		camisr_runqueue(&cam_dumpq);
+		return;
 	}
+
+	/* Process global queues. */
+	for (i = 0; i < cam_num_doneqs; i++)
+		camisr_runqueue(&cam_doneqs[i]);
 }
