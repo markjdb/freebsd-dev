@@ -454,7 +454,6 @@ vm_page_t vm_page_alloc_contig(vm_object_t object, vm_pindex_t pindex, int req,
     vm_paddr_t boundary, vm_memattr_t memattr);
 vm_page_t vm_page_alloc_freelist(int, int);
 vm_page_t vm_page_grab (vm_object_t, vm_pindex_t, int);
-void vm_page_cache(vm_page_t);
 void vm_page_cache_free(vm_object_t, vm_pindex_t, vm_pindex_t);
 void vm_page_cache_transfer(vm_object_t, vm_pindex_t, vm_object_t);
 int vm_page_try_to_free (vm_page_t);
@@ -476,6 +475,8 @@ vm_page_t vm_page_prev(vm_page_t m);
 boolean_t vm_page_ps_is_valid(vm_page_t m);
 void vm_page_putfake(vm_page_t m);
 void vm_page_readahead_finish(vm_page_t m);
+bool vm_page_reclaim_contig(int req, u_long npages, vm_paddr_t low,
+    vm_paddr_t high, u_long alignment, vm_paddr_t boundary);
 void vm_page_reference(vm_page_t m);
 void vm_page_remove (vm_page_t);
 int vm_page_rename (vm_page_t, vm_object_t, vm_pindex_t);
@@ -484,6 +485,8 @@ vm_page_t vm_page_replace(vm_page_t mnew, vm_object_t object,
 void vm_page_requeue(vm_page_t m);
 void vm_page_requeue_locked(vm_page_t m);
 int vm_page_sbusied(vm_page_t m);
+vm_page_t vm_page_scan_contig(u_long npages, vm_page_t m_start,
+    vm_page_t m_end, u_long alignment, vm_paddr_t boundary, int options);
 void vm_page_set_valid_range(vm_page_t m, int base, int size);
 int vm_page_sleep_if_busy(vm_page_t m, const char *msg);
 vm_offset_t vm_page_startup(vm_offset_t vaddr);
@@ -679,6 +682,21 @@ vm_page_undirty(vm_page_t m)
 
 	VM_PAGE_OBJECT_LOCK_ASSERT(m);
 	m->dirty = 0;
+}
+
+static inline void
+vm_page_replace_checked(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex,
+    vm_page_t mold)
+{
+	vm_page_t mret;
+
+	mret = vm_page_replace(mnew, object, pindex);
+	KASSERT(mret == mold,
+	    ("invalid page replacement, mold=%p, mret=%p", mold, mret));
+
+	/* Unused if !INVARIANTS. */
+	(void)mold;
+	(void)mret;
 }
 
 #endif				/* _KERNEL */
