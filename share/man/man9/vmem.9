@@ -27,7 +27,7 @@
 .\" $FreeBSD$
 .\"
 .\" ------------------------------------------------------------
-.Dd July 12, 2013
+.Dd December 22, 2015
 .Dt VMEM 9
 .Os
 .\" ------------------------------------------------------------
@@ -42,6 +42,11 @@
 .Fn vmem_create \
 "const char *name" "vmem_addr_t base" "vmem_size_t size" "vmem_size_t quantum" \
 "vmem_size_t qcache_max" "int flags"
+.\" - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+.Ft vmem_t *
+.Fn vmem_init \
+"vmem_t *vm" "const char *name" "vmem_addr_t base" "vmem_size_t size" \
+"vmem_size_t quantum" "vmem_size_t qcache_max" "int flags"
 .\" - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 .Ft int
 .Fn vmem_add \
@@ -107,6 +112,12 @@ Prefer allocation performance.
 Prefer space efficiency.
 .El
 .El
+.Pp
+.Fn vmem_init
+initializes the specified vmem arena
+.Fa vm
+using the same parameters as
+.Fn vmem_create .
 .Pp
 .\" - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 .Fn vmem_add
