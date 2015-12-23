@@ -863,7 +863,7 @@ vm_pageout_clean(vm_page_t m, int *numpagedout)
 			 * see it, and make sure we didn't race with a
 			 * concurrent swapon.
 			 */
-			vm_page_unreclaimable(m);
+			vm_page_enter_stasis(m);
 			if (vm_swapdev_cnt == 0) {
 				vm_page_unlock(m);
 				goto unlock_all;
@@ -1095,7 +1095,7 @@ vm_pageout_swapon(void *arg, struct swdevt *sp __unused)
 		pq = &vmd->vmd_pagequeues[PQ_STASIS];
 		/*
 		 * We now have a swap device, so migrate pages back to the
-		 * inactive queue.
+		 * laundry queue.
 		 */
 		vm_pagequeue_lock(pq);
 		while ((m = TAILQ_FIRST(&pq->pq_pl)) != NULL) {

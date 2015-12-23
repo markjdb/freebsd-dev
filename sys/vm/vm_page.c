@@ -3206,15 +3206,18 @@ vm_page_launder(vm_page_t m)
 }
 
 /*
- * XXX
+ * vm_page_stasis
+ *
+ *	Put a page in stasis.  Such pages are dirty and cannot be
+ *	reclaimed because there is no backing store for them.
  */
 void
-vm_page_unreclaimable(vm_page_t m)
+vm_page_enter_stasis(vm_page_t m)
 {
 	int queue;
 
-	KASSERT(m->wire_count == 0, ("vm_page_unreclaimable: page %p is wired",
-	    m));
+	KASSERT(m->wire_count == 0, ("page %p is wired", m));
+	KASSERT(m->dirty != 0, ("page %p isn't dirty", m));
 	vm_page_assert_locked(m);
 	if ((queue = m->queue) != PQ_STASIS) {
 		if (queue != PQ_NONE)
@@ -3273,7 +3276,7 @@ vm_page_advise(vm_page_t m, int advice)
 		 * But we do make the page as freeable as we can without
 		 * actually taking the step of unmapping it.
 		 */
-		m->dirty = 0;
+		vm_page_undirty(m);
 	else if (advice != MADV_DONTNEED)
 		return;
 
@@ -3287,7 +3290,7 @@ vm_page_advise(vm_page_t m, int advice)
 		vm_page_dirty(m);
 
 	/*
-	 * Place clean pages at the head of the inactive queue rather than the
+	 * Place clean pages near the head of the inactive queue rather than the
 	 * tail, thus defeating the queue's LRU operation and ensuring that the
 	 * page will be reused quickly.
 	 */
