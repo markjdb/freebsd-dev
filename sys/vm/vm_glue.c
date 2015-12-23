@@ -109,6 +109,8 @@ static void vm_thread_swapout(struct thread *td);
 #endif
 
 /*
+ * MPSAFE
+ *
  * WARNING!  This code calls vm_map_check_protection() which only checks
  * the associated vm_map_entry range.  It does not determine whether the
  * contents of the memory is actually readable or writable.  In most cases
@@ -141,6 +143,8 @@ kernacc(addr, len, rw)
 }
 
 /*
+ * MPSAFE
+ *
  * WARNING!  This code calls vm_map_check_protection() which only checks
  * the associated vm_map_entry range.  It does not determine whether the
  * contents of the memory is actually readable or writable.  vmapbuf(),

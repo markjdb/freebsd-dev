@@ -56,6 +56,9 @@ phys_pager_init(void)
 	mtx_init(&phys_pager_mtx, "phys_pager list", NULL, MTX_DEF);
 }
 
+/*
+ * MPSAFE
+ */
 static vm_object_t
 phys_pager_alloc(void *handle, vm_ooffset_t size, vm_prot_t prot,
     vm_ooffset_t foff, struct ucred *cred)
@@ -114,6 +117,9 @@ phys_pager_alloc(void *handle, vm_ooffset_t size, vm_prot_t prot,
 	return (object);
 }
 
+/*
+ * MPSAFE
+ */
 static void
 phys_pager_dealloc(vm_object_t object)
 {

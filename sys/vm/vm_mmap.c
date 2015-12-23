@@ -106,6 +106,9 @@ struct sbrk_args {
 };
 #endif
 
+/*
+ * MPSAFE
+ */
 /* ARGSUSED */
 int
 sys_sbrk(td, uap)
@@ -122,6 +125,9 @@ struct sstk_args {
 };
 #endif
 
+/*
+ * MPSAFE
+ */
 /* ARGSUSED */
 int
 sys_sstk(td, uap)
@@ -176,6 +182,9 @@ struct mmap_args {
 };
 #endif
 
+/*
+ * MPSAFE
+ */
 int
 sys_mmap(td, uap)
 	struct thread *td;
@@ -449,7 +458,9 @@ struct msync_args {
 	int flags;
 };
 #endif
-
+/*
+ * MPSAFE
+ */
 int
 sys_msync(td, uap)
 	struct thread *td;
@@ -502,7 +513,9 @@ struct munmap_args {
 	size_t len;
 };
 #endif
-
+/*
+ * MPSAFE
+ */
 int
 sys_munmap(td, uap)
 	struct thread *td;
@@ -576,7 +589,9 @@ struct mprotect_args {
 	int prot;
 };
 #endif
-
+/*
+ * MPSAFE
+ */
 int
 sys_mprotect(td, uap)
 	struct thread *td;
@@ -616,7 +631,9 @@ struct minherit_args {
 	int inherit;
 };
 #endif
-
+/*
+ * MPSAFE
+ */
 int
 sys_minherit(td, uap)
 	struct thread *td;
@@ -655,6 +672,9 @@ struct madvise_args {
 };
 #endif
 
+/*
+ * MPSAFE
+ */
 int
 sys_madvise(td, uap)
 	struct thread *td;
@@ -710,6 +730,9 @@ struct mincore_args {
 };
 #endif
 
+/*
+ * MPSAFE
+ */
 int
 sys_mincore(td, uap)
 	struct thread *td;
@@ -966,7 +989,9 @@ struct mlock_args {
 	size_t len;
 };
 #endif
-
+/*
+ * MPSAFE
+ */
 int
 sys_mlock(td, uap)
 	struct thread *td;
@@ -1036,6 +1061,9 @@ struct mlockall_args {
 };
 #endif
 
+/*
+ * MPSAFE
+ */
 int
 sys_mlockall(td, uap)
 	struct thread *td;
@@ -1110,6 +1138,9 @@ struct munlockall_args {
 };
 #endif
 
+/*
+ * MPSAFE
+ */
 int
 sys_munlockall(td, uap)
 	struct thread *td;
@@ -1148,7 +1179,9 @@ struct munlock_args {
 	size_t len;
 };
 #endif
-
+/*
+ * MPSAFE
+ */
 int
 sys_munlock(td, uap)
 	struct thread *td;
@@ -1298,6 +1331,8 @@ done:
 
 /*
  * vm_mmap_cdev()
+ *
+ * MPSAFE
  *
  * Helper function for vm_mmap.  Perform sanity check specific for mmap
  * operations on cdevs.
