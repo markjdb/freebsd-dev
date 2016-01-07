@@ -31,6 +31,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
@@ -45,6 +46,17 @@ __FBSDID("$FreeBSD$");
 #include <sys/uio.h>
 #include <sys/ktrace.h>
 #endif
+
+/*
+ * A bound below which cv_waiters is valid.  Once cv_waiters reaches this bound,
+ * cv_signal must manually check the wait queue for threads.
+ */
+#define	CV_WAITERS_BOUND	INT_MAX
+
+#define	CV_WAITERS_INC(cvp) do {					\
+	if ((cvp)->cv_waiters < CV_WAITERS_BOUND)			\
+		(cvp)->cv_waiters++;					\
+} while (0)
 
 /*
  * Common sanity checks for cv_wait* functions.
@@ -81,6 +93,7 @@ cv_destroy(struct cv *cvp)
 	sq = sleepq_lookup(cvp);
 	sleepq_release(cvp);
 	KASSERT(sq == NULL, ("%s: associated sleep queue non-empty", __func__));
+	KASSERT(cvp->cv_waiters == 0, ("%s: non-zero waiters count", __func__));
 #endif
 }
 
@@ -122,7 +135,7 @@ _cv_wait(struct cv *cvp, struct lock_object *lock)
 
 	sleepq_lock(cvp);
 
-	cvp->cv_waiters++;
+	CV_WAITERS_INC(cvp);
 	if (lock == &Giant.lock_object)
 		mtx_assert(&Giant, MA_OWNED);
 	DROP_GIANT();
@@ -184,7 +197,7 @@ _cv_wait_unlock(struct cv *cvp, struct lock_object *lock)
 
 	sleepq_lock(cvp);
 
-	cvp->cv_waiters++;
+	CV_WAITERS_INC(cvp);
 	DROP_GIANT();
 
 	sleepq_add(cvp, lock, cvp->cv_description, SLEEPQ_CONDVAR, 0);
@@ -240,7 +253,7 @@ _cv_wait_sig(struct cv *cvp, struct lock_object *lock)
 
 	sleepq_lock(cvp);
 
-	cvp->cv_waiters++;
+	CV_WAITERS_INC(cvp);
 	if (lock == &Giant.lock_object)
 		mtx_assert(&Giant, MA_OWNED);
 	DROP_GIANT();
@@ -307,7 +320,7 @@ _cv_timedwait_sbt(struct cv *cvp, struct lock_object *lock, sbintime_t sbt,
 
 	sleepq_lock(cvp);
 
-	cvp->cv_waiters++;
+	CV_WAITERS_INC(cvp);
 	if (lock == &Giant.lock_object)
 		mtx_assert(&Giant, MA_OWNED);
 	DROP_GIANT();
@@ -376,7 +389,7 @@ _cv_timedwait_sig_sbt(struct cv *cvp, struct lock_object *lock,
 
 	sleepq_lock(cvp);
 
-	cvp->cv_waiters++;
+	CV_WAITERS_INC(cvp);
 	if (lock == &Giant.lock_object)
 		mtx_assert(&Giant, MA_OWNED);
 	DROP_GIANT();
@@ -422,8 +435,15 @@ cv_signal(struct cv *cvp)
 	wakeup_swapper = 0;
 	sleepq_lock(cvp);
 	if (cvp->cv_waiters > 0) {
-		cvp->cv_waiters--;
-		wakeup_swapper = sleepq_signal(cvp, SLEEPQ_CONDVAR, 0, 0);
+		if (cvp->cv_waiters == CV_WAITERS_BOUND &&
+		    sleepq_lookup(cvp) == NULL) {
+			cvp->cv_waiters = 0;
+		} else {
+			if (cvp->cv_waiters < CV_WAITERS_BOUND)
+				cvp->cv_waiters--;
+			wakeup_swapper = sleepq_signal(cvp, SLEEPQ_CONDVAR, 0,
+			    0);
+		}
 	}
 	sleepq_release(cvp);
 	if (wakeup_swapper)
