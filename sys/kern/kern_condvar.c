@@ -93,7 +93,6 @@ cv_destroy(struct cv *cvp)
 	sq = sleepq_lookup(cvp);
 	sleepq_release(cvp);
 	KASSERT(sq == NULL, ("%s: associated sleep queue non-empty", __func__));
-	KASSERT(cvp->cv_waiters == 0, ("%s: non-zero waiters count", __func__));
 #endif
 }
 
