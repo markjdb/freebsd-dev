@@ -3247,8 +3247,9 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 				 * way, its pagequeue lock is held.
 				 */
 				vm_page_dequeue_locked(m);
-			} else if (queue != PQ_NONE) {
-				vm_page_dequeue(m);
+			} else {
+				if (queue != PQ_NONE)
+					vm_page_dequeue(m);
 				vm_pagequeue_lock(pq);
 			}
 			m->queue = PQ_INACTIVE;
