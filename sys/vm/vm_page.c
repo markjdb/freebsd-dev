@@ -3219,7 +3219,9 @@ static inline void
 _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 {
 	struct vm_domain *vmd;
+#if 0
 	struct vm_pagequeue *pq;
+#endif
 	int queue;
 
 	vm_page_assert_locked(m);
@@ -3232,6 +3234,7 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 		return;
 	if (m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0) {
 		vmd = vm_phys_domain(m);
+#if 0
 		if (noreuse) {
 			/*
 			 * If the page is already in the inactive queue, we must
@@ -3261,6 +3264,13 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 				vm_page_dequeue(m);
 			vm_page_enqueue_deferred(m);
 		}
+#endif
+		if (queue != PQ_NONE) {
+			if (queue == PQ_INACTIVE && (m->flags & PG_DINACT) != 0)
+				return;
+			vm_page_dequeue(m);
+		}
+		vm_page_enqueue_deferred(m);
 	}
 }
 
