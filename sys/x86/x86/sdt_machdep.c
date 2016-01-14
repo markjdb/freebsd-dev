@@ -31,8 +31,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/queue.h>
 #include <sys/sdt.h>
 
-#define	CALL_SITE_LEN	5
-
 #define	X86_OPC_CALL32	0xe8
 #define	X86_OPC_JMP32	0xe9
 #define	X86_OPC_NOP	0x90
@@ -75,7 +73,12 @@ sdt_md_patch_callsite(struct sdt_probe *probe, uint64_t offset, bool reloc)
 
 	switch (opcode) {
 	case X86_OPC_CALL32:
-		memset(callinstr, X86_OPC_NOP, CALL_SITE_LEN);
+		callinstr[0] = X86_OPC_NOP;
+		/* four-byte NOP */
+		callinstr[1] = 0x0f;
+		callinstr[2] = 0x1f;
+		callinstr[3] = 0x40;
+		callinstr[4] = 0x00;
 		break;
 	case X86_OPC_JMP32:
 		/*
@@ -84,8 +87,12 @@ sdt_md_patch_callsite(struct sdt_probe *probe, uint64_t offset, bool reloc)
 		 * byte instead of the first: the first byte will be
 		 * replaced with a breakpoint when the probe is enabled.
 		 */
-		memset(callinstr, X86_OPC_NOP, CALL_SITE_LEN);
+		callinstr[0] = X86_OPC_NOP;
 		callinstr[1] = X86_OPC_RET;
+		/* three-byte NOP */
+		callinstr[2] = 0x0f;
+		callinstr[3] = 0x1f;
+		callinstr[4] = 0x00;
 		break;
 	}
 	return ((uint64_t)(uintptr_t)callinstr);
