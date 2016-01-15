@@ -103,7 +103,7 @@ static int	flushbuflist(struct bufv *bufv, int flags, struct bufobj *bo,
 static void	syncer_shutdown(void *arg, int howto);
 static int	vtryrecycle(struct vnode *vp);
 static void	v_init_counters(struct vnode *);
-static void	v_incr_usecount(struct vnode *);
+static void	v_incr_usecount(struct vnode *, bool);
 static void	v_incr_devcount(struct vnode *);
 static void	v_decr_devcount(struct vnode *);
 static void	vnlru_free(int);
@@ -2377,14 +2377,18 @@ v_init_counters(struct vnode *vp)
  * the vnode from the free list if it is presently free.
  */
 static void
-v_incr_usecount(struct vnode *vp)
+v_incr_usecount(struct vnode *vp, bool locked)
 {
 
-	ASSERT_VI_UNLOCKED(vp, __func__);
+	if (locked)
+		ASSERT_VI_LOCKED(vp, __func__);
+	else
+		ASSERT_VI_UNLOCKED(vp, __func__);
 	CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
 
 	if (vp->v_type == VCHR) {
-		VI_LOCK(vp);
+		if (!locked)
+			VI_LOCK(vp);
 		_vhold(vp, true);
 		if (vp->v_iflag & VI_OWEINACT) {
 			VNASSERT(vp->v_usecount == 0, vp,
@@ -2393,20 +2397,23 @@ v_incr_usecount(struct vnode *vp)
 		}
 		refcount_acquire(&vp->v_usecount);
 		v_incr_devcount(vp);
-		VI_UNLOCK(vp);
+		if (!locked)
+			VI_LOCK(vp);
 		return;
 	}
 
-	_vhold(vp, false);
+	_vhold(vp, locked);
 	if (vfs_refcount_acquire_if_not_zero(&vp->v_usecount)) {
 		VNASSERT((vp->v_iflag & VI_OWEINACT) == 0, vp,
 		    ("vnode with usecount and VI_OWEINACT set"));
 	} else {
-		VI_LOCK(vp);
+		if (!locked)
+			VI_LOCK(vp);
 		if (vp->v_iflag & VI_OWEINACT)
 			vp->v_iflag &= ~VI_OWEINACT;
 		refcount_acquire(&vp->v_usecount);
-		VI_UNLOCK(vp);
+		if (!locked)
+			VI_UNLOCK(vp);
 	}
 }
 
@@ -2519,8 +2526,14 @@ void
 vref(struct vnode *vp)
 {
 
-	CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
-	v_incr_usecount(vp);
+	v_incr_usecount(vp, false);
+}
+
+void
+vrefl(struct vnode *vp)
+{
+
+	v_incr_usecount(vp, true);
 }
 
 /*
