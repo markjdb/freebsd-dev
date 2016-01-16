@@ -39,6 +39,7 @@ fi
 
 set -e
 
+# XXX this is really gross. Can we use ".word"?
 case $(elfdump -e "$obj" | ${AWK} '/e_machine: /{print $2}') in
 EM_386)
     extype=long
@@ -86,19 +87,37 @@ ${OBJDUMP} -r -j .text "$obj" | \
                 print "__asm__(";
                 print "    \".pushsection set_sdt_probe_site_set, \\\"a\\\"\\n\"";
                 print "    \".align 8\\n\"";
-                print "    \".globl __start_set_sdt_probe_site_set\\n\"";
-                print "    \".globl __stop_set_sdt_probe_site_set\\n\"";
+                print "    \".global __start_set_sdt_probe_site_set\\n\"";
+                print "    \".global __stop_set_sdt_probe_site_set\\n\"";
+                print "    \".popsection\\n\"";
+
+                print "    \".pushsection set_sdt_anon_probe_site_set, \\\"a\\\"\\n\"";
+                print "    \".align 8\\n\"";
+                print "    \".global __start_set_sdt_anon_probe_site_set\\n\"";
+                print "    \".global __stop_set_sdt_anon_probe_site_set\\n\"";
+                print "    \".popsection\\n\"";
             }
 
             $3 ~ /^__dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*\+?/ {
                 match($3, /sdt_[_[:alpha:]]+[_[:alnum:]]*/);
                 symname = substr($3, 10, RLENGTH);
                 directive = "'${extype}'";
-                printf "    \".globl %s\\n\"\n", symname;
-                printf "    \".%s %s\\n\"\n    \".%s 0x%s\\n\"\n",
-                    directive, symname, directive, $1;
+                if (substr(symname, 0, 8) == "sdt_sdt_") {
+                    print  "    \"1:\\n\"";
+                    printf "    \".string \\\"%s\\\"\\n\"\n", symname
+                    print  "    \".pushsection set_sdt_anon_probe_site_set, \\\"a\\\"\\n\"";
+                    printf "    \".%s 1b\\n\"\n", directive;
+                    printf "    \".%s 0x%s\\n\"\n", directive, $1;
+                    print  "    \".popsection\\n\"";
+                } else {
+                    print  "    \".pushsection set_sdt_probe_site_set, \\\"a\\\"\\n\"";
+                    printf "    \".global %s\\n\"\n", symname;
+                    printf "    \".%s %s\\n\"\n", directive, symname;
+                    printf "    \".%s 0x%s\\n\"\n", directive, $1;
+                    print  "    \".popsection\\n\"";
+                }
             }
 
             END {
-                print "    \".popsection\");";
+                print ");";
             }'

@@ -95,10 +95,13 @@ static int
 sdt_patch_linker_file(linker_file_t lf, void *arg __unused)
 {
 	struct sdt_probedesc *desc, *start, *end;
-	struct sdt_probe *probe;
+	struct sdt_probe *probe, **probep, **startp, **endp;
+	const char *probename;
+	int error;
 
-	if (linker_file_lookup_set(lf, "sdt_probe_site_set", &start, &end,
-	    NULL) != 0)
+	error = linker_file_lookup_set(lf, "sdt_probe_site_set", &start, &end,
+	    NULL);
+	if (error != 0)
 		return (0);
 
 	/*
@@ -109,6 +112,34 @@ sdt_patch_linker_file(linker_file_t lf, void *arg __unused)
 	for (desc = start; desc < end; desc++) {
 		probe = desc->li.spd_probe;
 		sdt_patch_callsite(probe, desc, desc->spd_offset +
+		    (uintptr_t)btext);
+	}
+
+	/*
+	 * Now look for "anonymous" SDT probes.
+	 */
+	error = linker_file_lookup_set(lf, "sdt_anon_probe_site_set", &start,
+	    &end, NULL);
+	if (error != 0)
+		return (0);
+
+	error = linker_file_lookup_set(lf, "sdt_probes_set", &startp, &endp,
+	    NULL);
+	KASSERT(error == 0, ("probe definition set not found"));
+
+	for (desc = start; desc < end; desc++) {
+		probename = desc->li.spd_probename;
+		probename += strlen("sdt_sdt___");
+		for (probep = startp; probep < endp; probep++) {
+			probe = *probep;
+			if (strcmp(probe->prov->name, "sdt") == 0 &&
+			    strcmp(probe->name, probename) == 0)
+				break;
+		}
+
+		KASSERT(probep != endp, ("didn't find anon probe %s",
+		    probename));
+		sdt_patch_callsite(*probep, desc, desc->spd_offset +
 		    (uintptr_t)btext);
 	}
 	return (0);
