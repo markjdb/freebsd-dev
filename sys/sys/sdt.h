@@ -444,7 +444,8 @@ struct sdt_provider {
 struct sdt_probedesc {
 	union {
 		SLIST_ENTRY(sdt_probedesc) spd_entry;
-		struct sdt_probe *spd_probe;
+		struct sdt_probe 	*spd_probe;
+		const char		*spd_probename;
 	} li;
 	u_long	spd_offset;
 };
