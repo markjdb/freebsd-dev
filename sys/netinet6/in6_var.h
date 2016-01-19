@@ -135,6 +135,8 @@ struct	in6_ifaddr {
 	LIST_HEAD(, in6_multi_mship) ia6_memberships;
 	/* entry in bucket of inet6 addresses */
 	LIST_ENTRY(in6_ifaddr) ia6_hash;
+	/* expiring address list, only to be used by nd6_timer() */
+	SLIST_ENTRY(in6_ifaddr) ia6_expiring;
 };
 
 /* List of in6_ifaddr's. */

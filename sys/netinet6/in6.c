@@ -1331,12 +1331,8 @@ static void
 in6_unlink_ifa(struct in6_ifaddr *ia, struct ifnet *ifp)
 {
 	char ip6buf[INET6_ADDRSTRLEN];
+	struct in6_ifaddr *iatmp;
 	int remove_lle;
-
-	IF_ADDR_WLOCK(ifp);
-	TAILQ_REMOVE(&ifp->if_addrhead, &ia->ia_ifa, ifa_link);
-	IF_ADDR_WUNLOCK(ifp);
-	ifa_free(&ia->ia_ifa);			/* if_addrhead */
 
 	/*
 	 * Defer the release of what might be the last reference to the
@@ -1344,9 +1340,22 @@ in6_unlink_ifa(struct in6_ifaddr *ia, struct ifnet *ifp)
 	 * cleanup.
 	 */
 	IN6_IFADDR_WLOCK();
+	LIST_FOREACH(iatmp, IN6ADDR_HASH(&ia->ia_addr.sin6_addr), ia6_hash) {
+		if (iatmp == ia)
+			break;
+	}
+	if (iatmp == NULL) {
+		IN6_IFADDR_WUNLOCK();
+		return;
+	}
 	TAILQ_REMOVE(&V_in6_ifaddrhead, ia, ia_link);
 	LIST_REMOVE(ia, ia6_hash);
 	IN6_IFADDR_WUNLOCK();
+
+	IF_ADDR_WLOCK(ifp);
+	TAILQ_REMOVE(&ifp->if_addrhead, &ia->ia_ifa, ifa_link);
+	IF_ADDR_WUNLOCK(ifp);
+	ifa_free(&ia->ia_ifa);			/* if_addrhead */
 
 	/*
 	 * Release the reference to the base prefix.  There should be a

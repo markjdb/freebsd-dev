@@ -48,7 +48,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/errno.h>
 #include <sys/syslog.h>
 #include <sys/lock.h>
-#include <sys/rwlock.h>
+#include <sys/rmlock.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
 #include <sys/sysctl.h>
@@ -882,16 +882,18 @@ done:
 
 
 /*
- * ND6 timer routine to expire default route list and prefix list
+ * ND6 timer routine to expire default router, address, and prefix list entries.
  */
 void
 nd6_timer(void *arg)
 {
 	CURVNET_SET((struct vnet *) arg);
 	struct nd_drhead drq;
+	struct rm_priotracker in6_ifa_tracker;
 	struct nd_defrouter *dr, *ndr;
 	struct nd_prefix *pr, *npr;
 	struct in6_ifaddr *ia6, *nia6;
+	SLIST_HEAD(, in6_ifaddr) topurge;
 
 	callout_reset(&V_nd6_timer_ch, V_nd6_prune * hz,
 	    nd6_timer, curvnet);
@@ -916,13 +918,25 @@ nd6_timer(void *arg)
 	 * However, from a stricter speci-confrmance standpoint, we should
 	 * rather separate address lifetimes and prefix lifetimes.
 	 *
-	 * XXXRW: in6_ifaddrhead locking.
+	 * Expired address are placed in the topurge list and are freed only
+	 * after we have scanned the full list to avoid acquiring the address
+	 * list write lock more often than is necessary.
 	 */
+
+	SLIST_INIT(&topurge);
+
   addrloop:
+	IN6_IFADDR_RLOCK(&in6_ifa_tracker);
 	TAILQ_FOREACH_SAFE(ia6, &V_in6_ifaddrhead, ia_link, nia6) {
 		/* check address lifetime */
 		if (IFA6_IS_INVALID(ia6)) {
 			int regen = 0;
+
+			/*
+			 * regen_tmpaddr() may release the address list lock, so
+			 * take a reference before calling it.
+			 */
+			ifa_ref(&ia6->ia_ifa);
 
 			/*
 			 * If the expiring address is temporary, try
@@ -940,7 +954,7 @@ nd6_timer(void *arg)
 					regen = 1;
 			}
 
-			in6_purgeaddr(&ia6->ia_ifa);
+			SLIST_INSERT_HEAD(&topurge, ia6, ia6_expiring);
 
 			if (regen)
 				goto addrloop; /* XXX: see below */
@@ -1004,6 +1018,12 @@ nd6_timer(void *arg)
 			ia6->ia6_flags &= ~IN6_IFF_DEPRECATED;
 		}
 	}
+	IN6_IFADDR_RUNLOCK(&in6_ifa_tracker);
+
+	SLIST_FOREACH_SAFE(ia6, &topurge, ia6_expiring, nia6) {
+		in6_purgeaddr(&ia6->ia_ifa);
+		ifa_free(&ia6->ia_ifa);
+	}
 
 	/* expire prefix list */
 	LIST_FOREACH_SAFE(pr, &V_nd_prefix, ndpr_entry, npr) {
@@ -1027,6 +1047,9 @@ nd6_timer(void *arg)
 
 /*
  * ia6 - deprecated/invalidated temporary address
+ *
+ * Must be called with the in6_ifaddr read lock held. The lock is released if we
+ * add a new address, in which case 0 is returned.
  */
 static int
 regen_tmpaddr(struct in6_ifaddr *ia6)
@@ -1034,6 +1057,9 @@ regen_tmpaddr(struct in6_ifaddr *ia6)
 	struct ifaddr *ifa;
 	struct ifnet *ifp;
 	struct in6_ifaddr *public_ifa6 = NULL;
+	struct rm_priotracker in6_ifa_tracker;
+
+	IN6_IFADDR_RLOCK_ASSERT();
 
 	ifp = ia6->ia_ifa.ifa_ifp;
 	IF_ADDR_RLOCK(ifp);
@@ -1082,12 +1108,10 @@ regen_tmpaddr(struct in6_ifaddr *ia6)
 	if (public_ifa6 != NULL) {
 		int e;
 
-		if ((e = in6_tmpifadd(public_ifa6, 0, 0)) != 0) {
-			ifa_free(&public_ifa6->ia_ifa);
-			log(LOG_NOTICE, "regen_tmpaddr: failed to create a new"
-			    " tmp addr,errno=%d\n", e);
-			return (-1);
-		}
+		IN6_IFADDR_RUNLOCK(&in6_ifa_tracker);
+		if ((e = in6_tmpifadd(public_ifa6, 0, 0)) != 0)
+			log(LOG_NOTICE,
+	    "regen_tmpaddr: failed to create a new tmp addr, errno=%d\n", e);
 		ifa_free(&public_ifa6->ia_ifa);
 		return (0);
 	}
