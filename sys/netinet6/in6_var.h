@@ -119,7 +119,6 @@ struct	in6_ifaddr {
 	struct	sockaddr_in6 ia_net;	/* network number of interface */
 	struct	sockaddr_in6 ia_dstaddr; /* space for destination addr */
 	struct	sockaddr_in6 ia_prefixmask; /* prefix mask */
-	u_int32_t ia_plen;		/* prefix length */
 	TAILQ_ENTRY(in6_ifaddr)	ia_link;	/* list of IPv6 addresses */
 	int	ia6_flags;
 
