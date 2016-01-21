@@ -903,7 +903,14 @@ vm_pageout_launder(struct vm_domain *vmd)
 	vnodes_skipped = 0;
 
 	/*
-	 * XXX
+	 * Scan the laundry queue for pages eligible to be laundered.  We stop
+	 * once the target number of dirty pages have been laundered, or once
+	 * we've reached the end of the queue.  A single iteration of this loop
+	 * may cause more than one page to be laundered because of clustering.
+	 *
+	 * maxscan ensures that we don't re-examine requeued pages.  Any
+	 * additional pages written as part of a cluster are subtracted from
+	 * maxscan since they must be taken from the laundry queue.
 	 */
 	pq = &vmd->vmd_pagequeues[PQ_LAUNDRY];
 	maxscan = pq->pq_cnt;
@@ -1026,8 +1033,10 @@ requeue_page:
 				goto drop_page;
 			}
 			error = vm_pageout_clean(m, &numpagedout);
-			if (error == 0)
+			if (error == 0) {
 				launder -= numpagedout;
+				maxscan -= numpagedout - 1;
+			}
 			else if (error == EDEADLK) {
 				pageout_lock_miss++;
 				vnodes_skipped++;
