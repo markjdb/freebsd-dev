@@ -3206,24 +3206,27 @@ vm_page_launder(vm_page_t m)
 }
 
 /*
- * vm_page_stasis
+ * vm_page_enter_stasis
  *
- *	Put a page in stasis.  Such pages are dirty and cannot be
- *	reclaimed because there is no backing store for them.
+ *	Put a page in stasis.  Such pages are swap-backed and cannot be
+ *	reclaimed because zero swap devices are configured, or all available
+ *	devices are full.  If the page is already in stasis, it will be
+ *	requeued.
  */
 void
 vm_page_enter_stasis(vm_page_t m)
 {
-	int queue;
 
 	KASSERT(m->wire_count == 0, ("page %p is wired", m));
-	KASSERT(m->dirty != 0, ("page %p isn't dirty", m));
+	KASSERT(m->dirty != 0, ("page %p is clean", m));
+	KASSERT((m->oflags & VOP_UNMANAGED) == 0, ("page %p is unmanaged", m));
+	KASSERT(m->object->type == OBJT_DEFAULT || m->object->type == OBJT_SWAP,
+	    ("invalid object type %d", m->object->type));
+
 	vm_page_assert_locked(m);
-	if ((queue = m->queue) != PQ_STASIS) {
-		if (queue != PQ_NONE)
-			vm_page_dequeue(m);
-		vm_page_enqueue(PQ_STASIS, m);
-	}
+	if (m->queue != PQ_NONE)
+		vm_page_dequeue(m);
+	vm_page_enqueue(PQ_STASIS, m);
 }
 
 /*

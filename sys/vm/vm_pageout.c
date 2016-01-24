@@ -445,7 +445,7 @@ more:
 			break;
 		}
 		vm_page_lock(p);
-		if (p->queue != PQ_LAUNDRY ||
+		if ((p->queue != PQ_LAUNDRY && p->queue != PQ_STASIS) ||
 		    p->hold_count != 0) {	/* may be undergoing I/O */
 			vm_page_unlock(p);
 			ib = 0;
@@ -573,15 +573,23 @@ vm_pageout_flush(vm_page_t *mc, int count, int flags, int mreq, int *prunlen,
 		case VM_PAGER_ERROR:
 		case VM_PAGER_FAIL:
 			/*
-			 * If page couldn't be paged out, then reactivate the
-			 * page so it doesn't clog the XXX list.  (We
-			 * will try paging out it again later).
+			 * If we've run out of swap space or there are no swap
+			 * devices to begin with, place the page in stasis.  If
+			 * swap devices are available, we will periodically
+			 * re-attempt a pageout.
 			 *
-			 * XXX place in stasis queue if PAGER_FAIL and
-			 * OBJT_DEFAULT|SWAP?
+			 * For other types of errors, reactivate the page to
+			 * avoid clogging the laundry queue.  This ensures that
+			 * the pagedaemon will continue aggressively scanning
+			 * the active queue if necessary.
 			 */
 			vm_page_lock(mt);
-			vm_page_activate(mt);	// XXX
+			if (pageout_status[i] == VM_PAGER_FAIL &&
+			    mt->dirty != 0 && (object->type == OBJT_DEFAULT ||
+			    object->type == OBJT_SWAP))
+				vm_page_enter_stasis(mt);
+			else
+				vm_page_activate(mt);
 			vm_page_unlock(mt);
 			if (eio != NULL && i >= mreq && i - mreq < runlen)
 				*eio = TRUE;
@@ -856,25 +864,6 @@ vm_pageout_clean(vm_page_t m, int *numpagedout)
 			error = EBUSY;
 			goto unlock_all;
 		}
-	} else {
-		KASSERT(object->type == OBJT_DEFAULT ||
-		    object->type == OBJT_SWAP, ("object %p has wrong type",
-		    object));
-		if (vm_swapdev_cnt == 0) {
-			/*
-			 * We won't be able to launder this page since we don't
-			 * have any swap devices available.  Place this page in
-			 * the stasis queue so that the laundry thread doesn't
-			 * see it, and make sure we didn't race with a
-			 * concurrent swapon.
-			 */
-			vm_page_enter_stasis(m);
-			if (vm_swapdev_cnt == 0) {
-				vm_page_unlock(m);
-				goto unlock_all;
-			}
-			vm_page_dequeue(m);
-		}
 	}
 
 	/*
@@ -910,7 +899,8 @@ vm_pageout_launder(struct vm_domain *vmd)
 	vm_page_t m, next;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
-	int act_delta, error, launder, maxscan, numpagedout, vnodes_skipped;
+	int act_delta, error, launder, maxscan, numpagedout, pass;
+	int vnodes_skipped;
 	boolean_t pageout_ok, queues_locked;
 
 	/*
@@ -931,17 +921,37 @@ vm_pageout_launder(struct vm_domain *vmd)
 	vnodes_skipped = 0;
 
 	/*
-	 * Scan the laundry queue for pages eligible to be laundered.  We stop
-	 * once the target number of dirty pages have been laundered, or once
-	 * we've reached the end of the queue.  A single iteration of this loop
-	 * may cause more than one page to be laundered because of clustering.
+	 * Scan the laundry and stasis queues queue for pages eligible to be
+	 * laundered.  We stop once the target number of dirty pages have been
+	 * laundered, or once we've reached the ends of the queues.  A single
+	 * iteration of this loop may cause more than one page to be laundered
+	 * because of clustering.
 	 *
-	 * maxscan ensures that we don't re-examine requeued pages.  Any
-	 * additional pages written as part of a cluster are subtracted from
-	 * maxscan since they must be taken from the laundry queue.
+	 * Pages in stasis are only examined when at least one swap device is
+	 * available.  We don't attempt to scan the entire stasis queue; it is
+	 * likely that many if not all of its pages cannot be paged out.  For
+	 * now we only attempt to examine the target number of pages before
+	 * falling back to the laundry queue.
+	 *
+	 * During the laundry queue scan, maxscan ensures that we don't
+	 * re-examine requeued pages.  Any additional pages written as part of
+	 * a cluster are subtracted from maxscan since they must be taken from
+	 * the laundry queue.
 	 */
-	pq = &vmd->vmd_pagequeues[PQ_LAUNDRY];
-	maxscan = pq->pq_cnt;
+	pass = 0;
+scan:
+	if (pass == 0) {
+		if (vm_swapdev_cnt == 0) {
+			pass++;
+			goto scan;
+		}
+		pq = &vmd->vmd_pagequeues[PQ_STASIS];
+		maxscan = launder;
+	} else {
+		pq = &vmd->vmd_pagequeues[PQ_LAUNDRY];
+		maxscan = pq->pq_cnt;
+	}
+
 	vm_pagequeue_lock(pq);
 	queues_locked = TRUE;
 	for (m = TAILQ_FIRST(&pq->pq_pl);
@@ -1064,8 +1074,7 @@ requeue_page:
 			if (error == 0) {
 				launder -= numpagedout;
 				maxscan -= numpagedout - 1;
-			}
-			else if (error == EDEADLK) {
+			} else if (error == EDEADLK) {
 				pageout_lock_miss++;
 				vnodes_skipped++;
 			}
@@ -1083,6 +1092,15 @@ relock_queues:
 		TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_laundry_marker, plinks.q);
 	}
 	vm_pagequeue_unlock(pq);
+
+	/*
+	 * If we didn't meet our target with the stasis queue, try again using
+	 * the laundry queue.
+	 */
+	if (pass == 0 && launder > 0) {
+		pass++;
+		goto scan;
+	}
 
 	/*
 	 * Wakeup the sync daemon if we skipped a vnode in a writeable object
@@ -1109,7 +1127,8 @@ vm_pageout_swapon(void *arg, struct swdevt *sp __unused)
 		pq = &vmd->vmd_pagequeues[PQ_STASIS];
 		/*
 		 * We now have a swap device, so migrate pages back to the
-		 * laundry queue.
+		 * laundry queue.  Locking rules make this somewhat awkward, but
+		 * this is a rare operation.
 		 */
 		vm_pagequeue_lock(pq);
 		while ((m = TAILQ_FIRST(&pq->pq_pl)) != NULL) {
@@ -1433,9 +1452,8 @@ drop_page:
 	 * ensuring that they can eventually be reused.
 	 */
 	page_shortage = vm_cnt.v_inactive_target - (vm_cnt.v_inactive_count +
-	    vm_cnt.v_laundry_count / act_scan_laundry_weight) -
-	    vm_cnt.v_stasis_count + vm_paging_target() + deficit +
-	    addl_page_shortage;
+	    vm_cnt.v_laundry_count / act_scan_laundry_weight) +
+	    vm_paging_target() + deficit + addl_page_shortage;
 	page_shortage *= act_scan_laundry_weight;
 
 	pq = &vmd->vmd_pagequeues[PQ_ACTIVE];
