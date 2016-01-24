@@ -232,6 +232,11 @@ SYSCTL_INT(_vm, OID_AUTO, act_scan_laundry_weight,
 	CTLFLAG_RW, &act_scan_laundry_weight, 0,
 	"weight given to clean vs. dirty pages in active queue scans");
 
+static int idle_launder_rate = 1 * VM_LAUNDER_INTERVAL;
+SYSCTL_INT(_vm, OID_AUTO, idle_launder_rate,
+	CTLFLAG_RWTUN, &idle_launder_rate, 0,
+	"desired number of idle page launderings per second");
+
 #define VM_PAGEOUT_PAGE_COUNT 16
 int vm_pageout_page_count = VM_PAGEOUT_PAGE_COUNT;
 
@@ -919,7 +924,7 @@ vm_pageout_launder(struct vm_domain *vmd)
 	launder = vm_cnt.v_inactive_target - vm_cnt.v_inactive_count +
 	    vm_paging_target() + vm_pageout_deficit;
 	if (launder < 0)
-		launder = 1;
+		launder = idle_launder_rate / VM_LAUNDER_INTERVAL;
 	else
 		launder /= VM_LAUNDER_RATE;
 
