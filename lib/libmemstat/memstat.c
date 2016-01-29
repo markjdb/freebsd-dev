@@ -366,6 +366,20 @@ memstat_get_kegfree(const struct memory_type *mtp)
 }
 
 uint64_t
+memstat_get_zonehits(const struct memory_type *mtp)
+{
+
+	return (mtp->mt_zonehits);
+}
+
+uint64_t
+memstat_get_zonemisses(const struct memory_type *mtp)
+{
+
+	return (mtp->mt_zonemisses);
+}
+
+uint64_t
 memstat_get_percpu_memalloced(const struct memory_type *mtp, int cpu)
 {
 
@@ -398,6 +412,20 @@ memstat_get_percpu_sizemask(const struct memory_type *mtp, int cpu)
 {
 
 	return (mtp->mt_percpu_alloc[cpu].mtp_sizemask);
+}
+
+uint64_t
+memstat_get_percpu_hits(const struct memory_type *mtp, int cpu)
+{
+
+	return (mtp->mt_percpu_alloc[cpu].mtp_hits);
+}
+
+uint64_t
+memstat_get_percpu_misses(const struct memory_type *mtp, int cpu)
+{
+
+	return (mtp->mt_percpu_alloc[cpu].mtp_misses);
 }
 
 void *

@@ -693,14 +693,17 @@ struct uma_type_header {
 	uint64_t	uth_frees;	/* Zone: number of frees. */
 	uint64_t	uth_fails;	/* Zone: number of alloc failures. */
 	uint64_t	uth_sleeps;	/* Zone: number of alloc sleeps. */
-	uint64_t	_uth_reserved1[2];	/* Reserved. */
+	uint64_t	uth_bucket_hits;
+	uint64_t	uth_bucket_misses;
 };
 
 struct uma_percpu_stat {
 	uint64_t	ups_allocs;	/* Cache: number of allocations. */
 	uint64_t	ups_frees;	/* Cache: number of frees. */
 	uint64_t	ups_cache_free;	/* Cache: free items in cache. */
-	uint64_t	_ups_reserved[5];	/* Reserved. */
+	uint64_t	ups_hits;	/* Cache: hits (UMA_STATS only) */
+	uint64_t	ups_misses;	/* Cache: misses (UMA_STATS only) */
+	uint64_t	_ups_reserved[3];	/* Reserved. */
 };
 
 void uma_reclaim_wakeup(void);

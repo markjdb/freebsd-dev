@@ -144,6 +144,8 @@ void		 memstat_set_caller_uint64(struct memory_type *mtp, int index,
 		    uint64_t value);
 uint64_t	 memstat_get_zonefree(const struct memory_type *mtp);
 uint64_t	 memstat_get_kegfree(const struct memory_type *mtp);
+uint64_t	 memstat_get_zonehits(const struct memory_type *mtp);
+uint64_t	 memstat_get_zonemisses(const struct memory_type *mtp);
 uint64_t	 memstat_get_percpu_memalloced(const struct memory_type *mtp,
 		    int cpu);
 uint64_t	 memstat_get_percpu_memfreed(const struct memory_type *mtp,
@@ -153,6 +155,10 @@ uint64_t	 memstat_get_percpu_numallocs(const struct memory_type *mtp,
 uint64_t	 memstat_get_percpu_numfrees(const struct memory_type *mtp,
 		    int cpu);
 uint64_t	 memstat_get_percpu_sizemask(const struct memory_type *mtp,
+		    int cpu);
+uint64_t	 memstat_get_percpu_hits(const struct memory_type *mtp,
+		    int cpu);
+uint64_t	 memstat_get_percpu_misses(const struct memory_type *mtp,
 		    int cpu);
 void		*memstat_get_percpu_caller_pointer(
 		    const struct memory_type *mtp, int cpu, int index);

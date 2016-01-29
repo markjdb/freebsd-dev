@@ -1580,6 +1580,10 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 	zone->uz_frees = 0;
 	zone->uz_fails = 0;
 	zone->uz_sleeps = 0;
+#ifdef UMA_STATS
+	zone->uz_bucket_hits = 0;
+	zone->uz_bucket_misses = 0;
+#endif
 	zone->uz_count = 0;
 	zone->uz_count_min = 0;
 	zone->uz_flags = 0;
@@ -2142,6 +2146,9 @@ uma_zalloc_arg(uma_zone_t zone, void *udata, int flags)
 	uma_bucket_t bucket;
 	int lockfail;
 	int cpu;
+#ifdef UMA_STATS
+	bool cachemiss;
+#endif
 
 	/* Enable entropy collection for RANDOM_ENABLE_UMA kernel option */
 	random_harvest_fast_uma(&zone, sizeof(zone), 1, RANDOM_UMA);
@@ -2198,6 +2205,9 @@ uma_zalloc_arg(uma_zone_t zone, void *udata, int flags)
 	critical_enter();
 	cpu = curcpu;
 	cache = &zone->uz_cpu[cpu];
+#ifdef UMA_STATS
+	cachemiss = false;
+#endif
 
 zalloc_start:
 	bucket = cache->uc_allocbucket;
@@ -2209,6 +2219,10 @@ zalloc_start:
 #endif
 		KASSERT(item != NULL, ("uma_zalloc: Bucket pointer mangled."));
 		cache->uc_allocs++;
+#ifdef UMA_STATS
+		if (!cachemiss)
+			cache->uc_hits++;
+#endif
 		critical_exit();
 		if (zone->uz_ctor != NULL &&
 		    zone->uz_ctor(item, zone->uz_size, udata, flags) != 0) {
@@ -2243,6 +2257,12 @@ zalloc_start:
 	 */
 	bucket = cache->uc_allocbucket;
 	cache->uc_allocbucket = NULL;
+#ifdef UMA_STATS
+	if (!cachemiss) {
+		cache->uc_misses++;
+		cachemiss = true;
+	}
+#endif
 	critical_exit();
 	if (bucket != NULL)
 		bucket_free(zone, bucket, udata);
@@ -2280,6 +2300,9 @@ zalloc_start:
 
 	/* See if we lost the race to fill the cache. */
 	if (cache->uc_allocbucket != NULL) {
+#ifdef UMA_STATS
+		zone->uz_bucket_hits++;
+#endif
 		ZONE_UNLOCK(zone);
 		goto zalloc_start;
 	}
@@ -2293,6 +2316,9 @@ zalloc_start:
 
 		LIST_REMOVE(bucket, ub_link);
 		cache->uc_allocbucket = bucket;
+#ifdef UMA_STATS
+		zone->uz_bucket_hits++;
+#endif
 		ZONE_UNLOCK(zone);
 		goto zalloc_start;
 	}
@@ -2305,10 +2331,13 @@ zalloc_start:
 	 */
 	if (lockfail && zone->uz_count < BUCKET_MAX)
 		zone->uz_count++;
+#ifdef UMA_STATS
+	zone->uz_bucket_misses++;
+#endif
 	ZONE_UNLOCK(zone);
 
 	/*
-	 * Now lets just fill a bucket and put it on the free list.  If that
+	 * Now let's just fill a bucket and put it on the free list.  If that
 	 * works we'll restart the allocation from the begining and it
 	 * will use the just filled bucket.
 	 */
@@ -3545,6 +3574,10 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 			uth.uth_frees = z->uz_frees;
 			uth.uth_fails = z->uz_fails;
 			uth.uth_sleeps = z->uz_sleeps;
+#ifdef UMA_STATS
+			uth.uth_bucket_hits = z->uz_bucket_hits;
+			uth.uth_bucket_misses = z->uz_bucket_misses;
+#endif
 			(void)sbuf_bcat(&sbuf, &uth, sizeof(uth));
 			/*
 			 * While it is not normally safe to access the cache
@@ -3569,6 +3602,10 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 					    cache->uc_freebucket->ub_cnt;
 				ups.ups_allocs = cache->uc_allocs;
 				ups.ups_frees = cache->uc_frees;
+#ifdef UMA_STATS
+				ups.ups_hits = cache->uc_hits;
+				ups.ups_misses = cache->uc_misses;
+#endif
 skip:
 				(void)sbuf_bcat(&sbuf, &ups, sizeof(ups));
 			}

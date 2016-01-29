@@ -206,6 +206,10 @@ retry:
 
 			mtp->mt_percpu_cache[j].mtp_free =
 			    upsp->ups_cache_free;
+			mtp->mt_percpu_alloc[j].mtp_hits =
+			    upsp->ups_hits;
+			mtp->mt_percpu_alloc[j].mtp_misses =
+			    upsp->ups_misses;
 			mtp->mt_free += upsp->ups_cache_free;
 			mtp->mt_numallocs += upsp->ups_allocs;
 			mtp->mt_numfrees += upsp->ups_frees;
@@ -221,6 +225,8 @@ retry:
 
 		mtp->mt_count = mtp->mt_numallocs - mtp->mt_numfrees;
 		mtp->mt_zonefree = uthp->uth_zone_free;
+		mtp->mt_zonehits = uthp->uth_bucket_hits;
+		mtp->mt_zonemisses = uthp->uth_bucket_misses;
 
 		/*
 		 * UMA secondary zones share a keg with the primary zone.  To

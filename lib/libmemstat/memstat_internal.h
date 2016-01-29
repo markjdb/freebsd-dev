@@ -88,6 +88,8 @@ struct memory_type {
 	 */
 	uint64_t	 mt_zonefree;	/* Free items in zone. */
 	uint64_t	 mt_kegfree;	/* Free items in keg. */
+	uint64_t	 mt_zonehits;	/* Zone cache hits. */
+	uint64_t	 mt_zonemisses;	/* Zone cache hits. */
 
 	/*
 	 * Per-CPU measurements fall into two categories: per-CPU allocation,
@@ -99,6 +101,8 @@ struct memory_type {
 		uint64_t	 mtp_numallocs;	/* Per-CPU mt_numallocs. */
 		uint64_t	 mtp_numfrees;	/* Per-CPU mt_numfrees. */
 		uint64_t	 mtp_sizemask;	/* Per-CPU mt_sizemask. */
+		uint64_t	 mtp_hits;	/* Per-CPU cache hits. */
+		uint64_t	 mtp_misses;	/* Per-CPU cache misses. */
 		void		*mtp_caller_pointer[MEMSTAT_MAXCALLER];
 		uint64_t	 mtp_caller_uint64[MEMSTAT_MAXCALLER];
 	}	*mt_percpu_alloc;

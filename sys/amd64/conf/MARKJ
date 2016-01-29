@@ -78,6 +78,7 @@ options 	RCTL			# Resource limits
 
 options		GZIO
 options 	USB_REQ_DEBUG
+options 	UMA_STATS
 
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.

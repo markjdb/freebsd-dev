@@ -170,6 +170,10 @@ struct uma_cache {
 	uma_bucket_t	uc_allocbucket;	/* Bucket to allocate from */
 	uint64_t	uc_allocs;	/* Count of allocations */
 	uint64_t	uc_frees;	/* Count of frees */
+#ifdef UMA_STATS
+	uint64_t	uc_hits;	/* Cache hits */
+	uint64_t	uc_misses;	/* Cache misses */
+#endif
 } UMA_ALIGN;
 
 typedef struct uma_cache * uma_cache_t;
@@ -300,6 +304,10 @@ struct uma_zone {
 	volatile u_long	uz_fails;	/* Total number of alloc failures */
 	volatile u_long	uz_frees;	/* Total number of frees */
 	uint64_t	uz_sleeps;	/* Total number of alloc sleeps */
+#ifdef UMA_STATS
+	uint64_t	uz_bucket_hits;	/* Bucket hits */
+	uint64_t	uz_bucket_misses; /* Bucket misses */
+#endif
 	uint16_t	uz_count;	/* Amount of items in full bucket */
 	uint16_t	uz_count_min;	/* Minimal amount of items there */
 
