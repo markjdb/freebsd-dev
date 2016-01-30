@@ -668,8 +668,9 @@ struct uma_stream_header {
 	uint32_t	_ush_pad;	/* Pad/reserved field. */
 };
 
-#define	UTH_MAX_NAME	32
+#define	UTH_MAX_NAME		32
 #define	UTH_ZONE_SECONDARY	0x00000001
+#define	UTH_ZONE_CACHE		0x00000002
 struct uma_type_header {
 	/*
 	 * Static per-zone data, some extracted from the supporting keg.
