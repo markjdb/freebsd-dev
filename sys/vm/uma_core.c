@@ -2036,7 +2036,7 @@ uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 	args.release = zrelease;
 	args.arg = arg;
 	args.align = 0;
-	args.flags = flags;
+	args.flags = flags | UMA_ZONE_MAXBUCKET;
 
 	return (zone_alloc_item(zones, &args, M_WAITOK));
 }
