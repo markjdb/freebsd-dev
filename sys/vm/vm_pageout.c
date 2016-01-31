@@ -236,6 +236,10 @@ int vm_page_max_wired;		/* XXX max # of wired pages system-wide */
 SYSCTL_INT(_vm, OID_AUTO, max_wired,
 	CTLFLAG_RW, &vm_page_max_wired, 0, "System-wide limit to wired page count");
 
+static int vm_do_uma_reclaim;
+SYSCTL_INT(_vm, OID_AUTO, do_uma_reclaim,
+	CTLFLAG_RW, &vm_do_uma_reclaim, 0, "");
+
 static boolean_t vm_pageout_fallback_object_lock(vm_page_t, vm_page_t *);
 #if !defined(NO_SWAPPING)
 static void vm_pageout_map_deactivate_pages(vm_map_t, long);
@@ -901,7 +905,8 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 		 * We do this explicitly after the caches have been
 		 * drained above.
 		 */
-		uma_reclaim();
+		if (vm_do_uma_reclaim)
+			uma_reclaim();
 		lowmem_uptime = time_uptime;
 	}
 
