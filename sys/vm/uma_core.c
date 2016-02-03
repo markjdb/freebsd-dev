@@ -78,6 +78,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sbuf.h>
 #include <sys/sched.h>
 #include <sys/smp.h>
+#include <sys/taskqueue.h>
 #include <sys/vmmeter.h>
 
 #include <vm/vm.h>
@@ -153,6 +154,9 @@ static int booted = 0;
 #define	UMA_STARTUP	1
 #define	UMA_STARTUP2	2
 
+static void uma_async_reclaim(void *arg __unused, int pending);
+
+static struct task reclaim_task;
 /*
  * Only mbuf clusters use ref zones.  Just provide enough references
  * to support the one user.  New code should not use the ref facility.
@@ -164,7 +168,7 @@ static const u_int uma_max_ipers_ref = PAGE_SIZE / MCLBYTES;
  * outside of the allocation fast path.
  */
 static struct callout uma_callout;
-#define	UMA_TIMEOUT	20		/* Seconds for callout interval. */
+#define	UMA_TIMEOUT	10		/* Seconds for callout interval. */
 
 /*
  * This structure is passed as the zone ctor arg so that I don't have to create
@@ -462,6 +466,7 @@ uma_timeout(void *unused)
 {
 	bucket_enable();
 	zone_foreach(zone_timeout);
+	taskqueue_enqueue(taskqueue_thread, &reclaim_task);
 
 	/* Reschedule this event */
 	callout_reset(&uma_callout, UMA_TIMEOUT * hz, uma_timeout, NULL);
@@ -1897,12 +1902,14 @@ uma_startup2(void)
  *
  */
 
+
 static void
 uma_startup3(void)
 {
 #ifdef UMA_DEBUG
 	printf("Starting callout.\n");
 #endif
+	TASK_INIT(&reclaim_task, 0, uma_async_reclaim, NULL);
 	callout_init(&uma_callout, 1);
 	callout_reset(&uma_callout, UMA_TIMEOUT * hz, uma_timeout, NULL);
 #ifdef UMA_DEBUG
@@ -3658,6 +3665,21 @@ sysctl_handle_uma_zone_cur(SYSCTL_HANDLER_ARGS)
 
 	cur = uma_zone_get_cur(zone);
 	return (sysctl_handle_int(oidp, &cur, 0, req));
+}
+
+static int uma_periodic_reclaim = 0;
+SYSCTL_INT(_vm, OID_AUTO, periodic_uma_reclaim, CTLFLAG_RWTUN,
+    &uma_periodic_reclaim, 0,
+    "Warn when UMA zones becomes full");
+
+static void
+uma_async_reclaim(void *arg __unused, int pending __unused)
+{
+
+	if (!uma_periodic_reclaim)
+		return;
+
+	uma_reclaim();
 }
 
 #ifdef DDB
