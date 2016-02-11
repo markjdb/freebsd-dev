@@ -454,6 +454,7 @@ void nd6_ra_input(struct mbuf *, int, int);
 void prelist_del(struct nd_prefix *);
 void defrouter_reset(void);
 void defrouter_select(void);
+void defrouter_ref(struct nd_defrouter *);
 void defrouter_rele(struct nd_defrouter *);
 void defrouter_unlink(struct nd_defrouter *, struct nd_drhead *);
 void defrouter_del(struct nd_defrouter *);

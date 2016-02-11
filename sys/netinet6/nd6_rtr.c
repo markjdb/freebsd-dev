@@ -521,7 +521,7 @@ defrouter_lookup_locked(struct in6_addr *addr, struct ifnet *ifp)
 	ND_LOCK_ASSERT();
 	TAILQ_FOREACH(dr, &V_nd_defrouter, dr_entry)
 		if (dr->ifp == ifp && IN6_ARE_ADDR_EQUAL(addr, &dr->rtaddr)) {
-			refcount_acquire(&dr->refcnt);
+			defrouter_ref(dr);
 			return (dr);
 		}
 	return (NULL);
@@ -536,6 +536,13 @@ defrouter_lookup(struct in6_addr *addr, struct ifnet *ifp)
 	dr = defrouter_lookup_locked(addr, ifp);
 	ND_UNLOCK();
 	return (dr);
+}
+
+void
+defrouter_ref(struct nd_defrouter *dr)
+{
+
+	refcount_acquire(&dr->refcnt);
 }
 
 void
@@ -703,7 +710,7 @@ defrouter_select(void)
 		    (ln = nd6_lookup(&dr->rtaddr, 0, dr->ifp)) &&
 		    ND6_IS_LLINFO_PROBREACH(ln)) {
 			selected_dr = dr;
-			refcount_acquire(&selected_dr->refcnt);
+			defrouter_ref(selected_dr);
 		}
 		IF_AFDATA_RUNLOCK(dr->ifp);
 		if (ln != NULL) {
@@ -714,7 +721,7 @@ defrouter_select(void)
 		if (dr->installed) {
 			if (installed_dr == NULL) {
 				installed_dr = dr;
-				refcount_acquire(&installed_dr->refcnt);
+				defrouter_ref(installed_dr);
 			} else {
 				/* this should not happen.  warn for diagnosis. */
 				log(LOG_ERR,
@@ -736,7 +743,7 @@ defrouter_select(void)
 			selected_dr = TAILQ_FIRST(&V_nd_defrouter);
 		else
 			selected_dr = TAILQ_NEXT(installed_dr, dr_entry);
-		refcount_acquire(&selected_dr->refcnt);
+		defrouter_ref(selected_dr);
 	} else if (installed_dr != NULL) {
 		ND_UNLOCK();
 		IF_AFDATA_RLOCK(installed_dr->ifp);
