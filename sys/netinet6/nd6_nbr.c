@@ -865,26 +865,22 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 			dr = defrouter_lookup_locked(&ln->r_l3addr.addr6,
 			    nd6_ifp);
 			if (dr != NULL) {
-				defrouter_unlink(dr, NULL);
-				ND_UNLOCK();
-				defrouter_del(dr);
-				/* Release the lookup reference. */
-				defrouter_rele(dr);
+				/* releases the ND lock */
+				defrouter_remove(dr);
+				dr = NULL;
 			} else {
 				ND_UNLOCK();
+				if ((ND_IFINFO(nd6_ifp)->flags & ND6_IFF_ACCEPT_RTADV) != 0) {
+					/*
+					 * Even if the neighbor is not in the default
+					 * router list, the neighbor may be used
+					 * as a next hop for some destinations
+					 * (e.g. redirect case). So we must
+					 * call rt6_flush explicitly.
+					 */
+					rt6_flush(&ip6->ip6_src, ifp);
+				}
 			}
-			if (dr == NULL &&
-			    (ND_IFINFO(nd6_ifp)->flags & ND6_IFF_ACCEPT_RTADV) != 0) {
-				/*
-				 * Even if the neighbor is not in the default
-				 * router list, the neighbor may be used
-				 * as a next hop for some destinations
-				 * (e.g. redirect case). So we must
-				 * call rt6_flush explicitly.
-				 */
-				rt6_flush(&ip6->ip6_src, ifp);
-			}
-			dr = NULL;
 		}
 		ln->ln_router = is_router;
 	}

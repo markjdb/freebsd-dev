@@ -454,10 +454,6 @@ nd6_ra_input(struct mbuf *m, int off, int icmp6len)
 	m_freem(m);
 }
 
-/*
- * default router list proccessing sub routines
- */
-
 /* tell the change to user processes watching the routing socket. */
 static void
 nd6_rtmsg(int cmd, struct rtentry *rt)
@@ -485,6 +481,10 @@ nd6_rtmsg(int cmd, struct rtentry *rt)
 	if (ifa != NULL)
 		ifa_free(ifa);
 }
+
+/*
+ * default router list proccessing sub routines
+ */
 
 static void
 defrouter_addreq(struct nd_defrouter *new)
@@ -586,22 +586,64 @@ defrouter_delreq(struct nd_defrouter *dr)
 
 /*
  * Remove all default routes from default router list.
- *
- * The ND lock must be held.
  */
 void
 defrouter_reset(void)
 {
-	struct nd_defrouter *dr;
+	struct nd_defrouter *dr, **dra;
+	int count, i;
 
-	ND_LOCK_ASSERT();
+	count = i = 0;
+
+	/*
+	 * We can't delete routes with the ND lock held, so make a copy of the
+	 * current default router list and use that when deleting routes.
+	 */
+	ND_LOCK();
 	TAILQ_FOREACH(dr, &V_nd_defrouter, dr_entry)
-		defrouter_delreq(dr);
+		count++;
+	ND_UNLOCK();
+
+	dra = malloc(count * sizeof(*dra), M_TEMP, M_WAITOK | M_ZERO);
+
+	ND_LOCK();
+	TAILQ_FOREACH(dr, &V_nd_defrouter, dr_entry) {
+		if (i == count)
+			break;
+		defrouter_ref(dr);
+		dra[i++] = dr;
+	}
+	ND_UNLOCK();
+
+	for (i = 0; i < count && dra[i] != NULL; i++) {
+		defrouter_delreq(dra[i]);
+		defrouter_rele(dra[i]);
+	}
+	free(dra, M_TEMP);
 
 	/*
 	 * XXX should we also nuke any default routers in the kernel, by
 	 * going through them by rtalloc1()?
 	 */
+}
+
+/*
+ * Remove a router from the global list and free it.
+ *
+ * The ND lock must be held and is released before returning. The caller must
+ * hold a reference on the router object.
+ */
+void
+defrouter_remove(struct nd_defrouter *dr)
+{
+
+	ND_LOCK_ASSERT();
+	MPASS(dr->refcnt >= 2);
+
+	defrouter_unlink(dr, NULL);
+	ND_UNLOCK();
+	defrouter_del(dr);
+	defrouter_rele(dr);
 }
 
 /*
@@ -658,6 +700,9 @@ defrouter_del(struct nd_defrouter *dr)
 	if (deldr)
 		defrouter_select();
 
+	/*
+	 * Release the list reference.
+	 */
 	defrouter_rele(dr);
 }
 
@@ -811,10 +856,8 @@ defrtrlist_update(struct nd_defrouter *new)
 	ND_LOCK();
 	if ((dr = defrouter_lookup_locked(&new->rtaddr, new->ifp)) != NULL) {
 		if (new->rtlifetime == 0) {
-			defrouter_unlink(dr, NULL);
-			ND_UNLOCK();
-			defrouter_del(dr);
-			defrouter_rele(dr);
+			/* releases the ND lock */
+			defrouter_remove(dr);
 			return (NULL);
 		}
 
@@ -836,13 +879,8 @@ defrtrlist_update(struct nd_defrouter *new)
 		}
 
 		/*
-		 * preferred router may be changed, so relocate
-		 * this router.
-		 * XXX: calling TAILQ_REMOVE directly is a bad manner.
-		 * However, since defrtrlist_del() has many side
-		 * effects, we intentionally do so here.
-		 * defrouter_select() below will handle routing
-		 * changes later.
+		 * The preferred router may have changed, so relocate this
+		 * router.
 		 */
 		TAILQ_REMOVE(&V_nd_defrouter, dr, dr_entry);
 		n = dr;
@@ -910,6 +948,7 @@ pfxrtr_add(struct nd_prefix *pr, struct nd_defrouter *dr)
 	if (new == NULL)
 		return;
 	new->router = dr;
+	defrouter_ref(dr);
 
 	LIST_INSERT_HEAD(&pr->ndpr_advrtrs, new, pfr_entry);
 
@@ -919,7 +958,9 @@ pfxrtr_add(struct nd_prefix *pr, struct nd_defrouter *dr)
 static void
 pfxrtr_del(struct nd_pfxrouter *pfr)
 {
+
 	LIST_REMOVE(pfr, pfr_entry);
+	defrouter_rele(pfr->router);
 	free(pfr, M_IP6NDP);
 }
 

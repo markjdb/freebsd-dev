@@ -1711,7 +1711,6 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 #undef ND
 	case SIOCSNDFLUSH_IN6:	/* XXX: the ioctl name is confusing... */
 		/* sync kernel routing table with the default router list */
-		/* XXX locking */
 		defrouter_reset();
 		defrouter_select();
 		break;
@@ -1748,8 +1747,8 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 
 		TAILQ_INIT(&drq);
 
-		/* XXX locking */
 		defrouter_reset();
+
 		ND_LOCK();
 		while ((dr = TAILQ_FIRST(&V_nd_defrouter)) != NULL)
 			defrouter_unlink(dr, &drq);
@@ -2568,7 +2567,7 @@ nd6_sysctl_drlist(SYSCTL_HANDLER_ARGS)
 	struct nd_defrouter *dr;
 	int error;
 
-	if (req->newptr)
+	if (req->newptr != NULL)
 		return (EPERM);
 
 	error = sysctl_wire_old_buffer(req, 0);
