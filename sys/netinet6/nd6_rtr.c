@@ -707,7 +707,7 @@ defrouter_select(void)
 		}
 
 		if (dr->installed) {
-			if (installed_dr != NULL) {
+			if (installed_dr == NULL) {
 				installed_dr = dr;
 				refcount_acquire(&installed_dr->refcnt);
 			} else {
@@ -867,6 +867,8 @@ insert:
 		TAILQ_INSERT_BEFORE(dr, n, dr_entry);
 	else
 		TAILQ_INSERT_TAIL(&V_nd_defrouter, n, dr_entry);
+	/* Acquire a reference for the caller. */
+	refcount_acquire(&n->refcnt);
 	ND_UNLOCK();
 
 	defrouter_select();
