@@ -206,6 +206,8 @@ void
 nd6_init(void)
 {
 
+	mtx_init(&V_nd_lock, "nd6", NULL, MTX_DEF);
+
 	LIST_INIT(&V_nd_prefix);
 
 	/* initialization of the default router list */
