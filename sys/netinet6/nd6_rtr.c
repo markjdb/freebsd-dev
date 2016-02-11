@@ -221,6 +221,8 @@ nd6_ra_input(struct mbuf *m, int off, int icmp6len)
 	struct nd_defrouter *dr;
 	char ip6bufs[INET6_ADDRSTRLEN], ip6bufd[INET6_ADDRSTRLEN];
 
+	dr = NULL;
+
 	/*
 	 * We only accept RAs only when the per-interface flag
 	 * ND6_IFF_ACCEPT_RTADV is on the receiving interface.
@@ -368,8 +370,6 @@ nd6_ra_input(struct mbuf *m, int off, int icmp6len)
 			pr.ndpr_vltime = ntohl(pi->nd_opt_pi_valid_time);
 			pr.ndpr_pltime = ntohl(pi->nd_opt_pi_preferred_time);
 			(void)prelist_update(&pr, dr, m, mcast);
-			if (dr != NULL)
-				defrouter_rele(dr);
 		}
 	}
 
@@ -439,6 +439,11 @@ nd6_ra_input(struct mbuf *m, int off, int icmp6len)
 	 */
 	pfxlist_onlink_check();
     }
+
+	if (dr != NULL) {
+		defrouter_rele(dr);
+		dr = NULL;
+	}
 
  freeit:
 	m_freem(m);
@@ -794,46 +799,47 @@ static struct nd_defrouter *
 defrtrlist_update(struct nd_defrouter *new)
 {
 	struct nd_defrouter *dr, *n;
+	int oldpref;
 
 	ND_LOCK();
 	if ((dr = defrouter_lookup_locked(&new->rtaddr, new->ifp)) != NULL) {
-		/* entry exists */
 		if (new->rtlifetime == 0) {
+			defrouter_unlink(dr, NULL);
+			ND_UNLOCK();
 			defrouter_del(dr);
-			dr = NULL;
-		} else {
-			int oldpref = rtpref(dr);
-
-			/* override */
-			dr->raflags = new->raflags; /* XXX flag check */
-			dr->rtlifetime = new->rtlifetime;
-			dr->expire = new->expire;
-
-			/*
-			 * If the preference does not change, there's no need
-			 * to sort the entries. Also make sure the selected
-			 * router is still installed in the kernel.
-			 */
-			if (dr->installed && rtpref(new) == oldpref) {
-				ND_UNLOCK();
-				return (dr);
-			}
-
-			/*
-			 * preferred router may be changed, so relocate
-			 * this router.
-			 * XXX: calling TAILQ_REMOVE directly is a bad manner.
-			 * However, since defrtrlist_del() has many side
-			 * effects, we intentionally do so here.
-			 * defrouter_select() below will handle routing
-			 * changes later.
-			 */
-			TAILQ_REMOVE(&V_nd_defrouter, dr, dr_entry);
-			n = dr;
-			goto insert;
+			defrouter_rele(dr);
+			return (NULL);
 		}
-		ND_UNLOCK();
-		return (dr);
+
+		oldpref = rtpref(dr);
+
+		/* override */
+		dr->raflags = new->raflags; /* XXX flag check */
+		dr->rtlifetime = new->rtlifetime;
+		dr->expire = new->expire;
+
+		/*
+		 * If the preference does not change, there's no need
+		 * to sort the entries. Also make sure the selected
+		 * router is still installed in the kernel.
+		 */
+		if (dr->installed && rtpref(new) == oldpref) {
+			ND_UNLOCK();
+			return (dr);
+		}
+
+		/*
+		 * preferred router may be changed, so relocate
+		 * this router.
+		 * XXX: calling TAILQ_REMOVE directly is a bad manner.
+		 * However, since defrtrlist_del() has many side
+		 * effects, we intentionally do so here.
+		 * defrouter_select() below will handle routing
+		 * changes later.
+		 */
+		TAILQ_REMOVE(&V_nd_defrouter, dr, dr_entry);
+		n = dr;
+		goto insert;
 	}
 
 	/* entry does not exist */
@@ -847,8 +853,9 @@ defrtrlist_update(struct nd_defrouter *new)
 		ND_UNLOCK();
 		return (NULL);
 	}
-	*n = *new;
-	refcount_init(&n->refcnt, 1);
+	memcpy(n, new, sizeof(*n));
+	/* Initialize with an extra reference for the caller. */
+	refcount_init(&n->refcnt, 2);
 
 insert:
 	/*
@@ -867,8 +874,6 @@ insert:
 		TAILQ_INSERT_BEFORE(dr, n, dr_entry);
 	else
 		TAILQ_INSERT_TAIL(&V_nd_defrouter, n, dr_entry);
-	/* Acquire a reference for the caller. */
-	refcount_acquire(&n->refcnt);
 	ND_UNLOCK();
 
 	defrouter_select();
