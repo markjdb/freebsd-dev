@@ -707,7 +707,7 @@ defrouter_select(void)
 		}
 
 		if (dr->installed) {
-			if (installed_dr == NULL) {
+			if (installed_dr != NULL) {
 				installed_dr = dr;
 				refcount_acquire(&installed_dr->refcnt);
 			} else {
