@@ -859,23 +859,23 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 			 * update the Destination Cache entries.
 			 */
 			struct nd_defrouter *dr;
-			struct in6_addr *in6;
 			struct ifnet *nd6_ifp;
 
-			in6 = &ln->r_l3addr.addr6;
-
-			/*
-			 * Lock to protect the default router list.
-			 * XXX: this might be unnecessary, since this function
-			 * is only called under the network software interrupt
-			 * context.  However, we keep it just for safety.
-			 */
 			nd6_ifp = lltable_get_ifp(ln->lle_tbl);
-			dr = defrouter_lookup(in6, nd6_ifp);
-			if (dr)
-				defrtrlist_del(dr);
-			else if (ND_IFINFO(nd6_ifp)->flags &
-			    ND6_IFF_ACCEPT_RTADV) {
+			ND_LOCK();
+			dr = defrouter_lookup_locked(&ln->r_l3addr.addr6,
+			    nd6_ifp);
+			if (dr != NULL) {
+				defrouter_unlink(dr, NULL);
+				ND_UNLOCK();
+				defrouter_del(dr);
+				/* Release the lookup reference. */
+				defrouter_rele(dr);
+			} else {
+				ND_UNLOCK();
+			}
+			if (dr == NULL &&
+			    (ND_IFINFO(nd6_ifp)->flags & ND6_IFF_ACCEPT_RTADV) != 0) {
 				/*
 				 * Even if the neighbor is not in the default
 				 * router list, the neighbor may be used
@@ -885,6 +885,7 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 				 */
 				rt6_flush(&ip6->ip6_src, ifp);
 			}
+			dr = NULL;
 		}
 		ln->ln_router = is_router;
 	}

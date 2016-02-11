@@ -39,6 +39,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/systm.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
+#include <sys/refcount.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <sys/time.h>
@@ -367,6 +368,8 @@ nd6_ra_input(struct mbuf *m, int off, int icmp6len)
 			pr.ndpr_vltime = ntohl(pi->nd_opt_pi_valid_time);
 			pr.ndpr_pltime = ntohl(pi->nd_opt_pi_preferred_time);
 			(void)prelist_update(&pr, dr, m, mcast);
+			if (dr != NULL)
+				defrouter_rele(dr);
 		}
 	}
 
@@ -503,7 +506,20 @@ defrouter_addreq(struct nd_defrouter *new)
 	}
 	if (error == 0)
 		new->installed = 1;
-	return;
+}
+
+struct nd_defrouter *
+defrouter_lookup_locked(struct in6_addr *addr, struct ifnet *ifp)
+{
+	struct nd_defrouter *dr;
+
+	ND_LOCK_ASSERT();
+	TAILQ_FOREACH(dr, &V_nd_defrouter, dr_entry)
+		if (dr->ifp == ifp && IN6_ARE_ADDR_EQUAL(addr, &dr->rtaddr)) {
+			refcount_acquire(&dr->refcnt);
+			return (dr);
+		}
+	return (NULL);
 }
 
 struct nd_defrouter *
@@ -511,12 +527,18 @@ defrouter_lookup(struct in6_addr *addr, struct ifnet *ifp)
 {
 	struct nd_defrouter *dr;
 
-	TAILQ_FOREACH(dr, &V_nd_defrouter, dr_entry) {
-		if (dr->ifp == ifp && IN6_ARE_ADDR_EQUAL(addr, &dr->rtaddr))
-			return (dr);
-	}
+	ND_LOCK();
+	dr = defrouter_lookup_locked(addr, ifp);
+	ND_UNLOCK();
+	return (dr);
+}
 
-	return (NULL);		/* search failed */
+void
+defrouter_rele(struct nd_defrouter *dr)
+{
+
+	if (refcount_release(&dr->refcnt))
+		free(dr, M_IP6NDP);
 }
 
 /*
@@ -551,13 +573,16 @@ defrouter_delreq(struct nd_defrouter *dr)
 }
 
 /*
- * remove all default routes from default router list
+ * Remove all default routes from default router list.
+ *
+ * The ND lock must be held.
  */
 void
 defrouter_reset(void)
 {
 	struct nd_defrouter *dr;
 
+	ND_LOCK_ASSERT();
 	TAILQ_FOREACH(dr, &V_nd_defrouter, dr_entry)
 		defrouter_delreq(dr);
 
@@ -567,11 +592,29 @@ defrouter_reset(void)
 	 */
 }
 
+/*
+ * Remove a router from the global list and optionally stash it in a
+ * caller-supplied queue.
+ *
+ * The ND lock must be held.
+ */
 void
-defrtrlist_del(struct nd_defrouter *dr)
+defrouter_unlink(struct nd_defrouter *dr, struct nd_drhead *drq)
+{
+
+	ND_LOCK_ASSERT();
+	TAILQ_REMOVE(&V_nd_defrouter, dr, dr_entry);
+	if (drq != NULL)
+		TAILQ_INSERT_TAIL(drq, dr, dr_entry);
+}
+
+void
+defrouter_del(struct nd_defrouter *dr)
 {
 	struct nd_defrouter *deldr = NULL;
 	struct nd_prefix *pr;
+
+	ND_UNLOCK_ASSERT();
 
 	/*
 	 * Flush all the routing table entries that use the router
@@ -584,7 +627,6 @@ defrtrlist_del(struct nd_defrouter *dr)
 		deldr = dr;
 		defrouter_delreq(dr);
 	}
-	TAILQ_REMOVE(&V_nd_defrouter, dr, dr_entry);
 
 	/*
 	 * Also delete all the pointers to the router in each prefix lists.
@@ -604,7 +646,7 @@ defrtrlist_del(struct nd_defrouter *dr)
 	if (deldr)
 		defrouter_select();
 
-	free(dr, M_IP6NDP);
+	defrouter_rele(dr);
 }
 
 /*
@@ -631,27 +673,32 @@ defrtrlist_del(struct nd_defrouter *dr)
 void
 defrouter_select(void)
 {
-	struct nd_defrouter *dr, *selected_dr = NULL, *installed_dr = NULL;
+	struct nd_defrouter *dr, *selected_dr, *installed_dr;
 	struct llentry *ln = NULL;
 
+	ND_LOCK();
 	/*
 	 * Let's handle easy case (3) first:
 	 * If default router list is empty, there's nothing to be done.
 	 */
-	if (TAILQ_EMPTY(&V_nd_defrouter))
+	if (TAILQ_EMPTY(&V_nd_defrouter)) {
+		ND_UNLOCK();
 		return;
+	}
 
 	/*
 	 * Search for a (probably) reachable router from the list.
 	 * We just pick up the first reachable one (if any), assuming that
 	 * the ordering rule of the list described in defrtrlist_update().
 	 */
+	selected_dr = installed_dr = NULL;
 	TAILQ_FOREACH(dr, &V_nd_defrouter, dr_entry) {
 		IF_AFDATA_RLOCK(dr->ifp);
 		if (selected_dr == NULL &&
 		    (ln = nd6_lookup(&dr->rtaddr, 0, dr->ifp)) &&
 		    ND6_IS_LLINFO_PROBREACH(ln)) {
 			selected_dr = dr;
+			refcount_acquire(&selected_dr->refcnt);
 		}
 		IF_AFDATA_RUNLOCK(dr->ifp);
 		if (ln != NULL) {
@@ -659,12 +706,15 @@ defrouter_select(void)
 			ln = NULL;
 		}
 
-		if (dr->installed && installed_dr == NULL)
-			installed_dr = dr;
-		else if (dr->installed && installed_dr) {
-			/* this should not happen.  warn for diagnosis. */
-			log(LOG_ERR, "defrouter_select: more than one router"
-			    " is installed\n");
+		if (dr->installed) {
+			if (installed_dr == NULL) {
+				installed_dr = dr;
+				refcount_acquire(&installed_dr->refcnt);
+			} else {
+				/* this should not happen.  warn for diagnosis. */
+				log(LOG_ERR,
+		    "defrouter_select: more than one router is installed\n");
+			}
 		}
 	}
 	/*
@@ -676,21 +726,27 @@ defrouter_select(void)
 	 * or when the new one has a really higher preference value.
 	 */
 	if (selected_dr == NULL) {
-		if (installed_dr == NULL || !TAILQ_NEXT(installed_dr, dr_entry))
+		if (installed_dr == NULL ||
+		    TAILQ_NEXT(installed_dr, dr_entry) == NULL)
 			selected_dr = TAILQ_FIRST(&V_nd_defrouter);
 		else
 			selected_dr = TAILQ_NEXT(installed_dr, dr_entry);
-	} else if (installed_dr) {
+		refcount_acquire(&selected_dr->refcnt);
+	} else if (installed_dr != NULL) {
+		ND_UNLOCK();
 		IF_AFDATA_RLOCK(installed_dr->ifp);
 		if ((ln = nd6_lookup(&installed_dr->rtaddr, 0, installed_dr->ifp)) &&
 		    ND6_IS_LLINFO_PROBREACH(ln) &&
 		    rtpref(selected_dr) <= rtpref(installed_dr)) {
+			defrouter_rele(selected_dr);
 			selected_dr = installed_dr;
 		}
 		IF_AFDATA_RUNLOCK(installed_dr->ifp);
 		if (ln != NULL)
 			LLE_RUNLOCK(ln);
+		ND_LOCK();
 	}
+	ND_UNLOCK();
 
 	/*
 	 * If the selected router is different than the installed one,
@@ -701,9 +757,10 @@ defrouter_select(void)
 		if (installed_dr)
 			defrouter_delreq(installed_dr);
 		defrouter_addreq(selected_dr);
+		defrouter_rele(selected_dr);
 	}
-
-	return;
+	if (installed_dr != NULL)
+		defrouter_rele(installed_dr);
 }
 
 /*
@@ -738,10 +795,11 @@ defrtrlist_update(struct nd_defrouter *new)
 {
 	struct nd_defrouter *dr, *n;
 
-	if ((dr = defrouter_lookup(&new->rtaddr, new->ifp)) != NULL) {
+	ND_LOCK();
+	if ((dr = defrouter_lookup_locked(&new->rtaddr, new->ifp)) != NULL) {
 		/* entry exists */
 		if (new->rtlifetime == 0) {
-			defrtrlist_del(dr);
+			defrouter_del(dr);
 			dr = NULL;
 		} else {
 			int oldpref = rtpref(dr);
@@ -756,8 +814,10 @@ defrtrlist_update(struct nd_defrouter *new)
 			 * to sort the entries. Also make sure the selected
 			 * router is still installed in the kernel.
 			 */
-			if (dr->installed && rtpref(new) == oldpref)
+			if (dr->installed && rtpref(new) == oldpref) {
+				ND_UNLOCK();
 				return (dr);
+			}
 
 			/*
 			 * preferred router may be changed, so relocate
@@ -772,18 +832,23 @@ defrtrlist_update(struct nd_defrouter *new)
 			n = dr;
 			goto insert;
 		}
+		ND_UNLOCK();
 		return (dr);
 	}
 
 	/* entry does not exist */
-	if (new->rtlifetime == 0)
+	if (new->rtlifetime == 0) {
+		ND_UNLOCK();
 		return (NULL);
+	}
 
-	n = (struct nd_defrouter *)malloc(sizeof(*n), M_IP6NDP, M_NOWAIT);
-	if (n == NULL)
+	n = malloc(sizeof(*n), M_IP6NDP, M_NOWAIT | M_ZERO);
+	if (n == NULL) {
+		ND_UNLOCK();
 		return (NULL);
-	bzero(n, sizeof(*n));
+	}
 	*n = *new;
+	refcount_init(&n->refcnt, 1);
 
 insert:
 	/*
@@ -798,10 +863,11 @@ insert:
 		if (rtpref(n) > rtpref(dr))
 			break;
 	}
-	if (dr)
+	if (dr != NULL)
 		TAILQ_INSERT_BEFORE(dr, n, dr_entry);
 	else
 		TAILQ_INSERT_TAIL(&V_nd_defrouter, n, dr_entry);
+	ND_UNLOCK();
 
 	defrouter_select();
 
@@ -826,10 +892,9 @@ pfxrtr_add(struct nd_prefix *pr, struct nd_defrouter *dr)
 {
 	struct nd_pfxrouter *new;
 
-	new = (struct nd_pfxrouter *)malloc(sizeof(*new), M_IP6NDP, M_NOWAIT);
+	new = malloc(sizeof(*new), M_IP6NDP, M_NOWAIT | M_ZERO);
 	if (new == NULL)
 		return;
-	bzero(new, sizeof(*new));
 	new->router = dr;
 
 	LIST_INSERT_HEAD(&pr->ndpr_advrtrs, new, pfr_entry);
@@ -869,10 +934,9 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
 	int error = 0;
 	char ip6buf[INET6_ADDRSTRLEN];
 
-	new = (struct nd_prefix *)malloc(sizeof(*new), M_IP6NDP, M_NOWAIT);
+	new = malloc(sizeof(*new), M_IP6NDP, M_NOWAIT | M_ZERO);
 	if (new == NULL)
 		return(ENOMEM);
-	bzero(new, sizeof(*new));
 	new->ndpr_ifp = pr->ndpr_ifp;
 	new->ndpr_prefix = pr->ndpr_prefix;
 	new->ndpr_plen = pr->ndpr_plen;
