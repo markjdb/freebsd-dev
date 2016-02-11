@@ -340,6 +340,7 @@ VNET_DECLARE(int, nd6_onlink_ns_rfc4861);
 #define	V_nd6_debug			VNET(nd6_debug)
 #define	V_nd6_onlink_ns_rfc4861		VNET(nd6_onlink_ns_rfc4861)
 
+/* Lock for the prefix and default router lists. */
 VNET_DECLARE(struct mtx, nd_lock);
 #define	V_nd_lock			VNET(nd_lock)
 
