@@ -887,8 +887,8 @@ void
 nd6_timer(void *arg)
 {
 	CURVNET_SET((struct vnet *) arg);
-	struct nd_defrouter *dr, *ndr;
 	struct nd_drhead drq;
+	struct nd_defrouter *dr, *ndr;
 	struct nd_prefix *pr, *npr;
 	struct in6_ifaddr *ia6, *nia6;
 
