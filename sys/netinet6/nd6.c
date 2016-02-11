@@ -2584,7 +2584,7 @@ nd6_sysctl_drlist(SYSCTL_HANDLER_ARGS)
 		error = sa6_recoverscope(&d.rtaddr);
 		if (error != 0)
 			break;
-		d.flags = dr->flags;
+		d.flags = dr->raflags;
 		d.rtlifetime = dr->rtlifetime;
 		d.expire = dr->expire + (time_second - time_uptime);
 		d.if_index = dr->ifp->if_index;
