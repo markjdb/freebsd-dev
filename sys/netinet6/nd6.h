@@ -240,7 +240,7 @@ struct nd_defrouter {
 	u_long	expire;
 	struct  ifnet *ifp;
 	int	installed;	/* is installed into kernel routing table */
-	int	refcnt;
+	u_int	refcnt;
 };
 
 struct nd_prefixctl {
