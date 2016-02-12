@@ -1753,8 +1753,10 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 		while ((dr = TAILQ_FIRST(&V_nd_defrouter)) != NULL)
 			defrouter_unlink(dr, &drq);
 		ND_UNLOCK();
-		while ((dr = TAILQ_FIRST(&drq)) != NULL)
+		while ((dr = TAILQ_FIRST(&drq)) != NULL) {
+			TAILQ_REMOVE(&drq, dr, dr_entry);
 			defrouter_del(dr);
+		}
 
 		defrouter_select();
 		break;

@@ -1268,6 +1268,7 @@ nd6_dad_start(struct ifaddr *ifa, int delay)
 		 * DAD already in progress.  Let the existing entry
 		 * to finish it.
 		 */
+		nd6_dad_rele(dp);
 		return;
 	}
 

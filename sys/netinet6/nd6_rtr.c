@@ -372,6 +372,10 @@ nd6_ra_input(struct mbuf *m, int off, int icmp6len)
 			(void)prelist_update(&pr, dr, m, mcast);
 		}
 	}
+	if (dr != NULL) {
+		defrouter_rele(dr);
+		dr = NULL;
+	}
 
 	/*
 	 * MTU
@@ -439,11 +443,6 @@ nd6_ra_input(struct mbuf *m, int off, int icmp6len)
 	 */
 	pfxlist_onlink_check();
     }
-
-	if (dr != NULL) {
-		defrouter_rele(dr);
-		dr = NULL;
-	}
 
  freeit:
 	m_freem(m);
