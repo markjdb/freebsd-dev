@@ -682,7 +682,7 @@ in6_control(struct socket *so, u_long cmd, caddr_t data,
 		/* relate the address to the prefix */
 		if (ia->ia6_ndpr == NULL) {
 			ia->ia6_ndpr = pr;
-			pr->ndpr_refcnt++;
+			refcount_acquire(&pr->ndpr_refcnt);
 
 			/*
 			 * If this is the first autoconf address from the
@@ -1358,7 +1358,7 @@ in6_unlink_ifa(struct in6_ifaddr *ia, struct ifnet *ifp)
 		    "in6_unlink_ifa: autoconf'ed address "
 		    "%s has no prefix\n", ip6_sprintf(ip6buf, IA6_IN6(ia))));
 	} else {
-		ia->ia6_ndpr->ndpr_refcnt--;
+		refcount_release(&ia->ia6_ndpr->ndpr_refcnt);
 		/* Do not delete lles within prefix if refcont != 0 */
 		if (ia->ia6_ndpr->ndpr_refcnt == 0)
 			remove_lle = 1;

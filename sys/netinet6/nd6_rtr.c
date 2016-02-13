@@ -1371,7 +1371,7 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 			/*
 			 * note that we should use pr (not new) for reference.
 			 */
-			pr->ndpr_refcnt++;
+			refcount_acquire(&pr->ndpr_refcnt);
 			ia6->ia6_ndpr = pr;
 
 			/*
@@ -1447,7 +1447,7 @@ find_pfxlist_reachable_router(struct nd_prefix *pr)
  * we have moved from the network but the lifetime of the prefix has not
  * expired yet.  So we should not use the prefix if there is another prefix
  * that has an available router.
- * But, if there is no prefix that has an available router, we still regards
+ * But, if there is no prefix that has an available router, we still regard
  * all the prefixes as on-link.  This is because we can't tell if all the
  * routers are simply dead or if we really moved from the network and there
  * is no router around us.
@@ -2129,7 +2129,7 @@ in6_tmpifadd(const struct in6_ifaddr *ia0, int forcegen, int delay)
 		return (EINVAL); /* XXX */
 	}
 	newia->ia6_ndpr = ia0->ia6_ndpr;
-	newia->ia6_ndpr->ndpr_refcnt++;
+	refcount_acquire(&newia->ia6_ndpr->ndpr_refcnt);
 	ifa_free(&newia->ia_ifa);
 
 	/*
