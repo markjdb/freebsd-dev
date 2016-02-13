@@ -1474,6 +1474,7 @@ pfxlist_onlink_check()
 	 * that does not advertise any prefixes.
 	 */
 	if (pr == NULL) {
+		ND_LOCK();
 		TAILQ_FOREACH(dr, &V_nd_defrouter, dr_entry) {
 			struct nd_prefix *pr0;
 
@@ -1484,6 +1485,7 @@ pfxlist_onlink_check()
 			if (pfxrtr != NULL)
 				break;
 		}
+		ND_UNLOCK();
 	}
 	if (pr != NULL || (!TAILQ_EMPTY(&V_nd_defrouter) && pfxrtr == NULL)) {
 		/*
