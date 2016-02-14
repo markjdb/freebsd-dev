@@ -115,7 +115,7 @@ static eventhandler_tag lle_event_eh, iflladdr_event_eh;
 
 VNET_DEFINE(struct nd_drhead, nd_defrouter);
 VNET_DEFINE(struct nd_prhead, nd_prefix);
-VNET_DEFINE(struct mtx, nd_lock);
+VNET_DEFINE(struct rwlock, nd_lock);
 
 VNET_DEFINE(int, nd6_recalc_reachtm_interval) = ND6_RECALC_REACHTM_INTERVAL;
 #define	V_nd6_recalc_reachtm_interval	VNET(nd6_recalc_reachtm_interval)
@@ -206,7 +206,7 @@ void
 nd6_init(void)
 {
 
-	mtx_init(&V_nd_lock, "nd6", NULL, MTX_DEF);
+	rw_init(&V_nd_lock, "nd6");
 
 	LIST_INIT(&V_nd_prefix);
 
@@ -898,11 +898,11 @@ nd6_timer(void *arg)
 	TAILQ_INIT(&drq);
 
 	/* expire default router list */
-	ND_LOCK();
+	ND_WLOCK();
 	TAILQ_FOREACH_SAFE(dr, &V_nd_defrouter, dr_entry, ndr)
 		if (dr->expire && dr->expire < time_uptime)
 			defrouter_unlink(dr, &drq);
-	ND_UNLOCK();
+	ND_WUNLOCK();
 
 	while ((dr = TAILQ_FIRST(&drq)) != NULL) {
 		TAILQ_REMOVE(&drq, dr, dr_entry);
@@ -1113,7 +1113,7 @@ nd6_purge(struct ifnet *ifp)
 	 * in the routing table, in order to keep additional side effects as
 	 * small as possible.
 	 */
-	ND_LOCK();
+	ND_WLOCK();
 	TAILQ_FOREACH_SAFE(dr, &V_nd_defrouter, dr_entry, ndr) {
 		if (dr->installed)
 			continue;
@@ -1127,7 +1127,7 @@ nd6_purge(struct ifnet *ifp)
 		if (dr->ifp == ifp)
 			defrouter_unlink(dr, &drq);
 	}
-	ND_UNLOCK();
+	ND_WUNLOCK();
 
 	while ((dr = TAILQ_FIRST(&drq)) != NULL) {
 		TAILQ_REMOVE(&drq, dr, dr_entry);
@@ -1749,10 +1749,10 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 
 		defrouter_reset();
 
-		ND_LOCK();
+		ND_WLOCK();
 		while ((dr = TAILQ_FIRST(&V_nd_defrouter)) != NULL)
 			defrouter_unlink(dr, &drq);
-		ND_UNLOCK();
+		ND_WUNLOCK();
 		while ((dr = TAILQ_FIRST(&drq)) != NULL) {
 			TAILQ_REMOVE(&drq, dr, dr_entry);
 			defrouter_del(dr);
@@ -2580,7 +2580,7 @@ nd6_sysctl_drlist(SYSCTL_HANDLER_ARGS)
 	d.rtaddr.sin6_family = AF_INET6;
 	d.rtaddr.sin6_len = sizeof(d.rtaddr);
 
-	ND_LOCK();
+	ND_RLOCK();
 	TAILQ_FOREACH(dr, &V_nd_defrouter, dr_entry) {
 		d.rtaddr.sin6_addr = dr->rtaddr;
 		error = sa6_recoverscope(&d.rtaddr);
@@ -2594,7 +2594,7 @@ nd6_sysctl_drlist(SYSCTL_HANDLER_ARGS)
 		if (error != 0)
 			break;
 	}
-	ND_UNLOCK();
+	ND_RUNLOCK();
 	return (error);
 }
 

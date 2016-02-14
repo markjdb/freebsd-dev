@@ -861,7 +861,7 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 			struct ifnet *nd6_ifp;
 
 			nd6_ifp = lltable_get_ifp(ln->lle_tbl);
-			ND_LOCK();
+			ND_WLOCK();
 			dr = defrouter_lookup_locked(&ln->r_l3addr.addr6,
 			    nd6_ifp);
 			if (dr != NULL) {
@@ -869,7 +869,7 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 				defrouter_remove(dr);
 				dr = NULL;
 			} else {
-				ND_UNLOCK();
+				ND_WUNLOCK();
 				if ((ND_IFINFO(nd6_ifp)->flags & ND6_IFF_ACCEPT_RTADV) != 0) {
 					/*
 					 * Even if the neighbor is not in the default

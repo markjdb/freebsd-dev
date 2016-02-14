@@ -341,13 +341,17 @@ VNET_DECLARE(int, nd6_onlink_ns_rfc4861);
 #define	V_nd6_onlink_ns_rfc4861		VNET(nd6_onlink_ns_rfc4861)
 
 /* Lock for the prefix and default router lists. */
-VNET_DECLARE(struct mtx, nd_lock);
+VNET_DECLARE(struct rwlock, nd_lock);
 #define	V_nd_lock			VNET(nd_lock)
 
-#define	ND_LOCK()			mtx_lock(&V_nd_lock)
-#define	ND_UNLOCK()			mtx_unlock(&V_nd_lock)
-#define	ND_LOCK_ASSERT()		mtx_assert(&V_nd_lock, MA_OWNED)
-#define	ND_UNLOCK_ASSERT()		mtx_assert(&V_nd_lock, MA_NOTOWNED)
+#define	ND_RLOCK()			rw_rlock(&V_nd_lock)
+#define	ND_RUNLOCK()			rw_runlock(&V_nd_lock)
+#define	ND_WLOCK()			rw_wlock(&V_nd_lock)
+#define	ND_WUNLOCK()			rw_wunlock(&V_nd_lock)
+#define	ND_WLOCK_ASSERT()		rw_assert(&V_nd_lock, RA_WLOCKED)
+#define	ND_RLOCK_ASSERT()		rw_assert(&V_nd_lock, RA_RLOCKED)
+#define	ND_LOCK_ASSERT()		rw_assert(&V_nd_lock, RA_LOCKED)
+#define	ND_UNLOCK_ASSERT()		rw_assert(&V_nd_lock, RA_UNLOCKED)
 
 #define nd6log(x)	do { if (V_nd6_debug) log x; } while (/*CONSTCOND*/ 0)
 
