@@ -637,7 +637,7 @@ defrouter_remove(struct nd_defrouter *dr)
 {
 
 	ND_WLOCK_ASSERT();
-	MPASS(dr->refcnt >= 2);
+	KASSERT(dr->refcnt >= 2, ("unexpected refcount 0x%x", dr->refcnt));
 
 	defrouter_unlink(dr, NULL);
 	ND_WUNLOCK();
@@ -754,7 +754,6 @@ defrouter_select(void)
 		    (ln = nd6_lookup(&dr->rtaddr, 0, dr->ifp)) &&
 		    ND6_IS_LLINFO_PROBREACH(ln)) {
 			selected_dr = dr;
-			//defrouter_ref(selected_dr);
 		}
 		IF_AFDATA_RUNLOCK(dr->ifp);
 		if (ln != NULL) {
@@ -765,7 +764,6 @@ defrouter_select(void)
 		if (dr->installed) {
 			if (installed_dr == NULL) {
 				installed_dr = dr;
-				//defrouter_ref(installed_dr);
 			} else {
 				/* this should not happen.  warn for diagnosis. */
 				log(LOG_ERR,
@@ -793,7 +791,6 @@ defrouter_select(void)
 		if ((ln = nd6_lookup(&installed_dr->rtaddr, 0, installed_dr->ifp)) &&
 		    ND6_IS_LLINFO_PROBREACH(ln) &&
 		    rtpref(selected_dr) <= rtpref(installed_dr)) {
-			//defrouter_rele(selected_dr);
 			selected_dr = installed_dr;
 		}
 		IF_AFDATA_RUNLOCK(installed_dr->ifp);
@@ -810,10 +807,7 @@ defrouter_select(void)
 		if (installed_dr)
 			defrouter_delreq(installed_dr);
 		defrouter_addreq(selected_dr);
-		//defrouter_rele(selected_dr);
 	}
-	//if (installed_dr != NULL)
-	//	defrouter_rele(installed_dr);
 	ND_RUNLOCK();
 }
 
