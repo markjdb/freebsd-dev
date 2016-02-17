@@ -1325,7 +1325,8 @@ done_ev_add:
 		kn->kn_status |= KN_DISABLED;
 	}
 
-	if ((kn->kn_status & KN_DISABLED) == 0)
+	if ((kn->kn_status & KN_DISABLED) == 0 ||
+	    (kev->flags & EV_ENABLE) != 0)
 		event = kn->kn_fop->f_event(kn, 0);
 	else
 		event = 0;
