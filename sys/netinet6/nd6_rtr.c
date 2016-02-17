@@ -754,6 +754,7 @@ defrouter_select(void)
 		    (ln = nd6_lookup(&dr->rtaddr, 0, dr->ifp)) &&
 		    ND6_IS_LLINFO_PROBREACH(ln)) {
 			selected_dr = dr;
+			defrouter_ref(selected_dr);
 		}
 		IF_AFDATA_RUNLOCK(dr->ifp);
 		if (ln != NULL) {
@@ -764,6 +765,7 @@ defrouter_select(void)
 		if (dr->installed) {
 			if (installed_dr == NULL) {
 				installed_dr = dr;
+				defrouter_ref(installed_dr);
 			} else {
 				/* this should not happen.  warn for diagnosis. */
 				log(LOG_ERR,
@@ -791,12 +793,14 @@ defrouter_select(void)
 		if ((ln = nd6_lookup(&installed_dr->rtaddr, 0, installed_dr->ifp)) &&
 		    ND6_IS_LLINFO_PROBREACH(ln) &&
 		    rtpref(selected_dr) <= rtpref(installed_dr)) {
+			defrouter_rele(selected_dr);
 			selected_dr = installed_dr;
 		}
 		IF_AFDATA_RUNLOCK(installed_dr->ifp);
 		if (ln != NULL)
 			LLE_RUNLOCK(ln);
 	}
+	ND_RUNLOCK();
 
 	/*
 	 * If the selected router is different than the installed one,
@@ -804,11 +808,13 @@ defrouter_select(void)
 	 * Note that the selected router is never NULL here.
 	 */
 	if (installed_dr != selected_dr) {
-		if (installed_dr)
+		if (installed_dr != NULL) {
 			defrouter_delreq(installed_dr);
+			defrouter_rele(installed_dr);
+		}
 		defrouter_addreq(selected_dr);
 	}
-	ND_RUNLOCK();
+	defrouter_rele(selected_dr);
 }
 
 /*
