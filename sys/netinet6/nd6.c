@@ -238,6 +238,7 @@ nd6_destroy()
 		EVENTHANDLER_DEREGISTER(lle_event, lle_event_eh);
 		EVENTHANDLER_DEREGISTER(iflladdr_event, iflladdr_event_eh);
 	}
+	rw_destroy(&V_nd_lock);
 }
 #endif
 
