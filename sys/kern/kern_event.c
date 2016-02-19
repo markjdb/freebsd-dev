@@ -1116,14 +1116,14 @@ kqueue_register(struct kqueue *kq, struct kevent *kev, struct thread *td, int wa
 	int error, filt, event;
 	int haskqglobal, filedesc_unlock;
 
+	if ((kev->flags & (EV_ENABLE | EV_DISABLE)) == (EV_ENABLE | EV_DISABLE))
+		return (EINVAL);
+
 	fp = NULL;
 	kn = NULL;
 	error = 0;
 	haskqglobal = 0;
 	filedesc_unlock = 0;
-
-	if ((kev->flags & (EV_ENABLE | EV_DISABLE)) == (EV_ENABLE | EV_DISABLE))
-		return (EINVAL);
 
 	filt = kev->filter;
 	fops = kqueue_fo_find(filt);
@@ -1335,8 +1335,8 @@ done_ev_add:
 
 	KQ_LOCK(kq);
 	if (event)
-		KNOTE_ACTIVATE(kn, 1);
-	else if ((kn->kn_status & (KN_ACTIVE | KN_DISABLED | KN_QUEUED)) ==
+		kn->kn_status |= KN_ACTIVE;
+	if ((kn->kn_status & (KN_ACTIVE | KN_DISABLED | KN_QUEUED)) ==
 	    KN_ACTIVE)
 		knote_enqueue(kn);
 	kn->kn_status &= ~(KN_INFLUX | KN_SCAN);
