@@ -221,19 +221,21 @@ struct vm_pagequeue {
 	const char	* const pq_name;
 } __aligned(CACHE_LINE_SIZE);
 
-
 struct vm_domain {
 	struct vm_pagequeue vmd_pagequeues[PQ_COUNT];
 	u_int vmd_page_count;
 	u_int vmd_free_count;
 	long vmd_segs;	/* bitmask of the segments */
-	boolean_t vmd_oom;
 	int vmd_pass;	/* local pagedaemon pass */
-	int vmd_oom_seq;
 	int vmd_last_active_scan;
 	struct vm_page vmd_laundry_marker;
 	struct vm_page vmd_marker; /* marker for pagedaemon private use */
 	struct vm_page vmd_inacthead; /* marker for LRU-defeating insertions */
+};
+
+struct vm_oom_state {
+	int		oom_seq;
+	boolean_t	oom_voted;
 };
 
 extern struct vm_domain vm_dom[MAXMEMDOM];

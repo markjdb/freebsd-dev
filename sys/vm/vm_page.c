@@ -402,7 +402,6 @@ vm_page_domain_init(struct vm_domain *vmd)
 	vmd->vmd_page_count = 0;
 	vmd->vmd_free_count = 0;
 	vmd->vmd_segs = 0;
-	vmd->vmd_oom = FALSE;
 	vmd->vmd_pass = 0;
 	for (i = 0; i < PQ_COUNT; i++) {
 		pq = &vmd->vmd_pagequeues[i];

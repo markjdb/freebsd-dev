@@ -121,9 +121,10 @@ static void vm_pageout(void);
 static void vm_pageout_init(void);
 static int vm_pageout_clean(vm_page_t m, int *numpagedout);
 static int vm_pageout_cluster(vm_page_t m);
-static void vm_pageout_scan(struct vm_domain *vmd, int pass);
-static void vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
-    int starting_page_shortage);
+static void vm_pageout_scan(struct vm_domain *vmd, struct vm_oom_state *oom,
+    int pass);
+static void vm_pageout_mightbe_oom(struct vm_oom_state *state,
+    int page_shortage, int starting_page_shortage);
 
 SYSINIT(pagedaemon_init, SI_SUB_KTHREAD_PAGE, SI_ORDER_FIRST, vm_pageout_init,
     NULL);
@@ -240,7 +241,7 @@ SYSCTL_INT(_vm, OID_AUTO, max_wired,
 	CTLFLAG_RW, &vm_page_max_wired, 0, "System-wide limit to wired page count");
 
 static boolean_t vm_pageout_fallback_object_lock(vm_page_t, vm_page_t *);
-static void vm_pageout_launder(struct vm_domain *vmd);
+static void vm_pageout_launder(struct vm_domain *vmd, struct vm_oom_state *oom);
 static void vm_pageout_laundry_worker(void *arg);
 static void vm_pageout_swapon(void *arg, struct swdevt *sp __unused);
 static void vm_pageout_swapoff(void *arg __unused, struct swdevt *sp __unused);
@@ -891,13 +892,13 @@ unlock_mp:
  * XXX
  */
 static void
-vm_pageout_launder(struct vm_domain *vmd)
+vm_pageout_launder(struct vm_domain *vmd, struct vm_oom_state *oom)
 {
 	vm_page_t m, next;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
 	int act_delta, error, launder, maxscan, numpagedout, pass;
-	int vnodes_skipped;
+	int starting_target, vnodes_skipped;
 	boolean_t pageout_ok, queue_locked;
 
 	/*
@@ -1106,6 +1107,11 @@ relock_queue:
 	 */
 	if (vnodes_skipped > 0 && launder > 0)
 		(void)speedup_syncer();
+
+	/*
+	 * If we failed to launder any pages, vote for OOM.
+	 */
+	vm_pageout_mightbe_oom(oom, launder, starting_target);
 }
 
 /*
@@ -1114,6 +1120,7 @@ relock_queue:
 static void
 vm_pageout_laundry_worker(void *arg)
 {
+	struct vm_oom_state oom;
 	struct vm_domain *domain;
 	int domidx;
 
@@ -1121,6 +1128,9 @@ vm_pageout_laundry_worker(void *arg)
 	domain = &vm_dom[domidx];
 	KASSERT(domain->vmd_segs != 0, ("domain without segments"));
 	vm_pageout_init_marker(&domain->vmd_laundry_marker, PQ_LAUNDRY);
+
+	oom.oom_seq = 0;
+	oom.oom_voted = FALSE;
 
 	/*
 	 * Calls to these handlers are serialized by the swapconf lock.
@@ -1136,7 +1146,7 @@ vm_pageout_laundry_worker(void *arg)
 	for (;;) {
 		tsleep(&vm_cnt.v_laundry_count, PVM, "laundr",
 		    hz / VM_LAUNDER_INTERVAL);
-		vm_pageout_launder(domain);
+		vm_pageout_launder(domain, &oom);
 	}
 }
 
@@ -1147,7 +1157,7 @@ vm_pageout_laundry_worker(void *arg)
  *	pass 1 - Move inactive to cache or free
  */
 static void
-vm_pageout_scan(struct vm_domain *vmd, int pass)
+vm_pageout_scan(struct vm_domain *vmd, struct vm_oom_state *oom, int pass)
 {
 	vm_page_t m, next;
 	struct vm_pagequeue *pq;
@@ -1389,7 +1399,7 @@ drop_page:
 	 * If the inactive queue scan fails repeatedly to meet its
 	 * target, kill the largest process.
 	 */
-	vm_pageout_mightbe_oom(vmd, page_shortage, starting_page_shortage);
+	vm_pageout_mightbe_oom(oom, page_shortage, starting_page_shortage);
 
 	/*
 	 * Compute the number of pages we want to try to move from the
@@ -1531,19 +1541,19 @@ static int vm_pageout_oom_vote;
  * failed to reach free target is premature.
  */
 static void
-vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
+vm_pageout_mightbe_oom(struct vm_oom_state *state, int page_shortage,
     int starting_page_shortage)
 {
 	int old_vote;
 
 	if (starting_page_shortage <= 0 || starting_page_shortage !=
 	    page_shortage)
-		vmd->vmd_oom_seq = 0;
+		state->oom_seq = 0;
 	else
-		vmd->vmd_oom_seq++;
-	if (vmd->vmd_oom_seq < vm_pageout_oom_seq) {
-		if (vmd->vmd_oom) {
-			vmd->vmd_oom = FALSE;
+		state->oom_seq++;
+	if (state->oom_seq < vm_pageout_oom_seq) {
+		if (state->oom_voted) {
+			state->oom_voted = FALSE;
 			atomic_subtract_int(&vm_pageout_oom_vote, 1);
 		}
 		return;
@@ -1553,14 +1563,19 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 	 * Do not follow the call sequence until OOM condition is
 	 * cleared.
 	 */
-	vmd->vmd_oom_seq = 0;
+	state->oom_seq = 0;
 
-	if (vmd->vmd_oom)
+	if (state->oom_voted)
 		return;
 
-	vmd->vmd_oom = TRUE;
+	/*
+	 * The laundry worker thread participates in the OOM vote as well.
+	 * Thus, quorum is not reached until vm_ndomains + 1 threads have
+	 * elected to start OOM.
+	 */
+	state->oom_voted = TRUE;
 	old_vote = atomic_fetchadd_int(&vm_pageout_oom_vote, 1);
-	if (old_vote != vm_ndomains - 1)
+	if (old_vote != vm_ndomains)
 		return;
 
 	/*
@@ -1576,7 +1591,7 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 	 * memory condition is still there, due to vmd_oom being
 	 * false.
 	 */
-	vmd->vmd_oom = FALSE;
+	state->oom_voted = FALSE;
 	atomic_subtract_int(&vm_pageout_oom_vote, 1);
 }
 
@@ -1746,11 +1761,15 @@ vm_pageout_oom(int shortage)
 static void
 vm_pageout_worker(void *arg)
 {
+	struct vm_oom_state oom;
 	struct vm_domain *domain;
 	int domidx;
 
 	domidx = (uintptr_t)arg;
 	domain = &vm_dom[domidx];
+
+	oom.oom_seq = 0;
+	oom.oom_voted = FALSE;
 
 	/*
 	 * XXXKIB It could be useful to bind pageout daemon threads to
@@ -1810,7 +1829,7 @@ vm_pageout_worker(void *arg)
 		} else
 			domain->vmd_pass = 0;
 		mtx_unlock(&vm_page_queue_free_mtx);
-		vm_pageout_scan(domain, domain->vmd_pass);
+		vm_pageout_scan(domain, &oom, domain->vmd_pass);
 	}
 }
 
