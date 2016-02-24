@@ -2969,7 +2969,7 @@ freebsd32_posix_fallocate(struct thread *td,
 
 	error = kern_posix_fallocate(td, uap->fd,
 	    PAIR32TO64(off_t, uap->offset), PAIR32TO64(off_t, uap->len));
-	return (posix_ret_error(td, error));
+	return (kern_posix_error(td, error));
 }
 
 int
@@ -2980,7 +2980,7 @@ freebsd32_posix_fadvise(struct thread *td,
 
 	error = kern_posix_fadvise(td, uap->fd, PAIR32TO64(off_t, uap->offset),
 	    PAIR32TO64(off_t, uap->len), uap->advice);
-	return (posix_ret_error(td, error));
+	return (kern_posix_error(td, error));
 }
 
 int
