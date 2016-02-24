@@ -229,3 +229,15 @@ syscall_helper_unregister(struct syscall_helper_data *sd)
 	}
 	return (0);
 }
+
+int
+posix_ret_error(struct thread *td, int error)
+{
+
+	if (error <= 0)
+		return (error);
+	td->td_errno = error;
+	td->td_pflags |= TDP_NERRNO;
+	td->td_retval[0] = error;
+	return (0);
+}

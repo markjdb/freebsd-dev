@@ -4457,18 +4457,6 @@ out:
 	return (error);
 }
 
-static int
-posix_filesys_error(struct thread *td, int error)
-{
-
-	if (error <= 0)
-		return (error);
-	td->td_errno = error;
-	td->td_pflags |= TDP_NERRNO;
-	td->td_retval[0] = error;
-	return (0);
-}
-
 int
 kern_posix_fallocate(struct thread *td, int fd, off_t offset, off_t len)
 {
@@ -4548,7 +4536,7 @@ sys_posix_fallocate(struct thread *td, struct posix_fallocate_args *uap)
 	int error;
 
 	error = kern_posix_fallocate(td, uap->fd, uap->offset, uap->len);
-	return (posix_filesys_error(td, error));
+	return (posix_ret_error(td, error));
 }
 
 /*
@@ -4684,5 +4672,5 @@ sys_posix_fadvise(struct thread *td, struct posix_fadvise_args *uap)
 
 	error = kern_posix_fadvise(td, uap->fd, uap->offset, uap->len,
 	    uap->advice);
-	return (posix_filesys_error(td, error));
+	return (posix_ret_error(td, error));
 }
