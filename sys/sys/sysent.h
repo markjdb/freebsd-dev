@@ -270,8 +270,6 @@ void shared_page_write(int base, int size, const void *data);
 void exec_sysvec_init(void *param);
 void exec_inittk(void);
 
-int posix_ret_error(struct thread *, int);
-
 #define INIT_SYSENTVEC(name, sv)					\
     SYSINIT(name, SI_SUB_EXEC, SI_ORDER_ANY,				\
 	(sysinit_cfunc_t)exec_sysvec_init, sv);

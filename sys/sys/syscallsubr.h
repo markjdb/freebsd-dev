@@ -257,6 +257,8 @@ int	kern_writev(struct thread *td, int fd, struct uio *auio);
 int	kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	    int *rsv);
 
+int	syscall_posix_ret(struct thread *td, int error);
+
 /* flags for kern_sigaction */
 #define	KSA_OSIGSET	0x0001	/* uses osigact_t */
 #define	KSA_FREEBSD4	0x0002	/* uses ucontext4 */
