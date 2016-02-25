@@ -1911,8 +1911,12 @@ selectinit(void *dummy __unused)
 	mtxpool_select = mtx_pool_create("select mtxpool", 128, MTX_DEF);
 }
 
+/*
+ * Set up a syscall return value that follows the convention specified for
+ * posix_* functions.
+ */
 int
-syscall_posix_ret(struct thread *td, int error)
+kern_posix_error(struct thread *td, int error)
 {
 
 	if (error <= 0)

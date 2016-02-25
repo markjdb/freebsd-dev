@@ -4536,7 +4536,7 @@ sys_posix_fallocate(struct thread *td, struct posix_fallocate_args *uap)
 	int error;
 
 	error = kern_posix_fallocate(td, uap->fd, uap->offset, uap->len);
-	return (syscall_posix_ret(td, error));
+	return (kern_posix_error(td, error));
 }
 
 /*
@@ -4672,5 +4672,5 @@ sys_posix_fadvise(struct thread *td, struct posix_fadvise_args *uap)
 
 	error = kern_posix_fadvise(td, uap->fd, uap->offset, uap->len,
 	    uap->advice);
-	return (syscall_posix_ret(td, error));
+	return (kern_posix_error(td, error));
 }
