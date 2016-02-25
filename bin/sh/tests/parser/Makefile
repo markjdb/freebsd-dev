@@ -73,11 +73,13 @@ FILES+=		line-cont10.0
 FILES+=		line-cont11.0
 FILES+=		no-space1.0
 FILES+=		no-space2.0
+FILES+=		nul1.0
 FILES+=		only-redir1.0
 FILES+=		only-redir2.0
 FILES+=		only-redir3.0
 FILES+=		only-redir4.0
 FILES+=		pipe-not1.0
+FILES+=		set-v1.0 set-v1.0.stderr
 FILES+=		var-assign1.0
 
 .include <bsd.test.mk>
