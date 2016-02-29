@@ -126,7 +126,7 @@ static int nd6_is_new_addr_neighbor(const struct sockaddr_in6 *,
 	struct ifnet *);
 static void nd6_setmtu0(struct ifnet *, struct nd_ifinfo *);
 static void nd6_slowtimo(void *);
-static int regen_tmpaddr(struct in6_ifaddr *);
+static int regen_tmpaddr(struct in6_ifaddr *, struct rm_priotracker *);
 static void nd6_free(struct llentry *, int);
 static void nd6_free_redirect(const struct llentry *);
 static void nd6_llinfo_timer(void *);
@@ -950,7 +950,7 @@ nd6_timer(void *arg)
 			 */
 			if (V_ip6_use_tempaddr &&
 			    (ia6->ia6_flags & IN6_IFF_TEMPORARY) != 0) {
-				if (regen_tmpaddr(ia6) == 0)
+				if (regen_tmpaddr(ia6, &in6_ifa_tracker) == 0)
 					regen = 1;
 			}
 
@@ -971,7 +971,7 @@ nd6_timer(void *arg)
 			    (ia6->ia6_flags & IN6_IFF_TEMPORARY) != 0 &&
 			    (oldflags & IN6_IFF_DEPRECATED) == 0) {
 
-				if (regen_tmpaddr(ia6) == 0) {
+				if (regen_tmpaddr(ia6, &in6_ifa_tracker) == 0) {
 					/*
 					 * A new temporary address is
 					 * generated.
@@ -1052,12 +1052,11 @@ nd6_timer(void *arg)
  * add a new address, in which case 0 is returned.
  */
 static int
-regen_tmpaddr(struct in6_ifaddr *ia6)
+regen_tmpaddr(struct in6_ifaddr *ia6, struct rm_priotracker *in6_ifa_tracker)
 {
 	struct ifaddr *ifa;
 	struct ifnet *ifp;
 	struct in6_ifaddr *public_ifa6 = NULL;
-	struct rm_priotracker in6_ifa_tracker;
 
 	IN6_IFADDR_RLOCK_ASSERT();
 
@@ -1108,7 +1107,7 @@ regen_tmpaddr(struct in6_ifaddr *ia6)
 	if (public_ifa6 != NULL) {
 		int e;
 
-		IN6_IFADDR_RUNLOCK(&in6_ifa_tracker);
+		IN6_IFADDR_RUNLOCK(in6_ifa_tracker);
 		if ((e = in6_tmpifadd(public_ifa6, 0, 0)) != 0)
 			log(LOG_NOTICE,
 	    "regen_tmpaddr: failed to create a new tmp addr, errno=%d\n", e);
