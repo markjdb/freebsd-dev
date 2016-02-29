@@ -2047,10 +2047,6 @@ deliver:
 	if (mp0 != NULL) {
 		/* Dequeue as many mbufs as possible. */
 		if (!(flags & MSG_PEEK) && len >= sb->sb_mb->m_len) {
-			if (*mp0 == NULL)
-				*mp0 = sb->sb_mb;
-			else
-				m_cat(*mp0, sb->sb_mb);
 			for (m = sb->sb_mb;
 			     m != NULL && m->m_len <= len;
 			     m = m->m_next) {
@@ -2062,6 +2058,10 @@ deliver:
 				n = m;
 			}
 			n->m_next = NULL;
+			if (*mp0 == NULL)
+				*mp0 = sb->sb_mb;
+			else
+				m_cat(*mp0, sb->sb_mb);
 			sb->sb_mb = m;
 			sb->sb_lastrecord = sb->sb_mb;
 			if (sb->sb_mb == NULL)
