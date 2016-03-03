@@ -73,6 +73,7 @@
 
 extern int vm_page_max_wired;
 extern int vm_pageout_deficit;
+extern int vm_pageout_lowmem_period;
 extern int vm_pageout_page_count;
 extern bool vm_pageout_wanted;
 extern bool vm_pages_needed;

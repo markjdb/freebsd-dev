@@ -158,6 +158,7 @@ SYSINIT(vmdaemon, SI_SUB_KTHREAD_VM, SI_ORDER_FIRST, kproc_start, &vm_kp);
 
 int vm_pageout_deficit;		/* Estimated number of pages deficit */
 int vm_pageout_wakeup_thresh;
+int vm_pageout_lowmem_period = 10;
 static int vm_pageout_oom_seq = 12;
 bool vm_pageout_wanted;		/* Event on which pageout daemon sleeps */
 bool vm_pages_needed;		/* Are threads waiting for free pages? */
@@ -173,7 +174,6 @@ static int vm_max_launder = 32;
 static int vm_pageout_update_period;
 static int defer_swap_pageouts;
 static int disable_swap_pageouts;
-static int lowmem_period = 10;
 static time_t lowmem_uptime;
 
 #if defined(NO_SWAPPING)
@@ -201,7 +201,8 @@ SYSCTL_INT(_vm, OID_AUTO, pageout_update_period,
 	CTLFLAG_RW, &vm_pageout_update_period, 0,
 	"Maximum active LRU update period");
   
-SYSCTL_INT(_vm, OID_AUTO, lowmem_period, CTLFLAG_RW, &lowmem_period, 0,
+SYSCTL_INT(_vm, OID_AUTO, lowmem_period,
+	CTLFLAG_RW, &vm_pageout_lowmem_period, 0,
 	"Low memory callback period");
 
 #if defined(NO_SWAPPING)
@@ -892,7 +893,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	 * some.  We rate limit to avoid thrashing.
 	 */
 	if (vmd == &vm_dom[0] && pass > 0 &&
-	    (time_uptime - lowmem_uptime) >= lowmem_period) {
+	    (time_uptime - lowmem_uptime) >= vm_pageout_lowmem_period) {
 		/*
 		 * Decrease registered cache sizes.
 		 */
