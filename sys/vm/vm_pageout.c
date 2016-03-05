@@ -1039,7 +1039,7 @@ scan:
 		/*
 		 * If the page appears to be clean at the machine-independent
 		 * layer, then remove all of its mappings from the pmap in
-		 * anticipation of placing it onto the cache queue.  If,
+		 * anticipation of placing it onto the free queue.  If,
 		 * however, any of the page's mappings allow write access,
 		 * then the page may still be modified until the last of those
 		 * mappings are removed.
@@ -1441,7 +1441,7 @@ unlock_page:
 		/*
 		 * If the page appears to be clean at the machine-independent
 		 * layer, then remove all of its mappings from the pmap in
-		 * anticipation of placing it onto the cache queue.  If,
+		 * anticipation of placing it onto the free queue.  If,
 		 * however, any of the page's mappings allow write access,
 		 * then the page may still be modified until the last of those
 		 * mappings are removed.
