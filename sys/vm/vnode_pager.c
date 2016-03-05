@@ -882,8 +882,7 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 		for (tpindex = m[0]->pindex - 1;
 		    tpindex >= startpindex && tpindex < m[0]->pindex;
 		    tpindex--, i++) {
-			p = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL |
-			    VM_ALLOC_IFNOTCACHED);
+			p = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL);
 			if (p == NULL) {
 				/* Shift the array. */
 				for (int j = 0; j < i; j++)
@@ -920,8 +919,7 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 
 		for (tpindex = m[count - 1]->pindex + 1;
 		    tpindex < endpindex; i++, tpindex++) {
-			p = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL |
-			    VM_ALLOC_IFNOTCACHED);
+			p = vm_page_alloc(object, tpindex, VM_ALLOC_NORMAL);
 			if (p == NULL)
 				break;
 			bp->b_pages[i] = p;

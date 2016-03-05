@@ -1131,13 +1131,6 @@ shadowlookup:
 		} else if ((tobject->flags & OBJ_UNMANAGED) != 0)
 			goto unlock_tobject;
 		m = vm_page_lookup(tobject, tpindex);
-		if (m == NULL && advise == MADV_WILLNEED) {
-			/*
-			 * If the page is cached, reactivate it.
-			 */
-			m = vm_page_alloc(tobject, tpindex, VM_ALLOC_IFCACHED |
-			    VM_ALLOC_NOBUSY);
-		}
 		if (m == NULL) {
 			/*
 			 * There may be swap even if there is no backing page

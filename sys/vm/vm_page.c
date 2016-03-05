@@ -1568,9 +1568,6 @@ vm_page_is_cached(vm_object_t object, vm_pindex_t pindex)
  *	optional allocation flags:
  *	VM_ALLOC_COUNT(number)	the number of additional pages that the caller
  *				intends to allocate
- *	VM_ALLOC_IFCACHED	return page only if it is cached
- *	VM_ALLOC_IFNOTCACHED	return NULL, do not reactivate if the page
- *				is cached
  *	VM_ALLOC_NOBUSY		do not exclusive busy the page
  *	VM_ALLOC_NODUMP		do not include the page in a kernel core dump
  *	VM_ALLOC_NOOBJ		page is not associated with an object and
@@ -1630,10 +1627,6 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		 */
 		if (object != NULL &&
 		    (m = vm_page_cache_lookup(object, pindex)) != NULL) {
-			if ((req & VM_ALLOC_IFNOTCACHED) != 0) {
-				mtx_unlock(&vm_page_queue_free_mtx);
-				return (NULL);
-			}
 			if (vm_phys_unfree_page(m))
 				vm_phys_set_pool(VM_FREEPOOL_DEFAULT, m, 0);
 #if VM_NRESERVLEVEL > 0
@@ -1643,9 +1636,6 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 #endif
 				panic("vm_page_alloc: cache page %p is missing"
 				    " from the free queue", m);
-		} else if ((req & VM_ALLOC_IFCACHED) != 0) {
-			mtx_unlock(&vm_page_queue_free_mtx);
-			return (NULL);
 #if VM_NRESERVLEVEL > 0
 		} else if (object == NULL || (object->flags & (OBJ_COLORED |
 		    OBJ_FICTITIOUS)) != OBJ_COLORED || (m =
