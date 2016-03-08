@@ -42,6 +42,11 @@ enum {
 	MACADDR_LEN    = 12,    /* MAC Address length */
 };
 
+enum {
+	T4_REGMAP_SIZE = (160 * 1024),
+	T5_REGMAP_SIZE = (332 * 1024),
+};
+
 enum { MEM_EDC0, MEM_EDC1, MEM_MC, MEM_MC0 = MEM_MC, MEM_MC1 };
 
 enum {
@@ -214,6 +219,20 @@ struct tp_rdma_stats {
 	u32 rqe_dfr_mod;
 };
 
+struct sge_params {
+	int timer_val[SGE_NTIMERS];
+	int counter_val[SGE_NCOUNTERS];
+	int fl_starve_threshold;
+	int fl_starve_threshold2;
+	int page_shift;
+	int eq_s_qpp;
+	int iq_s_qpp;
+	int spg_len;
+	int pad_boundary;
+	int pack_boundary;
+	int fl_pktshift;
+};
+
 struct tp_params {
 	unsigned int ntxchan;        /* # of Tx channels */
 	unsigned int tre;            /* log2 of core clocks per TP tick */
@@ -267,6 +286,7 @@ struct chip_params {
 };
 
 struct adapter_params {
+	struct sge_params sge;
 	struct tp_params  tp;
 	struct vpd_params vpd;
 	struct pci_params pci;
@@ -401,6 +421,14 @@ static inline unsigned int us_to_core_ticks(const struct adapter *adap,
 	return (us * adap->params.vpd.cclk) / 1000;
 }
 
+static inline unsigned int core_ticks_to_us(const struct adapter *adapter,
+					    unsigned int ticks)
+{
+	/* add Core Clock / 2 to round ticks to nearest uS */
+	return ((ticks * 1000 + adapter->params.vpd.cclk/2) /
+		adapter->params.vpd.cclk);
+}
+
 static inline unsigned int dack_ticks_to_usec(const struct adapter *adap,
 					      unsigned int ticks)
 {
@@ -460,6 +488,7 @@ int t4_get_tp_version(struct adapter *adapter, u32 *vers);
 int t4_check_fw_version(struct adapter *adapter);
 int t4_init_hw(struct adapter *adapter, u32 fw_params);
 int t4_prep_adapter(struct adapter *adapter);
+int t4_init_sge_params(struct adapter *adapter);
 int t4_init_tp_params(struct adapter *adap);
 int t4_filter_field_shift(const struct adapter *adap, int filter_sel);
 int t4_port_init(struct port_info *p, int mbox, int pf, int vf);
@@ -509,6 +538,9 @@ int t4_mc_read(struct adapter *adap, int idx, u32 addr,
 int t4_edc_read(struct adapter *adap, int idx, u32 addr, __be32 *data, u64 *parity);
 int t4_mem_read(struct adapter *adap, int mtype, u32 addr, u32 size,
 		__be32 *data);
+
+unsigned int t4_get_regs_len(struct adapter *adapter);
+void t4_get_regs(struct adapter *adap, u8 *buf, size_t buf_size);
 
 const char *t4_get_port_type_description(enum fw_port_type port_type);
 void t4_get_port_stats(struct adapter *adap, int idx, struct port_stats *p);
