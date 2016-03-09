@@ -476,9 +476,11 @@ static int sysctl_tx_rate(SYSCTL_HANDLER_ARGS);
 static int sysctl_ulprx_la(SYSCTL_HANDLER_ARGS);
 static int sysctl_wcwr_stats(SYSCTL_HANDLER_ARGS);
 #endif
-static uint32_t fconf_to_mode(uint32_t);
+static uint32_t fconf_iconf_to_mode(uint32_t, uint32_t);
 static uint32_t mode_to_fconf(uint32_t);
-static uint32_t fspec_to_fconf(struct t4_filter_specification *);
+static uint32_t mode_to_iconf(uint32_t);
+static int check_fspec_against_fconf_iconf(struct adapter *,
+    struct t4_filter_specification *);
 static int get_filter_mode(struct adapter *, uint32_t *);
 static int set_filter_mode(struct adapter *, uint32_t);
 static inline uint64_t get_filter_hits(struct adapter *, uint32_t);
@@ -643,6 +645,7 @@ t4_attach(device_t dev)
 	int rc = 0, i, j, n10g, n1g, rqidx, tqidx;
 	struct intrs_and_queues iaq;
 	struct sge *s;
+	uint8_t *buf;
 #ifdef TCP_OFFLOAD
 	int ofld_rqidx, ofld_tqidx;
 #endif
@@ -685,7 +688,7 @@ t4_attach(device_t dev)
 	TAILQ_INIT(&sc->sfl);
 	callout_init_mtx(&sc->sfl_callout, &sc->sfl_lock, 0);
 
-	mtx_init(&sc->regwin_lock, "register and memory window", 0, MTX_DEF);
+	mtx_init(&sc->reg_lock, "indirect register access", 0, MTX_DEF);
 
 	rc = map_bars_0_and_4(sc);
 	if (rc != 0)
@@ -711,8 +714,10 @@ t4_attach(device_t dev)
 	t4_register_cpl_handler(sc, CPL_T5_TRACE_PKT, t5_trace_pkt);
 	t4_init_sge_cpl_handlers(sc);
 
-	/* Prepare the adapter for operation */
-	rc = -t4_prep_adapter(sc);
+	/* Prepare the adapter for operation. */
+	buf = malloc(PAGE_SIZE, M_CXGBE, M_ZERO | M_WAITOK);
+	rc = -t4_prep_adapter(sc, buf);
+	free(buf, M_CXGBE);
 	if (rc != 0) {
 		device_printf(dev, "failed to prepare adapter: %d.\n", rc);
 		goto done;
@@ -813,7 +818,7 @@ t4_attach(device_t dev)
 		 * Allocate the "main" VI and initialize parameters
 		 * like mac addr.
 		 */
-		rc = -t4_port_init(pi, sc->mbox, sc->pf, 0);
+		rc = -t4_port_init(sc, sc->mbox, sc->pf, 0, i);
 		if (rc != 0) {
 			device_printf(dev, "unable to initialize port %d: %d\n",
 			    i, rc);
@@ -1156,8 +1161,8 @@ t4_detach(device_t dev)
 		mtx_destroy(&sc->sfl_lock);
 	if (mtx_initialized(&sc->ifp_lock))
 		mtx_destroy(&sc->ifp_lock);
-	if (mtx_initialized(&sc->regwin_lock))
-		mtx_destroy(&sc->regwin_lock);
+	if (mtx_initialized(&sc->reg_lock))
+		mtx_destroy(&sc->reg_lock);
 
 	bzero(sc, sizeof(*sc));
 
@@ -1778,13 +1783,13 @@ cxgbe_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 		return;
 
 	ifmr->ifm_active = IFM_ETHER | IFM_FDX;
-	if (speed == SPEED_10000)
+	if (speed == 10000)
 		ifmr->ifm_active |= IFM_10G_T;
-	else if (speed == SPEED_1000)
+	else if (speed == 1000)
 		ifmr->ifm_active |= IFM_1000_T;
-	else if (speed == SPEED_100)
+	else if (speed == 100)
 		ifmr->ifm_active |= IFM_100_TX;
-	else if (speed == SPEED_10)
+	else if (speed == 10)
 		ifmr->ifm_active |= IFM_10_T;
 	else
 		KASSERT(0, ("%s: link up but speed unknown (%u)", __func__,
@@ -3917,7 +3922,7 @@ vi_full_init(struct vi_info *vi)
 	for (i = 0; i < nitems(rss_key); i++) {
 		rss_key[i] = htobe32(raw_rss_key[nitems(rss_key) - 1 - i]);
 	}
-	t4_write_rss_key(sc, (void *)&rss_key[0], -1);
+	t4_write_rss_key(sc, &rss_key[0], -1);
 #endif
 	rss = malloc(vi->rss_size * sizeof (*rss), M_CXGBE, M_ZERO | M_WAITOK);
 	for (i = 0; i < vi->rss_size;) {
@@ -4192,7 +4197,7 @@ read_vf_stat(struct adapter *sc, unsigned int viid, int reg)
 {
 	u32 stats[2];
 
-	mtx_assert(&sc->regwin_lock, MA_OWNED);
+	mtx_assert(&sc->reg_lock, MA_OWNED);
 	t4_write_reg(sc, A_PL_INDIR_CMD, V_PL_AUTOINC(1) |
 	    V_PL_VFID(G_FW_VIID_VIN(viid)) | V_PL_ADDR(VF_MPS_REG(reg)));
 	stats[0] = t4_read_reg(sc, A_PL_INDIR_DATA);
@@ -4255,10 +4260,10 @@ vi_refresh_stats(struct adapter *sc, struct vi_info *vi)
 	if (timevalcmp(&tv, &vi->last_refreshed, <))
 		return;
 
-	mtx_lock(&sc->regwin_lock);
+	mtx_lock(&sc->reg_lock);
 	t4_get_vi_stats(sc, vi->viid, &vi->stats);
 	getmicrotime(&vi->last_refreshed);
-	mtx_unlock(&sc->regwin_lock);
+	mtx_unlock(&sc->reg_lock);
 }
 
 static void
@@ -4278,10 +4283,10 @@ cxgbe_refresh_stats(struct adapter *sc, struct port_info *pi)
 	t4_get_port_stats(sc, pi->tx_chan, &pi->stats);
 	for (i = 0; i < sc->chip_params->nchan; i++) {
 		if (pi->rx_chan_map & (1 << i)) {
-			mtx_lock(&sc->regwin_lock);
+			mtx_lock(&sc->reg_lock);
 			t4_read_indirect(sc, A_TP_MIB_INDEX, A_TP_MIB_DATA, &v,
 			    1, A_TP_MIB_TNL_CNG_DROP_0 + i);
-			mtx_unlock(&sc->regwin_lock);
+			mtx_unlock(&sc->reg_lock);
 			tnl_cong_drops += v;
 		}
 	}
@@ -5688,9 +5693,9 @@ sysctl_cpl_stats(SYSCTL_HANDLER_ARGS)
 	if (sb == NULL)
 		return (ENOMEM);
 
-	mtx_lock(&sc->regwin_lock);
+	mtx_lock(&sc->reg_lock);
 	t4_tp_get_cpl_stats(sc, &stats);
-	mtx_unlock(&sc->regwin_lock);
+	mtx_unlock(&sc->reg_lock);
 
 	if (sc->chip_params->nchan > 2) {
 		sbuf_printf(sb, "                 channel 0  channel 1"
@@ -6015,10 +6020,6 @@ sysctl_linkdnrc(SYSCTL_HANDLER_ARGS)
 	int rc = 0;
 	struct port_info *pi = arg1;
 	struct sbuf *sb;
-	static const char *linkdnreasons[] = {
-		"non-specific", "remote fault", "autoneg failed", "reserved3",
-		"PHY overheated", "unknown", "rx los", "reserved7"
-	};
 
 	rc = sysctl_wire_old_buffer(req, 0);
 	if (rc != 0)
@@ -6029,10 +6030,8 @@ sysctl_linkdnrc(SYSCTL_HANDLER_ARGS)
 
 	if (pi->linkdnrc < 0)
 		sbuf_printf(sb, "n/a");
-	else if (pi->linkdnrc < nitems(linkdnreasons))
-		sbuf_printf(sb, "%s", linkdnreasons[pi->linkdnrc]);
 	else
-		sbuf_printf(sb, "%d", pi->linkdnrc);
+		sbuf_printf(sb, "%s", t4_link_down_rc_str(pi->linkdnrc));
 
 	rc = sbuf_finish(sb);
 	sbuf_delete(sb);
@@ -6674,9 +6673,9 @@ sysctl_rdma_stats(SYSCTL_HANDLER_ARGS)
 	if (sb == NULL)
 		return (ENOMEM);
 
-	mtx_lock(&sc->regwin_lock);
+	mtx_lock(&sc->reg_lock);
 	t4_tp_get_rdma_stats(sc, &stats);
-	mtx_unlock(&sc->regwin_lock);
+	mtx_unlock(&sc->reg_lock);
 
 	sbuf_printf(sb, "NoRQEModDefferals: %u\n", stats.rqe_dfr_mod);
 	sbuf_printf(sb, "NoRQEPktDefferals: %u", stats.rqe_dfr_pkt);
@@ -6703,9 +6702,9 @@ sysctl_tcp_stats(SYSCTL_HANDLER_ARGS)
 	if (sb == NULL)
 		return (ENOMEM);
 
-	mtx_lock(&sc->regwin_lock);
+	mtx_lock(&sc->reg_lock);
 	t4_tp_get_tcp_stats(sc, &v4, &v6);
-	mtx_unlock(&sc->regwin_lock);
+	mtx_unlock(&sc->reg_lock);
 
 	sbuf_printf(sb,
 	    "                                IP                 IPv6\n");
@@ -6805,9 +6804,9 @@ sysctl_tp_err_stats(SYSCTL_HANDLER_ARGS)
 	if (sb == NULL)
 		return (ENOMEM);
 
-	mtx_lock(&sc->regwin_lock);
+	mtx_lock(&sc->reg_lock);
 	t4_tp_get_err_stats(sc, &stats);
-	mtx_unlock(&sc->regwin_lock);
+	mtx_unlock(&sc->reg_lock);
 
 	if (sc->chip_params->nchan > 2) {
 		sbuf_printf(sb, "                 channel 0  channel 1"
@@ -7210,7 +7209,7 @@ sysctl_wcwr_stats(SYSCTL_HANDLER_ARGS)
 #endif
 
 static uint32_t
-fconf_to_mode(uint32_t fconf)
+fconf_iconf_to_mode(uint32_t fconf, uint32_t iconf)
 {
 	uint32_t mode;
 
@@ -7238,8 +7237,11 @@ fconf_to_mode(uint32_t fconf)
 	if (fconf & F_VLAN)
 		mode |= T4_FILTER_VLAN;
 
-	if (fconf & F_VNIC_ID)
+	if (fconf & F_VNIC_ID) {
 		mode |= T4_FILTER_VNIC;
+		if (iconf & F_VNIC)
+			mode |= T4_FILTER_IC_VNIC;
+	}
 
 	if (fconf & F_PORT)
 		mode |= T4_FILTER_PORT;
@@ -7289,8 +7291,18 @@ mode_to_fconf(uint32_t mode)
 }
 
 static uint32_t
-fspec_to_fconf(struct t4_filter_specification *fs)
+mode_to_iconf(uint32_t mode)
 {
+
+	if (mode & T4_FILTER_IC_VNIC)
+		return (F_VNIC);
+	return (0);
+}
+
+static int check_fspec_against_fconf_iconf(struct adapter *sc,
+    struct t4_filter_specification *fs)
+{
+	struct tp_params *tpp = &sc->params.tp;
 	uint32_t fconf = 0;
 
 	if (fs->val.frag || fs->mask.frag)
@@ -7314,8 +7326,17 @@ fspec_to_fconf(struct t4_filter_specification *fs)
 	if (fs->val.vlan_vld || fs->mask.vlan_vld)
 		fconf |= F_VLAN;
 
-	if (fs->val.vnic_vld || fs->mask.vnic_vld)
+	if (fs->val.ovlan_vld || fs->mask.ovlan_vld) {
 		fconf |= F_VNIC_ID;
+		if (tpp->ingress_config & F_VNIC)
+			return (EINVAL);
+	}
+
+	if (fs->val.pfvf_vld || fs->mask.pfvf_vld) {
+		fconf |= F_VNIC_ID;
+		if ((tpp->ingress_config & F_VNIC) == 0)
+			return (EINVAL);
+	}
 
 	if (fs->val.iport || fs->mask.iport)
 		fconf |= F_PORT;
@@ -7323,40 +7344,44 @@ fspec_to_fconf(struct t4_filter_specification *fs)
 	if (fs->val.fcoe || fs->mask.fcoe)
 		fconf |= F_FCOE;
 
-	return (fconf);
+	if ((tpp->vlan_pri_map | fconf) != tpp->vlan_pri_map)
+		return (E2BIG);
+
+	return (0);
 }
 
 static int
 get_filter_mode(struct adapter *sc, uint32_t *mode)
 {
-	int rc;
-	uint32_t fconf;
+	struct tp_params *tpp = &sc->params.tp;
 
-	rc = begin_synchronized_op(sc, NULL, HOLD_LOCK | SLEEP_OK | INTR_OK,
-	    "t4getfm");
-	if (rc)
-		return (rc);
+	/*
+	 * We trust the cached values of the relevant TP registers.  This means
+	 * things work reliably only if writes to those registers are always via
+	 * t4_set_filter_mode.
+	 */
+	*mode = fconf_iconf_to_mode(tpp->vlan_pri_map, tpp->ingress_config);
 
-	t4_read_indirect(sc, A_TP_PIO_ADDR, A_TP_PIO_DATA, &fconf, 1,
-	    A_TP_VLAN_PRI_MAP);
-
-	if (sc->params.tp.vlan_pri_map != fconf) {
-		log(LOG_WARNING, "%s: cached filter mode out of sync %x %x.\n",
-		    device_get_nameunit(sc->dev), sc->params.tp.vlan_pri_map,
-		    fconf);
-	}
-
-	*mode = fconf_to_mode(fconf);
-
-	end_synchronized_op(sc, LOCK_HELD);
 	return (0);
 }
 
 static int
 set_filter_mode(struct adapter *sc, uint32_t mode)
 {
-	uint32_t fconf;
+	struct tp_params *tpp = &sc->params.tp;
+	uint32_t fconf, iconf;
 	int rc;
+
+	iconf = mode_to_iconf(mode);
+	if ((iconf ^ tpp->ingress_config) & F_VNIC) {
+		/*
+		 * For now we just complain if A_TP_INGRESS_CONFIG is not
+		 * already set to the correct value for the requested filter
+		 * mode.  It's not clear if it's safe to write to this register
+		 * on the fly.  (And we trust the cached value of the register).
+		 */
+		return (EBUSY);
+	}
 
 	fconf = mode_to_fconf(mode);
 
@@ -7390,6 +7415,7 @@ get_filter_hits(struct adapter *sc, uint32_t fid)
 	uint64_t hits;
 
 	memwin_info(sc, 0, &mw_base, NULL);
+
 	off = position_memwin(sc, 0,
 	    tcb_base + (fid + sc->tids.ftid_base) * TCB_SIZE);
 	if (is_t4(sc)) {
@@ -7471,12 +7497,10 @@ set_filter(struct adapter *sc, struct t4_filter *t)
 		goto done;
 	}
 
-	/* Validate against the global filter mode */
-	if ((sc->params.tp.vlan_pri_map | fspec_to_fconf(&t->fs)) !=
-	    sc->params.tp.vlan_pri_map) {
-		rc = E2BIG;
+	/* Validate against the global filter mode and ingress config */
+	rc = check_fspec_against_fconf_iconf(sc, &t->fs);
+	if (rc != 0)
 		goto done;
-	}
 
 	if (t->fs.action == FILTER_SWITCH && t->fs.eport >= nports) {
 		rc = EINVAL;
@@ -7639,7 +7663,7 @@ set_filter_wr(struct adapter *sc, int fidx)
 {
 	struct filter_entry *f = &sc->tids.ftid_tab[fidx];
 	struct fw_filter_wr *fwr;
-	unsigned int ftid;
+	unsigned int ftid, vnic_vld, vnic_vld_mask;
 	struct wrq_cookie cookie;
 
 	ASSERT_SYNCHRONIZED_OP(sc);
@@ -7656,6 +7680,18 @@ set_filter_wr(struct adapter *sc, int fidx)
 			return (ENOMEM);
 		}
 	}
+
+	/* Already validated against fconf, iconf */
+	MPASS((f->fs.val.pfvf_vld & f->fs.val.ovlan_vld) == 0);
+	MPASS((f->fs.mask.pfvf_vld & f->fs.mask.ovlan_vld) == 0);
+	if (f->fs.val.pfvf_vld || f->fs.val.ovlan_vld)
+		vnic_vld = 1;
+	else
+		vnic_vld = 0;
+	if (f->fs.mask.pfvf_vld || f->fs.mask.ovlan_vld)
+		vnic_vld_mask = 1;
+	else
+		vnic_vld_mask = 0;
 
 	ftid = sc->tids.ftid_base + fidx;
 
@@ -7694,9 +7730,9 @@ set_filter_wr(struct adapter *sc, int fidx)
 	    (V_FW_FILTER_WR_FRAG(f->fs.val.frag) |
 		V_FW_FILTER_WR_FRAGM(f->fs.mask.frag) |
 		V_FW_FILTER_WR_IVLAN_VLD(f->fs.val.vlan_vld) |
-		V_FW_FILTER_WR_OVLAN_VLD(f->fs.val.vnic_vld) |
+		V_FW_FILTER_WR_OVLAN_VLD(vnic_vld) |
 		V_FW_FILTER_WR_IVLAN_VLDM(f->fs.mask.vlan_vld) |
-		V_FW_FILTER_WR_OVLAN_VLDM(f->fs.mask.vnic_vld));
+		V_FW_FILTER_WR_OVLAN_VLDM(vnic_vld_mask));
 	fwr->smac_sel = 0;
 	fwr->rx_chan_rx_rpl_iq = htobe16(V_FW_FILTER_WR_RX_CHAN(0) |
 	    V_FW_FILTER_WR_RX_RPL_IQ(sc->sge.fwq.abs_id));
@@ -8372,12 +8408,12 @@ t4_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data, int fflag,
 		/* MAC stats */
 		t4_clr_port_stats(sc, pi->tx_chan);
 		pi->tx_parse_error = 0;
-		mtx_lock(&sc->regwin_lock);
+		mtx_lock(&sc->reg_lock);
 		for_each_vi(pi, v, vi) {
 			if (vi->flags & VI_INIT_DONE)
 				t4_clr_vi_stats(sc, vi->viid);
 		}
-		mtx_unlock(&sc->regwin_lock);
+		mtx_unlock(&sc->reg_lock);
 
 		/*
 		 * Since this command accepts a port, clear stats for
@@ -8450,6 +8486,20 @@ t4_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data, int fflag,
 	}
 
 	return (rc);
+}
+
+void
+t4_db_full(struct adapter *sc)
+{
+
+	CXGBE_UNIMPLEMENTED(__func__);
+}
+
+void
+t4_db_dropped(struct adapter *sc)
+{
+
+	CXGBE_UNIMPLEMENTED(__func__);
 }
 
 #ifdef TCP_OFFLOAD
