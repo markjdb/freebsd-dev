@@ -154,7 +154,7 @@ static int vm_pageout_pages_needed;
 
 static uma_zone_t fakepg_zone;
 
-static struct vnode *vm_page_alloc_init(vm_page_t m);
+static void vm_page_alloc_init(vm_page_t m);
 static void vm_page_cache_turn_free(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(uint8_t queue, vm_page_t m);
@@ -1671,16 +1671,6 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	return (m);
 }
 
-static void
-vm_page_alloc_contig_vdrop(struct spglist *lst)
-{
-
-	while (!SLIST_EMPTY(lst)) {
-		vdrop((struct vnode *)SLIST_FIRST(lst)-> plinks.s.pv);
-		SLIST_REMOVE_HEAD(lst, plinks.s.ss);
-	}
-}
-
 /*
  *	vm_page_alloc_contig:
  *
@@ -1725,8 +1715,6 @@ vm_page_alloc_contig(vm_object_t object, vm_pindex_t pindex, int req,
     u_long npages, vm_paddr_t low, vm_paddr_t high, u_long alignment,
     vm_paddr_t boundary, vm_memattr_t memattr)
 {
-	struct vnode *drop;
-	struct spglist deferred_vdrop_list;
 	vm_page_t m, m_tmp, m_ret;
 	u_int flags;
 	int req_class;
@@ -1752,7 +1740,6 @@ vm_page_alloc_contig(vm_object_t object, vm_pindex_t pindex, int req,
 	if (curproc == pageproc && req_class != VM_ALLOC_INTERRUPT)
 		req_class = VM_ALLOC_SYSTEM;
 
-	SLIST_INIT(&deferred_vdrop_list);
 	mtx_lock(&vm_page_queue_free_mtx);
 	if (vm_cnt.v_free_count + vm_cnt.v_cache_count >= npages +
 	    vm_cnt.v_free_reserved || (req_class == VM_ALLOC_SYSTEM &&
@@ -1773,19 +1760,10 @@ retry:
 		pagedaemon_wakeup();
 		return (NULL);
 	}
-	if (m_ret != NULL)
-		for (m = m_ret; m < &m_ret[npages]; m++) {
-			drop = vm_page_alloc_init(m);
-			if (drop != NULL) {
-				/*
-				 * Enqueue the vnode for deferred vdrop().
-				 */
-				m->plinks.s.pv = drop;
-				SLIST_INSERT_HEAD(&deferred_vdrop_list, m,
-				    plinks.s.ss);
-			}
-		}
-	else {
+	if (m_ret != NULL) {
+		for (m = m_ret; m < &m_ret[npages]; m++)
+			vm_page_alloc_init(m);
+	} else {
 #if VM_NRESERVLEVEL > 0
 		if (vm_reserv_reclaim_contig(npages, low, high, alignment,
 		    boundary))
@@ -1827,8 +1805,6 @@ retry:
 		m->oflags = VPO_UNMANAGED;
 		if (object != NULL) {
 			if (vm_page_insert(m, object, pindex)) {
-				vm_page_alloc_contig_vdrop(
-				    &deferred_vdrop_list);
 				if (vm_paging_needed())
 					pagedaemon_wakeup();
 				if ((req & VM_ALLOC_WIRED) != 0)
@@ -1850,7 +1826,6 @@ retry:
 			pmap_page_set_memattr(m, memattr);
 		pindex++;
 	}
-	vm_page_alloc_contig_vdrop(&deferred_vdrop_list);
 	if (vm_paging_needed())
 		pagedaemon_wakeup();
 	return (m_ret);
@@ -1858,17 +1833,14 @@ retry:
 
 /*
  * Initialize a page that has been freshly dequeued from a freelist.
- * The caller has to drop the vnode returned, if it is not NULL.
  *
  * This function may only be used to initialize unmanaged pages.
  *
  * To be called with vm_page_queue_free_mtx held.
  */
-static struct vnode *
+static void
 vm_page_alloc_init(vm_page_t m)
 {
-	struct vnode *drop;
-	vm_object_t m_object;
 
 	KASSERT(m->queue == PQ_NONE,
 	    ("vm_page_alloc_init: page %p has unexpected queue %d",
@@ -1885,24 +1857,11 @@ vm_page_alloc_init(vm_page_t m)
 	    ("vm_page_alloc_init: page %p has unexpected memattr %d",
 	    m, pmap_page_get_memattr(m)));
 	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-	drop = NULL;
-	if ((m->flags & PG_CACHED) != 0) {
-		KASSERT((m->flags & PG_ZERO) == 0,
-		    ("vm_page_alloc_init: cached page %p is PG_ZERO", m));
-		m->valid = 0;
-		m_object = m->object;
-		vm_page_cache_remove(m);
-		if (m_object->type == OBJT_VNODE &&
-		    vm_object_cache_is_empty(m_object))
-			drop = m_object->handle;
-	} else {
-		KASSERT(m->valid == 0,
-		    ("vm_page_alloc_init: free page %p is valid", m));
-		vm_phys_freecnt_adj(m, -1);
-		if ((m->flags & PG_ZERO) != 0)
-			vm_page_zero_count--;
-	}
-	return (drop);
+	KASSERT(m->valid == 0,
+	    ("vm_page_alloc_init: free page %p is valid", m));
+	vm_phys_freecnt_adj(m, -1);
+	if ((m->flags & PG_ZERO) != 0)
+		vm_page_zero_count--;
 }
 
 /*
@@ -1928,7 +1887,6 @@ vm_page_alloc_init(vm_page_t m)
 vm_page_t
 vm_page_alloc_freelist(int flind, int req)
 {
-	struct vnode *drop;
 	vm_page_t m;
 	u_int flags;
 	int req_class;
@@ -1962,7 +1920,7 @@ vm_page_alloc_freelist(int flind, int req)
 		mtx_unlock(&vm_page_queue_free_mtx);
 		return (NULL);
 	}
-	drop = vm_page_alloc_init(m);
+	vm_page_alloc_init(m);
 	mtx_unlock(&vm_page_queue_free_mtx);
 
 	/*
@@ -1983,8 +1941,6 @@ vm_page_alloc_freelist(int flind, int req)
 	}
 	/* Unmanaged pages don't use "act_count". */
 	m->oflags = VPO_UNMANAGED;
-	if (drop != NULL)
-		vdrop(drop);
 	if (vm_paging_needed())
 		pagedaemon_wakeup();
 	return (m);

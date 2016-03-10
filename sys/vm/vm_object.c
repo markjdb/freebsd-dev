@@ -1393,19 +1393,6 @@ retry:
 		swap_pager_copy(orig_object, new_object, offidxstart, 0);
 		TAILQ_FOREACH(m, &new_object->memq, listq)
 			vm_page_xunbusy(m);
-
-		/*
-		 * Transfer any cached pages from orig_object to new_object.
-		 * If swap_pager_copy() found swapped out pages within the
-		 * specified range of orig_object, then it changed
-		 * new_object's type to OBJT_SWAP when it transferred those
-		 * pages to new_object.  Otherwise, new_object's type
-		 * should still be OBJT_DEFAULT and orig_object should not
-		 * contain any cached pages within the specified range.
-		 */
-		if (__predict_false(!vm_object_cache_is_empty(orig_object)))
-			vm_page_cache_transfer(orig_object, offidxstart,
-			    new_object);
 	}
 	VM_OBJECT_WUNLOCK(orig_object);
 	VM_OBJECT_WUNLOCK(new_object);
