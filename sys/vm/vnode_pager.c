@@ -1111,9 +1111,7 @@ vnode_pager_putpages(vm_object_t object, vm_page_t *m, int count,
 	 * Also, the backing vnode's iodone routine may not wake the pageout
 	 * daemon up.  This should be probably be addressed XXX.
 	 */
-
-	if (vm_cnt.v_free_count + vm_cnt.v_cache_count <
-	    vm_cnt.v_pageout_free_min)
+	if (vm_cnt.v_free_count < vm_cnt.v_pageout_free_min)
 		flags |= VM_PAGER_PUT_SYNC;
 
 	/*
