@@ -178,9 +178,6 @@ vm_object_zdtor(void *mem, int size, void *arg)
 	    ("object %p has reservations",
 	    object));
 #endif
-	KASSERT(vm_object_cache_is_empty(object),
-	    ("object %p has cached pages",
-	    object));
 	KASSERT(object->paging_in_progress == 0,
 	    ("object %p paging_in_progress = %d",
 	    object, object->paging_in_progress));
