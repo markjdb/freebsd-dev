@@ -1416,20 +1416,6 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 }
 
 /*
- *	Returns the cached page that is associated with the given
- *	object and offset.  If, however, none exists, returns NULL.
- *
- *	The free page queue must be locked.
- */
-static inline vm_page_t
-vm_page_cache_lookup(vm_object_t object, vm_pindex_t pindex)
-{
-
-	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-	return (vm_radix_lookup(&object->cache, pindex));
-}
-
-/*
  *	vm_page_alloc:
  *
  *	Allocate and return a page that is associated with the specified
@@ -1500,34 +1486,22 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		 * Allocate from the free queue if the number of free pages
 		 * exceeds the minimum for the request class.
 		 */
-		if (object != NULL &&
-		    (m = vm_page_cache_lookup(object, pindex)) != NULL) {
-			if (vm_phys_unfree_page(m))
-				vm_phys_set_pool(VM_FREEPOOL_DEFAULT, m, 0);
 #if VM_NRESERVLEVEL > 0
-			else if (!vm_reserv_reactivate_page(m))
-#else
-			else
-#endif
-				panic("vm_page_alloc: cache page %p is missing"
-				    " from the free queue", m);
-#if VM_NRESERVLEVEL > 0
-		} else if (object == NULL || (object->flags & (OBJ_COLORED |
+		if (object == NULL || (object->flags & (OBJ_COLORED |
 		    OBJ_FICTITIOUS)) != OBJ_COLORED || (m =
 		    vm_reserv_alloc_page(object, pindex, mpred)) == NULL) {
-#else
-		} else {
-#endif
 			m = vm_phys_alloc_pages(object != NULL ?
 			    VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT, 0);
-#if VM_NRESERVLEVEL > 0
 			if (m == NULL && vm_reserv_reclaim_inactive()) {
 				m = vm_phys_alloc_pages(object != NULL ?
 				    VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT,
 				    0);
 			}
-#endif
 		}
+#else
+		m = vm_phys_alloc_pages(object != NULL ?
+		    VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT, 0);
+#endif
 	} else {
 		/*
 		 * Not allocatable, give up.
