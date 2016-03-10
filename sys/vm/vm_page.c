@@ -1061,8 +1061,6 @@ vm_page_dirty_KBI(vm_page_t m)
 {
 
 	/* These assertions refer to this operation by its public name. */
-	KASSERT((m->flags & PG_CACHED) == 0,
-	    ("vm_page_dirty: page in cache!"));
 	KASSERT(m->valid == VM_PAGE_BITS_ALL,
 	    ("vm_page_dirty: page is invalid!"));
 	m->dirty = VM_PAGE_BITS_ALL;
@@ -1971,40 +1969,12 @@ retry:
 			KASSERT((m->flags & PG_UNHOLDFREE) == 0,
 			    ("page %p is PG_UNHOLDFREE", m));
 			/* Don't care: PG_NODUMP, PG_WINATCFLS, PG_ZERO. */
+			KASSERT(m == vm_page_lookup(object, m->pindex),
+			    ("page %p not resident in %p", m, object));
 			if (object->type != OBJT_DEFAULT &&
 			    object->type != OBJT_SWAP &&
-			    object->type != OBJT_VNODE)
+			    object->type != OBJT_VNODE) {
 				run_ext = 0;
-			else if ((m->flags & PG_CACHED) != 0 ||
-			    m != vm_page_lookup(object, m->pindex)) {
-				/*
-				 * The page is cached or recently converted
-				 * from cached to free.
-				 */
-#if VM_NRESERVLEVEL > 0
-				if (level >= 0) {
-					/*
-					 * The page is reserved.  Extend the
-					 * current run by one page.
-					 */
-					run_ext = 1;
-				} else
-#endif
-				if ((order = m->order) < VM_NFREEORDER) {
-					/*
-					 * The page is enqueued in the
-					 * physical memory allocator's cache/
-					 * free page queues.  Moreover, it is
-					 * the first page in a power-of-two-
-					 * sized run of contiguous cache/free
-					 * pages.  Add these pages to the end
-					 * of the current run, and jump
-					 * ahead.
-					 */
-					run_ext = 1 << order;
-					m_inc = 1 << order;
-				} else
-					run_ext = 0;
 #if VM_NRESERVLEVEL > 0
 			} else if ((options & VPSC_NOSUPER) != 0 &&
 			    (level = vm_reserv_level_iffullpop(m)) >= 0) {
@@ -2167,19 +2137,13 @@ retry:
 			KASSERT((m->flags & PG_UNHOLDFREE) == 0,
 			    ("page %p is PG_UNHOLDFREE", m));
 			/* Don't care: PG_NODUMP, PG_WINATCFLS, PG_ZERO. */
+			KASSERT(m == vm_page_lookup(object, m->pindex),
+			    ("page %p not resident in %p", m, object));
 			if (object->type != OBJT_DEFAULT &&
 			    object->type != OBJT_SWAP &&
 			    object->type != OBJT_VNODE)
 				error = EINVAL;
-			else if ((m->flags & PG_CACHED) != 0 ||
-			    m != vm_page_lookup(object, m->pindex)) {
-				/*
-				 * The page is cached or recently converted
-				 * from cached to free.
-				 */
-				VM_OBJECT_WUNLOCK(object);
-				goto cached;
-			} else if (object->memattr != VM_MEMATTR_DEFAULT)
+			else if (object->memattr != VM_MEMATTR_DEFAULT)
 				error = EINVAL;
 			else if (m->queue != PQ_NONE && !vm_page_busied(m)) {
 				KASSERT(pmap_page_get_memattr(m) ==
@@ -2280,7 +2244,6 @@ retry:
 unlock:
 			VM_OBJECT_WUNLOCK(object);
 		} else {
-cached:
 			mtx_lock(&vm_page_queue_free_mtx);
 			order = m->order;
 			if (order < VM_NFREEORDER) {
