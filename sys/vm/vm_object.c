@@ -788,8 +788,6 @@ vm_object_terminate(vm_object_t object)
 	if (__predict_false(!LIST_EMPTY(&object->rvq)))
 		vm_reserv_break_all(object);
 #endif
-	if (__predict_false(!vm_object_cache_is_empty(object)))
-		vm_page_cache_free(object, 0, 0);
 
 	KASSERT(object->cred == NULL || object->type == OBJT_DEFAULT ||
 	    object->type == OBJT_SWAP,
@@ -1741,13 +1739,6 @@ vm_object_collapse(vm_object_t object)
 				    backing_object,
 				    object,
 				    OFF_TO_IDX(object->backing_object_offset), TRUE);
-
-				/*
-				 * Free any cached pages from backing_object.
-				 */
-				if (__predict_false(
-				    !vm_object_cache_is_empty(backing_object)))
-					vm_page_cache_free(backing_object, 0, 0);
 			}
 			/*
 			 * Object now shadows whatever backing_object did.
@@ -1876,7 +1867,7 @@ vm_object_page_remove(vm_object_t object, vm_pindex_t start, vm_pindex_t end,
 	    (options & (OBJPR_CLEANONLY | OBJPR_NOTMAPPED)) == OBJPR_NOTMAPPED,
 	    ("vm_object_page_remove: illegal options for object %p", object));
 	if (object->resident_page_count == 0)
-		goto skipmemq;
+		return;
 	vm_object_pip_add(object, 1);
 again:
 	p = vm_page_find_least(object, start);
@@ -1933,9 +1924,6 @@ next:
 		vm_page_unlock(p);
 	}
 	vm_object_pip_wakeup(object);
-skipmemq:
-	if (__predict_false(!vm_object_cache_is_empty(object)))
-		vm_page_cache_free(object, start, end);
 }
 
 /*
