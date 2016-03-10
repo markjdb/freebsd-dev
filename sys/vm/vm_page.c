@@ -155,7 +155,6 @@ static int vm_pageout_pages_needed;
 static uma_zone_t fakepg_zone;
 
 static void vm_page_alloc_init(vm_page_t m);
-static void vm_page_cache_turn_free(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(uint8_t queue, vm_page_t m);
 static void vm_page_free_wakeup(void);
@@ -1431,24 +1430,6 @@ vm_page_cache_lookup(vm_object_t object, vm_pindex_t pindex)
 }
 
 /*
- *	Remove the given cached page from its containing object's
- *	collection of cached pages.
- *
- *	The free page queue must be locked.
- */
-static void
-vm_page_cache_remove(vm_page_t m)
-{
-
-	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-	KASSERT((m->flags & PG_CACHED) != 0,
-	    ("vm_page_cache_remove: page %p is not cached", m));
-	vm_radix_remove(&m->object->cache, m->pindex);
-	m->object = NULL;
-	vm_cnt.v_cache_count--;
-}
-
-/*
  *	vm_page_alloc:
  *
  *	Allocate and return a page that is associated with the specified
@@ -2711,27 +2692,6 @@ vm_page_free_wakeup(void)
 		vm_pages_needed = 0;
 		wakeup(&vm_cnt.v_free_count);
 	}
-}
-
-/*
- *	Turn a cached page into a free page, by changing its attributes.
- *	Keep the statistics up-to-date.
- *
- *	The free page queue must be locked.
- */
-static void
-vm_page_cache_turn_free(vm_page_t m)
-{
-
-	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-
-	m->object = NULL;
-	m->valid = 0;
-	KASSERT((m->flags & PG_CACHED) != 0,
-	    ("vm_page_cache_turn_free: page %p is not cached", m));
-	m->flags &= ~PG_CACHED;
-	vm_cnt.v_cache_count--;
-	vm_phys_freecnt_adj(m, 1);
 }
 
 /*
