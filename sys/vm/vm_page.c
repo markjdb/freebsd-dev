@@ -1477,8 +1477,6 @@ vm_page_cache_remove(vm_page_t m)
 vm_page_t
 vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 {
-	struct vnode *vp = NULL;
-	vm_object_t m_object;
 	vm_page_t m, mpred;
 	int flags, req_class;
 
@@ -1561,40 +1559,10 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	}
 
 	/*
-	 *  At this point we had better have found a good page.
+	 * At this point we had better have found a good page.
 	 */
 	KASSERT(m != NULL, ("vm_page_alloc: missing page"));
-	KASSERT(m->queue == PQ_NONE,
-	    ("vm_page_alloc: page %p has unexpected queue %d", m, m->queue));
-	KASSERT(m->wire_count == 0, ("vm_page_alloc: page %p is wired", m));
-	KASSERT(m->hold_count == 0, ("vm_page_alloc: page %p is held", m));
-	KASSERT(!vm_page_sbusied(m),
-	    ("vm_page_alloc: page %p is busy", m));
-	KASSERT(m->dirty == 0, ("vm_page_alloc: page %p is dirty", m));
-	KASSERT(pmap_page_get_memattr(m) == VM_MEMATTR_DEFAULT,
-	    ("vm_page_alloc: page %p has unexpected memattr %d", m,
-	    pmap_page_get_memattr(m)));
-	if ((m->flags & PG_CACHED) != 0) {
-		KASSERT((m->flags & PG_ZERO) == 0,
-		    ("vm_page_alloc: cached page %p is PG_ZERO", m));
-		KASSERT(m->valid != 0,
-		    ("vm_page_alloc: cached page %p is invalid", m));
-		if (m->object == object && m->pindex == pindex)
-			vm_cnt.v_reactivated++;
-		else
-			m->valid = 0;
-		m_object = m->object;
-		vm_page_cache_remove(m);
-		if (m_object->type == OBJT_VNODE &&
-		    vm_object_cache_is_empty(m_object))
-			vp = m_object->handle;
-	} else {
-		KASSERT(m->valid == 0,
-		    ("vm_page_alloc: free page %p is valid", m));
-		vm_phys_freecnt_adj(m, -1);
-		if ((m->flags & PG_ZERO) != 0)
-			vm_page_zero_count--;
-	}
+	vm_page_alloc_init(m);
 	mtx_unlock(&vm_page_queue_free_mtx);
 
 	/*
@@ -1627,9 +1595,6 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 
 	if (object != NULL) {
 		if (vm_page_insert_after(m, object, pindex, mpred)) {
-			/* See the comment below about hold count. */
-			if (vp != NULL)
-				vdrop(vp);
 			pagedaemon_wakeup();
 			if (req & VM_ALLOC_WIRED) {
 				atomic_subtract_int(&vm_cnt.v_wire_count, 1);
@@ -1647,15 +1612,6 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 			pmap_page_set_memattr(m, object->memattr);
 	} else
 		m->pindex = pindex;
-
-	/*
-	 * The following call to vdrop() must come after the above call
-	 * to vm_page_insert() in case both affect the same object and
-	 * vnode.  Otherwise, the affected vnode's hold count could
-	 * temporarily become zero.
-	 */
-	if (vp != NULL)
-		vdrop(vp);
 
 	/*
 	 * Don't wakeup too often - wakeup the pageout daemon when
