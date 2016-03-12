@@ -1366,9 +1366,7 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
  *
  *	Note: we *always* dirty the page.  It is necessary both for the
  *	      fact that we moved it, and because we may be invalidating
- *	      swap.  If the page is on the cache, we have to deactivate it
- *	      or vm_page_dirty() will panic.  Dirty pages are not allowed
- *	      on the cache.
+ *	      swap.
  *
  *	The objects must be locked.
  */
@@ -1469,11 +1467,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		   ("vm_page_alloc: pindex already allocated"));
 	}
 
-	/*
-	 * The page allocation request can came from consumers which already
-	 * hold the free page queue mutex, like vm_page_insert() in
-	 * vm_page_cache().
-	 */
+	/* XXX is it still possible for this to recurse? */
 	mtx_lock_flags(&vm_page_queue_free_mtx, MTX_RECURSE);
 	if (vm_cnt.v_free_count + vm_cnt.v_cache_count > vm_cnt.v_free_reserved ||
 	    (req_class == VM_ALLOC_SYSTEM &&
@@ -2007,17 +2001,17 @@ unlock:
 		} else if (level >= 0) {
 			/*
 			 * The page is reserved but not yet allocated.  In
-			 * other words, it is still cached or free.  Extend
-			 * the current run by one page.
+			 * other words, it is free.  Extend the current run by
+			 * one page.
 			 */
 			run_ext = 1;
 #endif
 		} else if ((order = m->order) < VM_NFREEORDER) {
 			/*
 			 * The page is enqueued in the physical memory
-			 * allocator's cache/free page queues.  Moreover, it
+			 * allocator's free page queues.  Moreover, it
 			 * is the first page in a power-of-two-sized run of
-			 * contiguous cache/free pages.  Add these pages to
+			 * contiguous free pages.  Add these pages to
 			 * the end of the current run, and jump ahead.
 			 */
 			run_ext = 1 << order;
@@ -2026,8 +2020,8 @@ unlock:
 			/*
 			 * Skip the page for one of the following reasons: (1)
 			 * It is enqueued in the physical memory allocator's
-			 * cache/free page queues.  However, it is not the
-			 * first page in a run of contiguous cache/free pages.
+			 * free page queues.  However, it is not the
+			 * first page in a run of contiguous free pages.
 			 * (This case rarely occurs because the scan is
 			 * performed in ascending order.) (2) It is not
 			 * reserved, and it is transitioning from free to
@@ -2249,9 +2243,9 @@ unlock:
 			if (order < VM_NFREEORDER) {
 				/*
 				 * The page is enqueued in the physical memory
-				 * allocator's cache/free page queues.
+				 * allocator's free page queues.
 				 * Moreover, it is the first page in a power-
-				 * of-two-sized run of contiguous cache/free
+				 * of-two-sized run of contiguous free
 				 * pages.  Jump ahead to the last page within
 				 * that run, and continue from there.
 				 */
@@ -2302,7 +2296,7 @@ CTASSERT(powerof2(NRUNS));
  *	conditions by relocating the virtual pages using that physical memory.
  *	Returns true if reclamation is successful and false otherwise.  Since
  *	relocation requires the allocation of physical pages, reclamation may
- *	fail due to a shortage of cache/free pages.  When reclamation fails,
+ *	fail due to a shortage of free pages.  When reclamation fails,
  *	callers are expected to perform VM_WAIT before retrying a failed
  *	allocation operation, e.g., vm_page_alloc_contig().
  *
@@ -2339,8 +2333,8 @@ vm_page_reclaim_contig(int req, u_long npages, vm_paddr_t low, vm_paddr_t high,
 		req_class = VM_ALLOC_SYSTEM;
 
 	/*
-	 * Return if the number of cached and free pages cannot satisfy the
-	 * requested allocation.
+	 * Return if the number of free pages cannot satisfy the requested
+	 * allocation.
 	 */
 	count = vm_cnt.v_free_count + vm_cnt.v_cache_count;
 	if (count < npages + vm_cnt.v_free_reserved || (count < npages +
@@ -2600,9 +2594,8 @@ vm_page_activate(vm_page_t m)
 /*
  *	vm_page_free_wakeup:
  *
- *	Helper routine for vm_page_free_toq() and vm_page_cache().  This
- *	routine is called when a page has been added to the cache or free
- *	queues.
+ *	Helper routine for vm_page_free_toq() and vm_page_reclaim_run().  This
+ *	routine is called when a page has been added to the free queues.
  *
  *	The page queues must be locked.
  */
@@ -2691,7 +2684,7 @@ vm_page_free_toq(vm_page_t m)
 
 		/*
 		 * Insert the page into the physical memory allocator's
-		 * cache/free page queues.
+		 * free page queues.
 		 */
 		mtx_lock(&vm_page_queue_free_mtx);
 		vm_phys_freecnt_adj(m, 1);
@@ -2795,22 +2788,10 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 /*
  * Move the specified page to the inactive queue.
  *
- * Many pages placed on the inactive queue should actually go
- * into the cache, but it is difficult to figure out which.  What
- * we do instead, if the inactive target is well met, is to put
- * clean pages at the head of the inactive queue instead of the tail.
- * This will cause them to be moved to the cache more quickly and
- * if not actively re-referenced, reclaimed more quickly.  If we just
- * stick these pages at the end of the inactive queue, heavy filesystem
- * meta-data accesses can cause an unnecessary paging load on memory bound
- * processes.  This optimization causes one-time-use metadata to be
- * reused more quickly.
- *
  * Normally noreuse is FALSE, resulting in LRU operation.  noreuse is set
- * to TRUE if we want this page to be 'as if it were placed in the cache',
- * except without unmapping it from the process address space.  In
- * practice this is implemented by inserting the page at the head of the
- * queue, using a marker page to guide FIFO insertion ordering.
+ * to TRUE if the caller believes the page is unlikely to be reactivated.
+ * In this case, the page is placed near the head of the inactive queue,
+ * using a marker page to guide FIFO insertion ordering.
  *
  * The page must be locked.
  */
@@ -2935,12 +2916,9 @@ vm_page_advise(vm_page_t m, int advice)
 		/*
 		 * Mark the page clean.  This will allow the page to be freed
 		 * up by the system.  However, such pages are often reused
-		 * quickly by malloc() so we do not do anything that would
-		 * cause a page fault if we can help it.
-		 *
-		 * Specifically, we do not try to actually free the page now
-		 * nor do we try to put it in the cache (which would cause a
-		 * page fault on reuse).
+		 * quickly by malloc(), so we do not go as far as actually
+		 * freeing them (since this would cause a page fault upon
+		 * reuse).
 		 *
 		 * But we do make the page as freeable as we can without
 		 * actually taking the step of unmapping it.

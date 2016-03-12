@@ -1083,7 +1083,7 @@ vm_pageout_laundry_worker(void *arg)
  *	vm_pageout_scan does the dirty work for the pageout daemon.
  *
  *	pass 0 - Update active LRU/deactivate pages
- *	pass 1 - Move inactive to cache or free
+ *	pass 1 - Move inactive to free
  */
 static void
 vm_pageout_scan(struct vm_domain *vmd, int pass)
@@ -1124,8 +1124,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	addl_page_shortage = 0;
 
 	/*
-	 * Calculate the number of pages we want to either free or move
-	 * to the cache.
+	 * Calculate the number of pages we want to free.
 	 */
 	if (pass > 0) {
 		deficit = atomic_readandclear_int(&vm_pageout_deficit);
@@ -1135,11 +1134,10 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	starting_page_shortage = page_shortage;
 
 	/*
-	 * Start scanning the inactive queue for pages we can move to the
-	 * cache or free.  The scan will stop when the target is reached or
-	 * we have scanned the entire inactive queue.  Note that m->act_count
-	 * is not used to form decisions for the inactive queue, only for the
-	 * active queue.
+	 * Start scanning the inactive queue for pages we can reclaim.
+	 * The scan will stop when the target is reached or we have scanned the
+	 * entire inactive queue.  Note that m->act_count is not used to form
+	 * decisions for the inactive queue, only for the active queue.
 	 */
 	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 	maxscan = pq->pq_cnt;
@@ -1317,7 +1315,7 @@ drop_page:
 
 #if !defined(NO_SWAPPING)
 	/*
-	 * Wakeup the swapout daemon if we didn't cache or free the targeted
+	 * Wakeup the swapout daemon if we didn't free the targeted
 	 * number of pages. 
 	 */
 	if (vm_swap_enabled && page_shortage > 0)
