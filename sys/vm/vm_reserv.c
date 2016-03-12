@@ -198,7 +198,7 @@ static vm_reserv_t vm_reserv_array;
 /*
  * The partially-populated reservation queue
  *
- * This queue enables the fast recovery of an unused cached or free small page
+ * This queue enables the fast recovery of an unused free small page
  * from a partially-populated reservation.  The reservation at the head of
  * this queue is the least-recently-changed, partially-populated reservation.
  *
@@ -721,8 +721,8 @@ found:
 }
 
 /*
- * Breaks the given reservation.  Except for the specified cached or free
- * page, all cached and free pages in the reservation are returned to the
+ * Breaks the given reservation.  Except for the specified free
+ * page, all free pages in the reservation are returned to the
  * physical memory allocator.  The reservation's population count and map are
  * reset to their initial state.
  *
@@ -908,7 +908,7 @@ vm_reserv_level_iffullpop(vm_page_t m)
 }
 
 /*
- * Breaks the given partially-populated reservation, releasing its cached and
+ * Breaks the given partially-populated reservation, releasing its
  * free pages to the physical memory allocator.
  *
  * The free page queue lock must be held.
@@ -928,7 +928,7 @@ vm_reserv_reclaim(vm_reserv_t rv)
 
 /*
  * Breaks the reservation at the head of the partially-populated reservation
- * queue, releasing its cached and free pages to the physical memory
+ * queue, releasing its free pages to the physical memory
  * allocator.  Returns TRUE if a reservation is broken and FALSE otherwise.
  *
  * The free page queue lock must be held.
@@ -948,10 +948,9 @@ vm_reserv_reclaim_inactive(void)
 
 /*
  * Searches the partially-populated reservation queue for the least recently
- * active reservation with unused pages, i.e., cached or free, that satisfy the
- * given request for contiguous physical memory.  If a satisfactory reservation
- * is found, it is broken.  Returns TRUE if a reservation is broken and FALSE
- * otherwise.
+ * active reservation with free pages that satisfy the given request for
+ * contiguous physical memory.  If a satisfactory reservation is found, it is
+ * broken.  Returns TRUE if a reservation is broken and FALSE otherwise.
  *
  * The free page queue lock must be held.
  */
