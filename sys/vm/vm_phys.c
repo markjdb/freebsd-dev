@@ -67,6 +67,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_object.h>
 #include <vm/vm_page.h>
 #include <vm/vm_phys.h>
+#include <vm/vm_reserv.h>
 
 #include <vm/vm_domain.h>
 
@@ -771,6 +772,7 @@ vm_phys_alloc_pages(int pool, int order)
 	    ("vm_phys_alloc_pages: pool %d is out of range", pool));
 	KASSERT(order < VM_NFREEORDER,
 	    ("vm_phys_alloc_pages: order %d is out of range", order));
+	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
 
 	vm_policy_iterator_init(&vi);
 
@@ -785,6 +787,58 @@ vm_phys_alloc_pages(int pool, int order)
 
 	vm_policy_iterator_finish(&vi);
 	return (NULL);
+}
+
+/*
+ * Allocate a set of physical pages for the page cache UMA zone.  They need
+ * not be contiguous but should be allocated from the same domain.
+ */
+int
+vm_phys_import_pages(void *arg, void **store, int cnt, int flags)
+{
+	struct vm_domain_iterator vi;
+	vm_page_t m;
+	int domain, flind, i;
+
+	vm_policy_iterator_init(&vi);
+
+	i = 0;
+	mtx_lock_flags(&vm_page_queue_free_mtx, /* XXX */ MTX_RECURSE);
+	while (vm_domain_iterator_run(&vi, &domain) == 0) {
+		for (flind = 0; flind < vm_nfreelists && i < cnt; flind++) {
+			m = vm_phys_alloc_domain_pages(domain, flind,
+			    /* XXX */ VM_FREEPOOL_DEFAULT, 0);
+			if (m != NULL) {
+				store[i++] = m;
+				vm_phys_freecnt_adj(m, -1);
+			}
+		}
+		if (i == cnt)
+			break;
+	}
+	mtx_unlock(&vm_page_queue_free_mtx);
+	return (i);
+}
+
+void
+vm_phys_release_pages(void *arg, void **store, int cnt)
+{
+	vm_page_t m;
+	int i;
+
+	i = 0;
+	mtx_lock_flags(&vm_page_queue_free_mtx, /* XXX */ MTX_RECURSE);
+	while (i < cnt) {
+		m = (vm_page_t)store[i++];
+		vm_phys_freecnt_adj(m, 1);
+#if VM_NRESERVLEVEL > 0
+		if (!vm_reserv_free_page(m))
+#else
+		if (true)
+#endif
+			vm_phys_free_pages(m, 0);
+	}
+	mtx_unlock(&vm_page_queue_free_mtx);
 }
 
 /*

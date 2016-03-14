@@ -90,6 +90,8 @@ void vm_phys_set_pool(int pool, vm_page_t m, int order);
 boolean_t vm_phys_unfree_page(vm_page_t m);
 boolean_t vm_phys_zero_pages_idle(void);
 int vm_phys_mem_affinity(int f, int t);
+int vm_phys_import_pages(void *arg, void **store, int cnt, int flags);
+void vm_phys_release_pages(void *arg, void **store, int cnt);
 
 /*
  *	vm_phys_domain:

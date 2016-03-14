@@ -160,6 +160,9 @@ static int booted = 0;
 static struct callout uma_callout;
 #define	UMA_TIMEOUT	20		/* Seconds for callout interval. */
 
+/* XXX */
+static struct uma_bucket uma_dummy_bucket;
+
 /*
  * This structure is passed as the zone ctor arg so that I don't have to create
  * a special allocation function just for zones.
@@ -416,6 +419,13 @@ bucket_zone_drain(void)
 
 	for (ubz = &bucket_zones[0]; ubz->ubz_entries != 0; ubz++)
 		zone_drain(ubz->ubz_zone);
+}
+
+static inline bool
+zone_bucket_cache_enabled(uma_zone_t zone)
+{
+
+	return (LIST_FIRST(&zone->uz_buckets) != &uma_dummy_bucket);
 }
 
 static void
@@ -1564,6 +1574,9 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 	if (arg->import) {
 		if (arg->flags & UMA_ZONE_VM)
 			arg->flags |= UMA_ZFLAG_CACHEONLY;
+		if ((arg->flags & UMA_ZONE_NOBUCKET) != 0)
+			LIST_INSERT_HEAD(&zone->uz_buckets, &uma_dummy_bucket,
+			    ub_link);
 		zone->uz_flags = arg->flags;
 		zone->uz_size = arg->size;
 		zone->uz_import = arg->import;
@@ -2235,7 +2248,8 @@ zalloc_start:
 	/*
 	 * Check the zone's cache of buckets.
 	 */
-	if ((bucket = LIST_FIRST(&zone->uz_buckets)) != NULL) {
+	if (zone_bucket_cache_enabled(zone) &&
+	    (bucket = LIST_FIRST(&zone->uz_buckets)) != NULL) {
 		KASSERT(bucket->ub_cnt != 0,
 		    ("uma_zalloc_arg: Returning an empty bucket."));
 
@@ -2273,8 +2287,16 @@ zalloc_start:
 		 */
 		if (cache->uc_allocbucket == NULL)
 			cache->uc_allocbucket = bucket;
-		else
+		else if (zone_bucket_cache_enabled(zone))
 			LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+		else {
+			critical_exit();
+			ZONE_UNLOCK(zone);
+			bucket_drain(zone, bucket);
+			bucket_free(zone, bucket, udata);
+			critical_enter();
+			goto zalloc_start;
+		}
 		ZONE_UNLOCK(zone);
 		goto zalloc_start;
 	}
@@ -2751,17 +2773,6 @@ zfree_start:
 	}
 	cache->uc_freebucket = NULL;
 
-	/* Can we throw this on the zone full list? */
-	if (bucket != NULL) {
-#ifdef UMA_DEBUG_ALLOC
-		printf("uma_zfree: Putting old bucket on the free list.\n");
-#endif
-		/* ub_cnt is pointing to the last free item */
-		KASSERT(bucket->ub_cnt != 0,
-		    ("uma_zfree: Attempting to insert an empty bucket onto the full list.\n"));
-		LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
-	}
-
 	/* We are no longer associated with this CPU. */
 	critical_exit();
 
@@ -2771,8 +2782,31 @@ zfree_start:
 	 */
 	if (lockfail && zone->uz_count < BUCKET_MAX)
 		zone->uz_count++;
+
+	if (bucket != NULL) {
+#ifdef UMA_DEBUG_ALLOC
+		printf("uma_zfree: Putting old bucket on the free list.\n");
+#endif
+		/* ub_cnt is pointing to the last free item */
+		KASSERT(bucket->ub_cnt != 0,
+		    ("uma_zfree: Caching empty bucket.\n"));
+		if (!zone_bucket_cache_enabled(zone)) {
+			/*
+			 * We free the bucket instead of reusing it so that
+			 * per-CPU caches are properly sized.
+			 */
+			ZONE_UNLOCK(zone);
+			bucket_drain(zone, bucket);
+			bucket_free(zone, bucket, udata);
+			goto zfree_bktalloc; 
+		} else {
+			/* Cache the bucket. */
+			LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+		}
+	}
 	ZONE_UNLOCK(zone);
 
+zfree_bktalloc:
 #ifdef UMA_DEBUG_ALLOC
 	printf("uma_zfree: Allocating new free bucket.\n");
 #endif

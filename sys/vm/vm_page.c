@@ -152,12 +152,14 @@ SYSCTL_PROC(_vm, OID_AUTO, page_blacklist, CTLTYPE_STRING | CTLFLAG_RD |
 /* Is the page daemon waiting for free pages? */
 static int vm_pageout_pages_needed;
 
+static uma_zone_t cachepg_zone; /* XXX move to UMA */
 static uma_zone_t fakepg_zone;
 
 static void vm_page_alloc_init(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(uint8_t queue, vm_page_t m);
 static void vm_page_free_wakeup(void);
+static void vm_page_init_cachepg(void *dummy);
 static void vm_page_init_fakepg(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
     vm_pindex_t pindex, vm_page_t mpred);
@@ -166,8 +168,6 @@ static void vm_page_insert_radixdone(vm_page_t m, vm_object_t object,
 static int vm_page_reclaim_run(int req_class, u_long npages, vm_page_t m_run,
     vm_paddr_t high);
 
-SYSINIT(vm_page, SI_SUB_VM, SI_ORDER_SECOND, vm_page_init_fakepg, NULL);
-
 static void
 vm_page_init_fakepg(void *dummy)
 {
@@ -175,6 +175,17 @@ vm_page_init_fakepg(void *dummy)
 	fakepg_zone = uma_zcreate("fakepg", sizeof(struct vm_page), NULL, NULL,
 	    NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_NOFREE | UMA_ZONE_VM);
 }
+SYSINIT(vm_page, SI_SUB_VM, SI_ORDER_SECOND, vm_page_init_fakepg, NULL);
+
+static void
+vm_page_init_cachepg(void *dummy)
+{
+
+	cachepg_zone = uma_zcache_create("cachepg", sizeof(struct vm_page),
+	    NULL, NULL, NULL, NULL, vm_phys_import_pages, vm_phys_release_pages,
+	    NULL, UMA_ZONE_NOBUCKET | UMA_ZONE_VM);
+}
+SYSINIT(vm_page2, SI_SUB_DDB_SERVICES + 1, SI_ORDER_FIRST, vm_page_init_cachepg, NULL);
 
 /* Make sure that u_long is at least 64 bits when PAGE_SIZE is 32K. */
 #if PAGE_SIZE == 32768
@@ -1471,6 +1482,13 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		   ("vm_page_alloc: pindex already allocated"));
 	}
 
+	if ((object == NULL || (object->flags & OBJ_COLORED) == 0) &&
+	    __predict_true(cachepg_zone != NULL)) {
+		m = uma_zalloc(cachepg_zone, M_NOWAIT);
+		if (m != NULL)
+			goto gotpage;
+	}
+
 	/* XXX is it still possible for this to recurse? */
 	mtx_lock_flags(&vm_page_queue_free_mtx, MTX_RECURSE);
 	if (vm_cnt.v_free_count > vm_cnt.v_free_reserved ||
@@ -1515,6 +1533,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	vm_page_alloc_init(m);
 	mtx_unlock(&vm_page_queue_free_mtx);
 
+gotpage:
 	/*
 	 * Initialize the page.  Only the PG_ZERO flag is inherited.
 	 */
@@ -2689,6 +2708,12 @@ vm_page_free_toq(vm_page_t m)
 		 */
 		if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
 			pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
+
+		if (m->object == NULL ||
+		    (m->object->flags & OBJ_COLORED) == 0) {
+			uma_zfree(cachepg_zone, m);
+			return;
+		}
 
 		/*
 		 * Insert the page into the physical memory allocator's
