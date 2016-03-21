@@ -36,6 +36,9 @@ __FBSDID("$FreeBSD$");
 #define	X86_OPC_NOP	0x90
 #define	X86_OPC_RET	0xc3
 
+static const uint8_t nop3[3] = { 0x0f, 0x1f, 0x00 };
+static const uint8_t nop4[4] = { 0x0f, 0x1f, 0x40, 0x00 };
+
 /*
  * Defined by sdtstubs.sh at compile-time.
  */
@@ -74,11 +77,7 @@ sdt_md_patch_callsite(struct sdt_probe *probe, uint64_t offset, bool reloc)
 	switch (opcode) {
 	case X86_OPC_CALL32:
 		callinstr[0] = X86_OPC_NOP;
-		/* four-byte NOP */
-		callinstr[1] = 0x0f;
-		callinstr[2] = 0x1f;
-		callinstr[3] = 0x40;
-		callinstr[4] = 0x00;
+		memcpy(callinstr + 1, nop4, sizeof(nop4));
 		break;
 	case X86_OPC_JMP32:
 		/*
@@ -86,13 +85,12 @@ sdt_md_patch_callsite(struct sdt_probe *probe, uint64_t offset, bool reloc)
 		 * when the probe isn't enabled. We overwrite the second
 		 * byte instead of the first: the first byte will be
 		 * replaced with a breakpoint when the probe is enabled.
+		 *
+		 * XXX emulate ret for this case to avoid the extra nop
 		 */
 		callinstr[0] = X86_OPC_NOP;
 		callinstr[1] = X86_OPC_RET;
-		/* three-byte NOP */
-		callinstr[2] = 0x0f;
-		callinstr[3] = 0x1f;
-		callinstr[4] = 0x00;
+		memcpy(callinstr + 2, nop3, sizeof(nop3));
 		break;
 	}
 	return ((uint64_t)(uintptr_t)callinstr);

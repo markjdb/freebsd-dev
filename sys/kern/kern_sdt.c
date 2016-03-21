@@ -158,6 +158,9 @@ sdt_patch_kernel(void *arg __unused)
 }
 SYSINIT(sdt_hotpatch, SI_SUB_KDTRACE, SI_ORDER_FIRST, sdt_patch_kernel, NULL);
 
+/*
+ * Called from the kernel linker for dynamically-loaded KLDs.
+ */
 void
 sdt_patch_reloc(linker_file_t lf, const char *symname, uint64_t base,
     uint64_t offset)
