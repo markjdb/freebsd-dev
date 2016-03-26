@@ -39,16 +39,14 @@ fi
 
 set -e
 
-# XXX this is really gross. Can we use ".word"?
-case $(elfdump -e "$obj" | ${AWK} '/e_machine: /{print $2}') in
-EM_386)
-    extype=long
-    ;;
-EM_X86_64)
-    extype=quad
-    ;;
+class=$(readelf --file-header "$obj" | ${AWK} '/Class: /{print $2}')
+case $class in
+ELF32)
+    directive=long ;;
+ELF64)
+    directive=quad ;;
 *)
-    echo "$(basename $0): unknown machine type" >&2
+    echo "$(basename $0): unknown ELF class $class" >&2
     exit 1
     ;;
 esac
@@ -72,52 +70,54 @@ _sdt_probe_stub(void)
 
 __EOF__
 
-# Generate aliases for each probe stub so that relocations against them
-# can be resolved in the final link. These symbols will be removed by
-# sdtstrip.sh after linking.
+# Make each probe stub an alias of _sdt_probe_stub().
 ${NM} -u "$obj" | \
-    ${AWK} '/^[[:space:]]*U __dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*$/ {
-                printf "__strong_reference(_sdt_probe_stub, %s);\n", $2;
-            }'
+    ${AWK} '
+/^[[:space:]]*U __dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*$/ {
+    printf "__strong_reference(_sdt_probe_stub, %s);\n", $2;
+}'
 
 # Emit a linker set containing a struct sdt_probedesc for each relocation
 # against an SDT probe stub.
 ${OBJDUMP} -r -j .text "$obj" | \
-    ${AWK} 'BEGIN {
-                print "__asm__(";
-                print "    \".pushsection set_sdt_probe_site_set, \\\"a\\\"\\n\"";
-                print "    \".align 8\\n\"";
-                print "    \".global __start_set_sdt_probe_site_set\\n\"";
-                print "    \".global __stop_set_sdt_probe_site_set\\n\"";
-                print "    \".popsection\\n\"";
+    ${AWK} -v directive=$directive '
+function create_set(set)
+{
+    printf "    \".pushsection set_%s_set, \\\"a\\\"\\n\"\n", set;
+    printf "    \".align 8\\n\"\n";
+    printf "    \".global __start_set_%s_set\\n\"\n", set;
+    printf "    \".global __stop_set_%s_set\\n\"\n", set;
+    printf "    \".popsection\\n\"\n";
+}
 
-                print "    \".pushsection set_sdt_anon_probe_site_set, \\\"a\\\"\\n\"";
-                print "    \".align 8\\n\"";
-                print "    \".global __start_set_sdt_anon_probe_site_set\\n\"";
-                print "    \".global __stop_set_sdt_anon_probe_site_set\\n\"";
-                print "    \".popsection\\n\"";
-            }
+function emit_item(set, symname, addr)
+{
+    printf "    \".pushsection set_%s_set, \\\"a\\\"\\n\"\n", set;
+    printf "    \".%s %s\\n\"\n", directive, symname;
+    printf "    \".%s 0x%s\\n\"\n", directive, addr;
+    printf "    \".popsection\\n\"\n";
+}
 
-            $3 ~ /^__dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*\+?/ {
-                match($3, /sdt_[_[:alpha:]]+[_[:alnum:]]*/);
-                symname = substr($3, 10, RLENGTH);
-                directive = "'${extype}'";
-                if (substr(symname, 0, 8) == "sdt_sdt_") {
-                    print  "    \"1:\\n\"";
-                    printf "    \".string \\\"%s\\\"\\n\"\n", symname
-                    print  "    \".pushsection set_sdt_anon_probe_site_set, \\\"a\\\"\\n\"";
-                    printf "    \".%s 1b\\n\"\n", directive;
-                    printf "    \".%s 0x%s\\n\"\n", directive, $1;
-                    print  "    \".popsection\\n\"";
-                } else {
-                    print  "    \".pushsection set_sdt_probe_site_set, \\\"a\\\"\\n\"";
-                    printf "    \".global %s\\n\"\n", symname;
-                    printf "    \".%s %s\\n\"\n", directive, symname;
-                    printf "    \".%s 0x%s\\n\"\n", directive, $1;
-                    print  "    \".popsection\\n\"";
-                }
-            }
+BEGIN {
+    print "__asm__(";
 
-            END {
-                print ");";
-            }'
+    create_set("sdt_probe_site");
+    create_set("sdt_anon_probe_site");
+}
+
+$3 ~ /^__dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*\+?/ {
+    match($3, /sdt_[_[:alpha:]]+[_[:alnum:]]*/);
+    symname = substr($3, 10, RLENGTH); # 10 is strlen("__dtrace_") + 1.
+    if (substr(symname, 0, 8) == "sdt_sdt_") {
+        printf "    \"1:\\n\"\n";
+        printf "    \".string \\\"%s\\\"\\n\"\n", symname;
+        emit_item("sdt_anon_probe_site", "1b", $1);
+    } else {
+        printf "    \".global %s\\n\"\n", symname;
+        emit_item("sdt__probe_site", symname, $1);
+    }
+}
+
+END {
+    print ");";
+}'
