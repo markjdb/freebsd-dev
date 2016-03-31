@@ -256,7 +256,6 @@ fbt_enable(void *arg, dtrace_id_t id, void *parg)
 			    "(module %s reloaded)",
 			    fbt->fbtp_name, ctl->filename);
 		}
-
 		return;
 	}
 
@@ -1128,24 +1127,18 @@ fbt_unload()
 static int
 fbt_modevent(module_t mod __unused, int type, void *data __unused)
 {
-	int error = 0;
+	int error;
 
+	error = 0;
 	switch (type) {
 	case MOD_LOAD:
-		break;
-
 	case MOD_UNLOAD:
-		break;
-
 	case MOD_SHUTDOWN:
 		break;
-
 	default:
 		error = EOPNOTSUPP;
 		break;
-
 	}
-
 	return (error);
 }
 

@@ -151,6 +151,4 @@ dtrace_load(void *dummy)
 	    "dtrace/dtrace");
 	helper_dev = make_dev(&helper_cdevsw, 0, UID_ROOT, GID_WHEEL, 0660,
 	    "dtrace/helper");
-
-	return;
 }
