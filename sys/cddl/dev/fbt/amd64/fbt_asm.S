@@ -18,14 +18,16 @@
  *
  * CDDL HEADER END
  *
+ * Portions Copyright 2016 Mark Johnston <markj@FreeBSD.org>
+ *
  * $FreeBSD$
  */
 
-#ifndef _FBT_ISA_H_
-#define	_FBT_ISA_H_
+#define	_ASM
 
-typedef uint8_t fbt_patchval_t;
+#include <machine/asmacros.h>
 
-void fbt_tail_ret_trampoline(void);
+#include "assym.s"
 
-#endif
+fbt_tail_ret_trampoline:
+	int	$3

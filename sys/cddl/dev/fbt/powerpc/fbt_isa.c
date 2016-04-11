@@ -50,6 +50,11 @@
 #define	FBT_RETURN	"return"
 #define	FBT_AFRAMES	7
 
+void
+fbt_md_init()
+{
+}
+
 int
 fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 {

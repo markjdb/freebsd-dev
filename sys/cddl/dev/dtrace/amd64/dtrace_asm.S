@@ -36,6 +36,7 @@
 
 #include "assym.s"
 
+/* XXX this is duplicated a lot! */
 #define INTR_POP				\
 	MEXITCOUNT;				\
 	movq	TF_RDI(%rsp),%rdi;		\
@@ -73,8 +74,11 @@
 	movq	TF_RAX(%rsp), %rdx
 	call	dtrace_invop
 	ALTENTRY(dtrace_invop_callsite)
-	cmpl	$DTRACE_INVOP_PUSHL_EBP, %eax
+	/* XXX make this a jump table. */
+	cmpl	$DTRACE_INVOP_PUSHQ_RBP, %eax
 	je	bp_push
+	cmpl	$DTRACE_INVOP_POPQ_RBP, %eax
+	je	bp_pop
 	cmpl	$DTRACE_INVOP_LEAVE, %eax
 	je	bp_leave
 	cmpl	$DTRACE_INVOP_NOP, %eax
@@ -108,6 +112,17 @@ bp_push:
 	movq	%rbp, (%rax)		/* store %rbp there */
 	popq	%rax			/* pop off temp */
 	iretq				/* return from interrupt */
+	/*NOTREACHED*/
+
+bp_pop:
+	/* Emulate a "popq %rbp". */
+	INTR_POP
+	pushq	%rax			/* push temp */
+	movq	32(%rsp), %rax		/* load %rsp */
+	movq	(%rax), %rbp		/* load new %rbp */
+	addq	$8, 32(%rsp)		/* adjust new %rsp */
+	popq	%rax			/* pop off temp */
+	iretq
 	/*NOTREACHED*/
 
 bp_leave:

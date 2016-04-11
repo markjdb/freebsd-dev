@@ -48,6 +48,11 @@
 #define	FBT_ENTRY	"entry"
 #define	FBT_RETURN	"return"
 
+void
+fbt_md_init()
+{
+}
+
 int
 fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 {

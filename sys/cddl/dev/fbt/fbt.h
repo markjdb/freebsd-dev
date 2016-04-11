@@ -19,9 +19,9 @@
  * CDDL HEADER END
  *
  * Portions Copyright 2006-2008 John Birrell jb@freebsd.org
+ * Portions Copyright 2016 Mark Johnston <markj@FreeBSD.org>
  *
  * $FreeBSD$
- *
  */
 
 /*
@@ -38,6 +38,7 @@ typedef struct fbt_probe {
 	struct fbt_probe *fbtp_hashnext;
 	fbt_patchval_t	*fbtp_patchpoint;
 	int8_t		fbtp_rval;
+	uint8_t		fbtp_flags;
 	fbt_patchval_t	fbtp_patchval;
 	fbt_patchval_t	fbtp_savedval;
 	uintptr_t	fbtp_roffset;
@@ -49,11 +50,15 @@ typedef struct fbt_probe {
 	struct fbt_probe *fbtp_next;
 } fbt_probe_t;
 
+#define	FBTPF_TAIL_CALL		0x01	/* probe site is a tail call */
+#define	FBTPF_TAIL_RET		0x02	/* return from tail call */
+
 struct linker_file;
 struct linker_symval;
 struct trapframe;
 
 int	fbt_invop(uintptr_t, struct trapframe *, uintptr_t);
+void	fbt_md_init(void);
 void	fbt_patch_tracepoint(fbt_probe_t *, fbt_patchval_t);
 int	fbt_provide_module_function(struct linker_file *, int,
 	    struct linker_symval *, void *);

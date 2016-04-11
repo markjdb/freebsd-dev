@@ -19,9 +19,7 @@
  * CDDL HEADER END
  *
  * Portions Copyright 2006-2008 John Birrell jb@freebsd.org
- *
- * $FreeBSD$
- *
+ * Portions Copyright 2016 Mark Johnston <markj@FreeBSD.org>
  */
 
 /*
@@ -30,6 +28,8 @@
  */
 
 #include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
@@ -777,7 +777,8 @@ ctf_strptr(linker_ctf_t *lc, int name)
 	if (name < 0 || name >= hp->cth_strlen)
 		return(strp);
 
-	strp = (const char *)(lc->ctftab + hp->cth_stroff + name + sizeof(ctf_header_t));
+	strp = (const char *)(lc->ctftab + hp->cth_stroff + name +
+	    sizeof(ctf_header_t));
 
 	return (strp);
 }
@@ -976,7 +977,8 @@ fbt_type_name(linker_ctf_t *lc, ctf_id_t type, char *buf, size_t len)
 }
 
 static void
-fbt_getargdesc(void *arg __unused, dtrace_id_t id __unused, void *parg, dtrace_argdesc_t *desc)
+fbt_getargdesc(void *arg __unused, dtrace_id_t id __unused, void *parg,
+    dtrace_argdesc_t *desc)
 {
 	const ushort_t *dp;
 	fbt_probe_t *fbt = parg;
@@ -1057,10 +1059,9 @@ fbt_getargdesc(void *arg __unused, dtrace_id_t id __unused, void *parg, dtrace_a
 		dp += ndx + 1;
 	}
 
-	if (fbt_type_name(&lc, *dp, desc->dtargd_native, sizeof(desc->dtargd_native)) > 0)
+	if (fbt_type_name(&lc, *dp, desc->dtargd_native,
+	    sizeof(desc->dtargd_native)) > 0)
 		desc->dtargd_ndx = ndx;
-
-	return;
 }
 
 static int
@@ -1087,8 +1088,8 @@ fbt_load(void *dummy)
 	fbt_probetab_mask = fbt_probetab_size - 1;
 
 	/* Allocate memory for the probe table. */
-	fbt_probetab =
-	    malloc(fbt_probetab_size * sizeof (fbt_probe_t *), M_FBT, M_WAITOK | M_ZERO);
+	fbt_probetab = malloc(fbt_probetab_size * sizeof (fbt_probe_t *), M_FBT,
+	    M_WAITOK | M_ZERO);
 
 	dtrace_doubletrap_func = fbt_doubletrap;
 	dtrace_invop_add(fbt_invop);
@@ -1096,6 +1097,9 @@ fbt_load(void *dummy)
 	if (dtrace_register("fbt", &fbt_attr, DTRACE_PRIV_USER,
 	    NULL, &fbt_pops, NULL, &fbt_id) != 0)
 		return;
+
+	/* Give machine-dependent code an opportunity to initialize itself. */
+	fbt_md_init();
 
 	/* Create probes for the kernel and already-loaded modules. */
 	linker_file_foreach(fbt_linker_file_cb, NULL);
@@ -1128,29 +1132,20 @@ fbt_unload()
 static int
 fbt_modevent(module_t mod __unused, int type, void *data __unused)
 {
-	int error = 0;
 
 	switch (type) {
 	case MOD_LOAD:
-		break;
-
 	case MOD_UNLOAD:
-		break;
-
 	case MOD_SHUTDOWN:
-		break;
-
+		return (0);
 	default:
-		error = EOPNOTSUPP;
-		break;
-
+		return (EOPNOTSUPP);
 	}
-
-	return (error);
 }
 
 static int
-fbt_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused, struct thread *td __unused)
+fbt_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
+    struct thread *td __unused)
 {
 	return (0);
 }

@@ -19,9 +19,7 @@
  * CDDL HEADER END
  *
  * Portions Copyright 2006-2008 John Birrell jb@freebsd.org
- *
- * $FreeBSD$
- *
+ * Portions Copyright 2016 Mark Johnston <markj@FreeBSD.org>
  */
 
 /*
@@ -30,9 +28,12 @@
  */
 
 #include <sys/cdefs.h>
-#include <sys/param.h>
+__FBSDID("$FreeBSD$");
 
+#include <sys/param.h>
 #include <sys/dtrace.h>
+
+#include <cddl/dev/dtrace/dtrace_cddl.h>
 
 #include "fbt.h"
 
@@ -44,9 +45,13 @@
 #define	FBT_REX_RSP_RBP		0x48
 
 #define	FBT_POPL_EBP		0x5d
+#define	FBT_POPQ_RBP		0x5d
 #define	FBT_RET			0xc3
 #define	FBT_RET_IMM16		0xc2
 #define	FBT_LEAVE		0xc9
+#define	FBT_JMP_SHORT		0xeb
+#define	FBT_JMP_REL32		0xe9
+#define	FBT_JMP_ABS		0xff
 
 #ifdef __amd64__
 #define	FBT_PATCHVAL		0xcc
@@ -57,12 +62,34 @@
 #define	FBT_ENTRY	"entry"
 #define	FBT_RETURN	"return"
 
+static fbt_probe_t *fbt_tail_call_pop(uintptr_t *, uintptr_t *);
+static int fbt_tail_call_push(fbt_probe_t *, uintptr_t);
+
+void
+fbt_md_init(void)
+{
+#ifdef __amd64__
+	fbt_probe_t *fbt;
+	uintptr_t instr;
+
+	instr = (uintptr_t)&fbt_tail_ret_trampoline;
+
+	fbt = malloc(sizeof(*fbt), M_FBT, M_WAITOK | M_ZERO);
+	fbt->fbtp_patchpoint = (uint8_t *)&fbt_tail_ret_trampoline;
+	fbt->fbtp_rval = DTRACE_INVOP_NOP;
+	fbt->fbtp_flags = FBTPF_TAIL_RET;
+
+	fbt->fbtp_hashnext = fbt_probetab[FBT_ADDR2NDX(instr)];
+	fbt_probetab[FBT_ADDR2NDX(instr)] = fbt;
+#endif
+}
+
 int
 fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 {
 	solaris_cpu_t *cpu;
 	uintptr_t *stack;
-	uintptr_t arg0, arg1, arg2, arg3, arg4;
+	uintptr_t arg0, arg1, arg2, arg3, arg4, retaddr;
 	fbt_probe_t *fbt;
 
 #ifdef __amd64__
@@ -76,7 +103,22 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 	fbt = fbt_probetab[FBT_ADDR2NDX(addr)];
 	for (; fbt != NULL; fbt = fbt->fbtp_hashnext) {
 		if ((uintptr_t)fbt->fbtp_patchpoint == addr) {
-			if (fbt->fbtp_roffset == 0) {
+			if ((fbt->fbtp_flags & FBTPF_TAIL_CALL) != 0) {
+				/* XXX comment */
+				printf("probe %s\n", fbt->fbtp_name);
+				printf("rip: 0x%lx\nstack: %p\nstack[0]: 0x%lx\nstack[1]: 0x%lx\nstack[2]: 0x%lx\n",
+				    addr, stack - 8, stack[0], stack[1], stack[2]);
+				if (fbt_tail_call_push(fbt, stack[1]))
+					stack[1] =
+					    (uintptr_t)&fbt_tail_ret_trampoline;
+			} else if ((fbt->fbtp_flags & FBTPF_TAIL_RET) != 0) {
+				printf("popping tail stack\n");
+				fbt = fbt_tail_call_pop(stack, &retaddr);
+				dtrace_probe(fbt->fbtp_id, fbt->fbtp_roffset,
+				    rval, 0, 0, 0);
+				stack = (uintptr_t *)((uint8_t *)stack - sizeof(struct trapframe));
+				((struct trapframe *)stack)->tf_rip = retaddr;
+			} else if (fbt->fbtp_roffset == 0) {
 #ifdef __amd64__
 				/* fbt->fbtp_rval == DTRACE_INVOP_PUSHQ_RBP */
 				DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
@@ -154,9 +196,9 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	char *modname = opaque;
 	const char *name = symval->name;
 	fbt_probe_t *fbt, *retfbt;
-	int j;
-	int size;
 	uint8_t *instr, *limit;
+	int j, size;
+	uint8_t flags, next;
 
 	if ((strncmp(name, "dtrace_", 7) == 0 &&
 	    strncmp(name, "dtrace_safe_", 12) != 0) ||
@@ -177,6 +219,7 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	if (name[0] == '_' && name[1] == '_')
 		return (0);
 
+	flags = 0;
 	size = symval->size;
 
 	instr = (uint8_t *) symval->value;
@@ -244,10 +287,33 @@ again:
 
 #ifdef __amd64__
 	/*
+	 * A pop of the frame pointer should be followed by a ret or an
+	 * unconditional jmp depending on whether it's part of a normal return
+	 * or a tail call respectively.
+	 */
+	if (*instr == FBT_POPQ_RBP && instr + 1 < limit) {
+		next = *(instr + 1);
+		if (next == FBT_JMP_SHORT ||
+		    next == FBT_JMP_REL32 ||
+		    next == FBT_JMP_ABS) {
+			/* Make sure we can actually disassemble the jmp. */
+			if (dtrace_instr_size(instr) <= 0)
+				return (0);
+			flags |= FBTPF_TAIL_CALL;
+			goto found;
+		}
+
+		instr += size;
+		goto again;
+	}
+
+	/*
 	 * We only instrument "ret" on amd64 -- we don't yet instrument
 	 * ret imm16, largely because the compiler doesn't seem to
 	 * (yet) emit them in the kernel...
 	 */
+	if (*instr == FBT_RET_IMM16)
+		printf("fbt: skipping ret immediate instruction\n");
 	if (*instr != FBT_RET) {
 		instr += size;
 		goto again;
@@ -262,6 +328,7 @@ again:
 	}
 #endif
 
+found:
 	/*
 	 * We (desperately) want to avoid erroneously instrumenting a
 	 * jump table, especially given that our markers are pretty
@@ -306,12 +373,13 @@ again:
 	}
 
 	retfbt = fbt;
+	fbt->fbtp_flags = flags;
 	fbt->fbtp_patchpoint = instr;
 	fbt->fbtp_ctl = lf;
 	fbt->fbtp_loadcnt = lf->loadcnt;
 	fbt->fbtp_symindx = symindx;
 
-#ifndef __amd64__
+#ifdef __i386__
 	if (*instr == FBT_POPL_EBP) {
 		fbt->fbtp_rval = DTRACE_INVOP_POPL_EBP;
 	} else {
@@ -320,10 +388,13 @@ again:
 	}
 	fbt->fbtp_roffset =
 	    (uintptr_t)(instr - (uint8_t *) symval->value) + 1;
-
 #else
-	ASSERT(*instr == FBT_RET);
-	fbt->fbtp_rval = DTRACE_INVOP_RET;
+	if (*instr == FBT_POPQ_RBP) {
+		fbt->fbtp_rval = DTRACE_INVOP_POPQ_RBP;
+	} else {
+		ASSERT(*instr == FBT_RET);
+		fbt->fbtp_rval = DTRACE_INVOP_RET;
+	}
 	fbt->fbtp_roffset =
 	    (uintptr_t)(instr - (uint8_t *) symval->value);
 #endif
@@ -337,4 +408,40 @@ again:
 
 	instr += size;
 	goto again;
+}
+
+static fbt_probe_t *
+fbt_tail_call_pop(uintptr_t *stack, uintptr_t *retaddr)
+{
+	fbt_probe_t *fbt;
+	struct thread *td;
+	int si;
+
+	td = curthread;
+	si = --td->td_dtrace->td_stack_top;
+	MPASS(si >= 0 && si < nitems(td->td_dtrace->td_fbt_stack));
+
+	fbt = td->td_dtrace->td_fbt_stack[si].td_stack_arg;
+	*retaddr = td->td_dtrace->td_fbt_stack[si].td_stack_retaddr;
+	return (fbt);
+}
+
+static int
+fbt_tail_call_push(fbt_probe_t *fbt, uintptr_t retaddr)
+{
+	struct thread *td;
+	int si;
+
+	td = curthread;
+	si = td->td_dtrace->td_stack_top;
+	if (si >= nitems(td->td_dtrace->td_fbt_stack)) {
+		/* XXX need to count this as some sort of drop */
+		printf("dropping tail call\n");
+		return (0);
+	}
+
+	td->td_dtrace->td_fbt_stack[si].td_stack_arg = fbt;
+	td->td_dtrace->td_fbt_stack[si].td_stack_retaddr = retaddr;
+	td->td_dtrace->td_stack_top++;
+	return (1);
 }
