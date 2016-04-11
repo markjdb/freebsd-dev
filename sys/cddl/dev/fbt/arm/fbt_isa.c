@@ -49,7 +49,7 @@
 #define	FBT_RETURN	"return"
 
 void
-fbt_md_init()
+fbt_md_init(void)
 {
 }
 

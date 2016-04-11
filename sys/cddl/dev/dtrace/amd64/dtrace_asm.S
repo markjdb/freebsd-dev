@@ -119,8 +119,8 @@ bp_pop:
 	INTR_POP
 	pushq	%rax			/* push temp */
 	movq	32(%rsp), %rax		/* load %rsp */
-	movq	(%rax), %rbp		/* load new %rbp */
 	addq	$8, 32(%rsp)		/* adjust new %rsp */
+	movq	(%rax), %rbp		/* load new %rbp */
 	popq	%rax			/* pop off temp */
 	iretq
 	/*NOTREACHED*/

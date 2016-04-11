@@ -22,6 +22,7 @@
  * Portions Copyright 2013 Justin Hibbits jhibbits@freebsd.org
  * Portions Copyright 2013 Howard Su howardsu@freebsd.org
  * Portions Copyright 2015 Ruslan Bukin <br@bsdpad.com>
+ * Portions Copyright 2016 Mark Johnston <markj@FreeBSD.org>
  *
  * $FreeBSD$
  */
@@ -46,7 +47,7 @@
 #define	FBT_RETURN	"return"
 
 void
-fbt_md_init()
+fbt_md_init(void)
 {
 }
 

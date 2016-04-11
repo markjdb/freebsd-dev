@@ -62,7 +62,7 @@ __FBSDID("$FreeBSD$");
 #define	FBT_ENTRY	"entry"
 #define	FBT_RETURN	"return"
 
-static fbt_probe_t *fbt_tail_call_pop(uintptr_t *, uintptr_t *);
+static fbt_probe_t *fbt_tail_call_pop(uintptr_t *);
 static int fbt_tail_call_push(fbt_probe_t *, uintptr_t);
 
 void
@@ -102,81 +102,82 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 	cpu = &solaris_cpu[curcpu];
 	fbt = fbt_probetab[FBT_ADDR2NDX(addr)];
 	for (; fbt != NULL; fbt = fbt->fbtp_hashnext) {
-		if ((uintptr_t)fbt->fbtp_patchpoint == addr) {
-			if ((fbt->fbtp_flags & FBTPF_TAIL_CALL) != 0) {
-				/* XXX comment */
-				printf("probe %s\n", fbt->fbtp_name);
-				printf("rip: 0x%lx\nstack: %p\nstack[0]: 0x%lx\nstack[1]: 0x%lx\nstack[2]: 0x%lx\n",
-				    addr, stack - 8, stack[0], stack[1], stack[2]);
-				if (fbt_tail_call_push(fbt, stack[1]))
-					stack[1] =
-					    (uintptr_t)&fbt_tail_ret_trampoline;
-			} else if ((fbt->fbtp_flags & FBTPF_TAIL_RET) != 0) {
-				printf("popping tail stack\n");
-				fbt = fbt_tail_call_pop(stack, &retaddr);
-				dtrace_probe(fbt->fbtp_id, fbt->fbtp_roffset,
-				    rval, 0, 0, 0);
-				stack = (uintptr_t *)((uint8_t *)stack - sizeof(struct trapframe));
-				((struct trapframe *)stack)->tf_rip = retaddr;
-			} else if (fbt->fbtp_roffset == 0) {
-#ifdef __amd64__
-				/* fbt->fbtp_rval == DTRACE_INVOP_PUSHQ_RBP */
+		if ((uintptr_t)fbt->fbtp_patchpoint != addr)
+			continue;
+		if ((fbt->fbtp_flags & FBTPF_TAIL_CALL) != 0) {
+			/* XXX comment */
+			if (fbt_tail_call_push(fbt, stack[1])) {
+				/* Update the return address. */
 				DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-				cpu->cpu_dtrace_caller = stack[0];
-				DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
+				stack[1] =
+				    (uintptr_t)&fbt_tail_ret_trampoline;
+				DTRACE_CPUFLAG_CLEAR(
+				    CPU_DTRACE_NOFAULT |
 				    CPU_DTRACE_BADADDR);
-
-				arg0 = frame->tf_rdi;
-				arg1 = frame->tf_rsi;
-				arg2 = frame->tf_rdx;
-				arg3 = frame->tf_rcx;
-				arg4 = frame->tf_r8;
-#else
-				int i = 0;
-
-				/*
-				 * When accessing the arguments on the stack,
-				 * we must protect against accessing beyond
-				 * the stack.  We can safely set NOFAULT here
-				 * -- we know that interrupts are already
-				 * disabled.
-				 */
-				DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-				cpu->cpu_dtrace_caller = stack[i++];
-				arg0 = stack[i++];
-				arg1 = stack[i++];
-				arg2 = stack[i++];
-				arg3 = stack[i++];
-				arg4 = stack[i++];
-				DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
-				    CPU_DTRACE_BADADDR);
-#endif
-
-				dtrace_probe(fbt->fbtp_id, arg0, arg1,
-				    arg2, arg3, arg4);
-
-				cpu->cpu_dtrace_caller = 0;
-			} else {
-#ifdef __amd64__
-				/*
-				 * On amd64, we instrument the ret, not the
-				 * leave.  We therefore need to set the caller
-				 * to ensure that the top frame of a stack()
-				 * action is correct.
-				 */
-				DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-				cpu->cpu_dtrace_caller = stack[0];
-				DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
-				    CPU_DTRACE_BADADDR);
-#endif
-
-				dtrace_probe(fbt->fbtp_id, fbt->fbtp_roffset,
-				    rval, 0, 0, 0);
-				cpu->cpu_dtrace_caller = 0;
 			}
+		} else if ((fbt->fbtp_flags & FBTPF_TAIL_RET) != 0) {
+			MPASS(addr == (uintptr_t)&fbt_tail_ret_trampoline);
+			fbt = fbt_tail_call_pop(&retaddr);
+			dtrace_probe(fbt->fbtp_id, fbt->fbtp_roffset,
+			    rval, 0, 0, 0);
+			frame->tf_rip = retaddr;
+			return (DTRACE_INVOP_NOP);
+		} else if (fbt->fbtp_roffset == 0) {
+#ifdef __amd64__
+			DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+			cpu->cpu_dtrace_caller = stack[0];
+			DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
+			    CPU_DTRACE_BADADDR);
 
-			return (fbt->fbtp_rval);
+			arg0 = frame->tf_rdi;
+			arg1 = frame->tf_rsi;
+			arg2 = frame->tf_rdx;
+			arg3 = frame->tf_rcx;
+			arg4 = frame->tf_r8;
+#else
+			int i = 0;
+
+			/*
+			 * When accessing the arguments on the stack,
+			 * we must protect against accessing beyond
+			 * the stack.  We can safely set NOFAULT here
+			 * -- we know that interrupts are already
+			 * disabled.
+			 */
+			DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+			cpu->cpu_dtrace_caller = stack[i++];
+			arg0 = stack[i++];
+			arg1 = stack[i++];
+			arg2 = stack[i++];
+			arg3 = stack[i++];
+			arg4 = stack[i++];
+			DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
+			    CPU_DTRACE_BADADDR);
+#endif
+
+			dtrace_probe(fbt->fbtp_id, arg0, arg1, arg2, arg3,
+			    arg4);
+			cpu->cpu_dtrace_caller = 0;
+		} else {
+#ifdef __amd64__
+			/*
+			 * On amd64, we instrument the ret, not the
+			 * leave.  We therefore need to set the caller
+			 * to assure that the top frame of a stack()
+			 * action is correct.
+			 */
+			DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+			cpu->cpu_dtrace_caller = stack[0];
+			DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
+			    CPU_DTRACE_BADADDR);
+#endif
+
+			dtrace_probe(fbt->fbtp_id, fbt->fbtp_roffset,
+			    rval, 0, 0, 0);
+			cpu->cpu_dtrace_caller = 0;
 		}
+
+		return (fbt->fbtp_rval);
 	}
 
 	return (0);
@@ -411,7 +412,7 @@ found:
 }
 
 static fbt_probe_t *
-fbt_tail_call_pop(uintptr_t *stack, uintptr_t *retaddr)
+fbt_tail_call_pop(uintptr_t *retaddr)
 {
 	fbt_probe_t *fbt;
 	struct thread *td;
