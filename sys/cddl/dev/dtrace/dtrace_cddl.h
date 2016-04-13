@@ -85,11 +85,16 @@ typedef struct kdtrace_thread {
 	void		*td_dtrace_sscr; /* Saved scratch space location. */
 	void		*td_systrace_args; /* syscall probe arguments. */
 
+#ifdef __amd64__
 	struct {
-		void	*td_stack_arg;
-		uintptr_t td_stack_retaddr;
-	} td_fbt_stack[8];
-	int		td_stack_top;
+		union {
+			void	*td_stack_arg;
+			uintptr_t td_stack_retaddr;
+		} td_fbt_stack[8];
+		uint8_t		td_fbt_stack_map;
+		uint8_t		td_fbt_stack_head;
+	};
+#endif
 #endif
 } kdtrace_thread_t;
 CTASSERT(sizeof(struct kdtrace_thread) < 256);

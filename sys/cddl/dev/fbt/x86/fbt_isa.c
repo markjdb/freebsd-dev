@@ -32,6 +32,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/dtrace.h>
+#include <sys/kdb.h>
 
 #include <cddl/dev/dtrace/dtrace_cddl.h>
 
@@ -62,8 +63,10 @@ __FBSDID("$FreeBSD$");
 #define	FBT_ENTRY	"entry"
 #define	FBT_RETURN	"return"
 
-static fbt_probe_t *fbt_tail_call_pop(uintptr_t *);
-static int fbt_tail_call_push(fbt_probe_t *, uintptr_t);
+#define	FBT_TRAMPOLINE_ADDR	((uintptr_t)&fbt_tail_ret_trampoline)
+
+static uintptr_t fbt_tail_call_pop(uintptr_t);
+static int	fbt_tail_call_push(fbt_probe_t *, uintptr_t);
 
 void
 fbt_md_init(void)
@@ -72,10 +75,10 @@ fbt_md_init(void)
 	fbt_probe_t *fbt;
 	uintptr_t instr;
 
-	instr = (uintptr_t)&fbt_tail_ret_trampoline;
+	instr = FBT_TRAMPOLINE_ADDR;
 
 	fbt = malloc(sizeof(*fbt), M_FBT, M_WAITOK | M_ZERO);
-	fbt->fbtp_patchpoint = (uint8_t *)&fbt_tail_ret_trampoline;
+	fbt->fbtp_patchpoint = (fbt_patchval_t *)instr;
 	fbt->fbtp_rval = DTRACE_INVOP_NOP;
 	fbt->fbtp_flags = FBTPF_TAIL_RET;
 
@@ -94,6 +97,7 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 
 #ifdef __amd64__
 	stack = (uintptr_t *)frame->tf_rsp;
+	stack = (uintptr_t *)(frame->tf_rsp & ~0xf);
 #else
 	/* Skip hardware-saved registers. */
 	stack = (uintptr_t *)frame->tf_isp + 3;
@@ -109,18 +113,12 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 			if (fbt_tail_call_push(fbt, stack[1])) {
 				/* Update the return address. */
 				DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-				stack[1] =
-				    (uintptr_t)&fbt_tail_ret_trampoline;
-				DTRACE_CPUFLAG_CLEAR(
-				    CPU_DTRACE_NOFAULT |
+				stack[1] = FBT_TRAMPOLINE_ADDR;
+				DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
 				    CPU_DTRACE_BADADDR);
 			}
 		} else if ((fbt->fbtp_flags & FBTPF_TAIL_RET) != 0) {
-			MPASS(addr == (uintptr_t)&fbt_tail_ret_trampoline);
-			fbt = fbt_tail_call_pop(&retaddr);
-			dtrace_probe(fbt->fbtp_id, fbt->fbtp_roffset,
-			    rval, 0, 0, 0);
-			frame->tf_rip = retaddr;
+			frame->tf_rip = fbt_tail_call_pop(rval);
 			return (DTRACE_INVOP_NOP);
 		} else if (fbt->fbtp_roffset == 0) {
 #ifdef __amd64__
@@ -411,20 +409,32 @@ found:
 	goto again;
 }
 
-static fbt_probe_t *
-fbt_tail_call_pop(uintptr_t *retaddr)
+static uintptr_t
+fbt_tail_call_pop(uintptr_t rval)
 {
 	fbt_probe_t *fbt;
 	struct thread *td;
 	int si;
+	uint8_t map;
 
 	td = curthread;
-	si = --td->td_dtrace->td_stack_top;
-	MPASS(si >= 0 && si < nitems(td->td_dtrace->td_fbt_stack));
+	si = --td->td_dtrace->td_fbt_stack_head;
+	map = td->td_dtrace->td_fbt_stack_map;
 
-	fbt = td->td_dtrace->td_fbt_stack[si].td_stack_arg;
-	*retaddr = td->td_dtrace->td_fbt_stack[si].td_stack_retaddr;
-	return (fbt);
+	MPASS(si >= 0 && si < nitems(td->td_dtrace->td_fbt_stack));
+	MPASS((map & (1 << si)) == 0);
+
+	do {
+		fbt = td->td_dtrace->td_fbt_stack[si].td_stack_arg;
+		dtrace_probe(fbt->fbtp_id, fbt->fbtp_roffset, rval, 0, 0, 0);
+	} while ((map & (1 << --si)) == 0);
+
+	MPASS(si >= 0 && si < nitems(td->td_dtrace->td_fbt_stack));
+	MPASS((map & (1 << si)) != 0);
+
+	td->td_dtrace->td_fbt_stack_map &= ~(1 << si);
+	td->td_dtrace->td_fbt_stack_head = si;
+	return (td->td_dtrace->td_fbt_stack[si].td_stack_retaddr);
 }
 
 static int
@@ -434,15 +444,18 @@ fbt_tail_call_push(fbt_probe_t *fbt, uintptr_t retaddr)
 	int si;
 
 	td = curthread;
-	si = td->td_dtrace->td_stack_top;
-	if (si >= nitems(td->td_dtrace->td_fbt_stack)) {
-		/* XXX need to count this as some sort of drop */
-		printf("dropping tail call\n");
+	si = td->td_dtrace->td_fbt_stack_head;
+	if (retaddr != FBT_TRAMPOLINE_ADDR) {
+		if (si >= nitems(td->td_dtrace->td_fbt_stack) - 1)
+			/* XXX flag */
+			return (0);
+		td->td_dtrace->td_fbt_stack[si].td_stack_retaddr = retaddr;
+		td->td_dtrace->td_fbt_stack_map |= (1 << si);
+		si++;
+	} else if (si >= nitems(td->td_dtrace->td_fbt_stack))
+		/* XXX flag */
 		return (0);
-	}
-
 	td->td_dtrace->td_fbt_stack[si].td_stack_arg = fbt;
-	td->td_dtrace->td_fbt_stack[si].td_stack_retaddr = retaddr;
-	td->td_dtrace->td_stack_top++;
+	td->td_dtrace->td_fbt_stack_head = ++si;
 	return (1);
 }
