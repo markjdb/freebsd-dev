@@ -8,7 +8,7 @@ struct sdt_probedesc;
  * descriptors, but are split into a separate struct to avoid bloat: descriptors
  * are created at compile-time and always reside in memory. Note that multiple
  * records may have the same id if the probe definition hard-codes a function
- * name.
+ * name or a probe has multiple sites within a function.
  */
 struct sdt_invoprec {
 	struct sdt_probedesc	*sr_desc;
