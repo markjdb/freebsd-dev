@@ -8,4 +8,5 @@
 #define PTRACE_BREAKPOINT	0xe7fffff0
 #define KERNEL_BREAKPOINT	0xe7ffffff
 #define FBT_BREAKPOINT		0xe7f000f0
+#define SDT_BREAKPOINT		0xe7f000f0
 #endif /* _MACHINE_TRAP_H_ */
