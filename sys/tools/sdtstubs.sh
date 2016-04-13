@@ -114,7 +114,7 @@ $3 ~ /^__dtrace_sdt_[_[:alpha:]]+[_[:alnum:]]*\+?/ {
         emit_item("sdt_anon_probe_site", "1b", $1);
     } else {
         printf "    \".global %s\\n\"\n", symname;
-        emit_item("sdt__probe_site", symname, $1);
+        emit_item("sdt_probe_site", symname, $1);
     }
 }
 
