@@ -158,7 +158,6 @@ static int booted = 0;
  * outside of the allocation fast path.
  */
 static struct callout uma_callout;
-#define	UMA_TIMEOUT	20		/* Seconds for callout interval. */
 
 /*
  * This structure is passed as the zone ctor arg so that I don't have to create
@@ -239,7 +238,10 @@ static void zone_dtor(void *, int, void *);
 static int zero_init(void *, int, int);
 static void keg_small_init(uma_keg_t keg);
 static void keg_large_init(uma_keg_t keg);
+static void zone_cache_bucket(uma_zone_t zone, uma_bucket_t bucket, bool ws);
+static void zone_remove_bucket(uma_zone_t zone, uma_bucket_t bucket, bool ws);
 static void zone_foreach(void (*zfunc)(uma_zone_t));
+static void zone_prune(uma_zone_t zone);
 static void zone_timeout(uma_zone_t zone);
 static int hash_alloc(struct uma_hash *);
 static int hash_expand(struct uma_hash *, struct uma_hash *);
@@ -463,8 +465,55 @@ uma_timeout(void *unused)
 	bucket_enable();
 	zone_foreach(zone_timeout);
 
-	/* Reschedule this event */
-	callout_reset(&uma_callout, UMA_TIMEOUT * hz, uma_timeout, NULL);
+	/* Reschedule this event.  Avoid aliasing uma_reclaim() calls. */
+	callout_reset(&uma_callout, (vm_pageout_lowmem_period + 1) * hz,
+	    uma_timeout, NULL);
+}
+
+/*
+ * Add a full bucket of items to the zone's bucket cache.
+ *
+ * Arguments:
+ *	ws	bucket belongs to the zone working set
+ *
+ * Returns:
+ *	Nothing
+ */
+static inline void
+zone_cache_bucket(uma_zone_t zone, uma_bucket_t bucket, bool ws)
+{
+
+	ZONE_LOCK_ASSERT(zone);
+	if (ws)
+		zone->uz_bktallocs -= min(bucket->ub_cnt, zone->uz_bktallocs);
+	zone->uz_bktcount += bucket->ub_cnt;
+	LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+}
+
+/*
+ * Remove a bucket from the zone's bucket cache.
+ *
+ * This may be called without the zone lock held since the bucket may be on a
+ * temporary list.
+ *
+ * Arguments:
+ *	ws	bucket belongs to the zone working set
+ *
+ * Returns:
+ *	Nothing
+ */
+static inline void
+zone_remove_bucket(uma_zone_t zone, uma_bucket_t bucket, bool ws)
+{
+
+	MPASS(zone->uz_bktcount >= bucket->ub_cnt);
+	if (ws) {
+		zone->uz_bktallocs += bucket->ub_cnt;
+		if (zone->uz_bktset < zone->uz_bktallocs)
+			zone->uz_bktset = zone->uz_bktallocs;
+	}
+	zone->uz_bktcount -= bucket->ub_cnt;
+	LIST_REMOVE(bucket, ub_link);
 }
 
 /*
@@ -519,8 +568,21 @@ keg_timeout(uma_keg_t keg)
 static void
 zone_timeout(uma_zone_t zone)
 {
+	const int div = 12;
+	int weight;
 
 	zone_foreach_keg(zone, &keg_timeout);
+
+	/*
+	 * Update the average size of the bucket cache working set.  With the
+	 * default lowmem period, this gives us a running average over the last
+	 * ~120s.  A weight is used to allow the working set estimate to grow
+	 * more quickly than it decays.
+	 */
+	weight = zone->uz_bktset > zone->uz_bktsetavg ? 2 : 1;
+	zone->uz_bktsetavg = (weight * zone->uz_bktset +
+	    (div - weight) * zone->uz_bktsetavg) / div;
+	zone->uz_bktallocs = zone->uz_bktset = 0;
 }
 
 /*
@@ -726,16 +788,14 @@ cache_drain_safe_cpu(uma_zone_t zone)
 	cache = &zone->uz_cpu[curcpu];
 	if (cache->uc_allocbucket) {
 		if (cache->uc_allocbucket->ub_cnt != 0)
-			LIST_INSERT_HEAD(&zone->uz_buckets,
-			    cache->uc_allocbucket, ub_link);
+			zone_cache_bucket(zone, cache->uc_allocbucket, false);
 		else
 			b1 = cache->uc_allocbucket;
 		cache->uc_allocbucket = NULL;
 	}
 	if (cache->uc_freebucket) {
 		if (cache->uc_freebucket->ub_cnt != 0)
-			LIST_INSERT_HEAD(&zone->uz_buckets,
-			    cache->uc_freebucket, ub_link);
+			zone_cache_bucket(zone, cache->uc_freebucket, false);
 		else
 			b2 = cache->uc_freebucket;
 		cache->uc_freebucket = NULL;
@@ -784,24 +844,52 @@ cache_drain_safe(uma_zone_t zone)
 }
 
 /*
- * Drain the cached buckets from a zone.  Expects a locked zone on entry.
+ * Drain some or all of the cached buckets from a zone.  Expects a locked zone
+ * on entry.
  */
 static void
 bucket_cache_drain(uma_zone_t zone)
 {
-	uma_bucket_t bucket;
+	LIST_HEAD(, uma_bucket) bh;
+	uma_bucket_t bucket, prev;
+	int64_t skip;
 
 	/*
-	 * Drain the bucket queues and free the buckets, we just keep two per
-	 * cpu (alloc/free).
+	 * If we're only attempting to trim excess buckets, stop once we've
+	 * brought the bucket list close to the working set average.  Otherwise
+	 * drain the entire queue, keeping two buckets per CPU.
 	 */
-	while ((bucket = LIST_FIRST(&zone->uz_buckets)) != NULL) {
+	if ((zone->uz_flags & UMA_ZFLAG_PRUNING) != 0)
+		skip = zone->uz_bktsetavg;
+	else
+		skip = 0;
+
+	/*
+	 * Start draining towards the end of list to preserve the most recently
+	 * used buckets.  Excess buckets are left in bh to be drained below.
+	 */
+	LIST_INIT(&bh);
+	LIST_SWAP(&bh, &zone->uz_buckets, uma_bucket, ub_link);
+	prev = NULL;
+	zone->uz_bktcount = 0;
+	while ((bucket = LIST_FIRST(&bh)) != NULL && skip > 0) {
+		skip -= bucket->ub_cnt;
 		LIST_REMOVE(bucket, ub_link);
-		ZONE_UNLOCK(zone);
+		if (prev != NULL)
+			LIST_INSERT_AFTER(prev, bucket, ub_link);
+		else
+			LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+		zone->uz_bktcount += bucket->ub_cnt;
+		prev = bucket;
+	}
+
+	ZONE_UNLOCK(zone);
+	while ((bucket = LIST_FIRST(&bh)) != NULL) {
+		LIST_REMOVE(bucket, ub_link);
 		bucket_drain(zone, bucket);
 		bucket_free(zone, bucket, NULL);
-		ZONE_LOCK(zone);
 	}
+	ZONE_LOCK(zone);
 
 	/*
 	 * Shrink further bucket sizes.  Price of single zone lock collision
@@ -929,6 +1017,15 @@ zone_drain(uma_zone_t zone)
 {
 
 	zone_drain_wait(zone, M_NOWAIT);
+}
+
+static void
+zone_prune(uma_zone_t zone)
+{
+
+	zone->uz_flags |= UMA_ZFLAG_PRUNING;
+	zone_drain_wait(zone, M_NOWAIT);
+	zone->uz_flags &= ~UMA_ZFLAG_PRUNING;
 }
 
 /*
@@ -1549,6 +1646,10 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 	zone->uz_frees = 0;
 	zone->uz_fails = 0;
 	zone->uz_sleeps = 0;
+	zone->uz_bktcount = 0;
+	zone->uz_bktallocs = 0;
+	zone->uz_bktset = 0;
+	zone->uz_bktsetavg = 0;
 	zone->uz_count = 0;
 	zone->uz_count_min = 0;
 	zone->uz_flags = 0;
@@ -1855,7 +1956,8 @@ uma_startup3(void)
 	printf("Starting callout.\n");
 #endif
 	callout_init(&uma_callout, 1);
-	callout_reset(&uma_callout, UMA_TIMEOUT * hz, uma_timeout, NULL);
+	callout_reset(&uma_callout, (vm_pageout_lowmem_period + 1) * hz,
+	    uma_timeout, NULL);
 #ifdef UMA_DEBUG
 	printf("UMA startup3 complete.\n");
 #endif
@@ -2233,7 +2335,7 @@ zalloc_start:
 		KASSERT(bucket->ub_cnt != 0,
 		    ("uma_zalloc_arg: Returning an empty bucket."));
 
-		LIST_REMOVE(bucket, ub_link);
+		zone_remove_bucket(zone, bucket, true);
 		cache->uc_allocbucket = bucket;
 		ZONE_UNLOCK(zone);
 		goto zalloc_start;
@@ -2263,12 +2365,17 @@ zalloc_start:
 		/*
 		 * See if we lost the race or were migrated.  Cache the
 		 * initialized bucket to make this less likely or claim
-		 * the memory directly.
+		 * the memory directly.  Record this as part of the bucket
+		 * cache's working set only if we didn't lose the race to
+		 * prevent double-counting.
 		 */
-		if (cache->uc_allocbucket == NULL)
+		if (cache->uc_allocbucket == NULL) {
 			cache->uc_allocbucket = bucket;
-		else
-			LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+			zone->uz_bktallocs += bucket->ub_cnt;
+			if (zone->uz_bktset < zone->uz_bktallocs)
+				zone->uz_bktset = zone->uz_bktallocs;
+		} else
+			zone_cache_bucket(zone, bucket, false);
 		ZONE_UNLOCK(zone);
 		goto zalloc_start;
 	}
@@ -2753,7 +2860,7 @@ zfree_start:
 		/* ub_cnt is pointing to the last free item */
 		KASSERT(bucket->ub_cnt != 0,
 		    ("uma_zfree: Attempting to insert an empty bucket onto the full list.\n"));
-		LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+		zone_cache_bucket(zone, bucket, true);
 	}
 
 	/* We are no longer associated with this CPU. */
@@ -3165,8 +3272,9 @@ uma_reclaim_locked(bool kmem_danger)
 #endif
 	sx_assert(&uma_drain_lock, SA_XLOCKED);
 	bucket_enable();
-	zone_foreach(zone_drain);
+	zone_foreach(zone_prune);
 	if (vm_page_count_min() || kmem_danger) {
+		/* Go all-out if we're in the danger zone. */
 		cache_drain_safe(NULL);
 		zone_foreach(zone_drain);
 	}
@@ -3404,7 +3512,6 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 	struct uma_stream_header ush;
 	struct uma_type_header uth;
 	struct uma_percpu_stat ups;
-	uma_bucket_t bucket;
 	struct sbuf sbuf;
 	uma_cache_t cache;
 	uma_klink_t kl;
@@ -3460,8 +3567,7 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 			    (LIST_FIRST(&kz->uk_zones) != z))
 				uth.uth_zone_flags = UTH_ZONE_SECONDARY;
 
-			LIST_FOREACH(bucket, &z->uz_buckets, ub_link)
-				uth.uth_zone_free += bucket->ub_cnt;
+			uth.uth_zone_free += z->uz_bktcount;
 			uth.uth_allocs = z->uz_allocs;
 			uth.uth_frees = z->uz_frees;
 			uth.uth_fails = z->uz_fails;
@@ -3628,7 +3734,6 @@ uma_dbg_free(uma_zone_t zone, uma_slab_t slab, void *item)
 DB_SHOW_COMMAND(uma, db_show_uma)
 {
 	uint64_t allocs, frees, sleeps;
-	uma_bucket_t bucket;
 	uma_keg_t kz;
 	uma_zone_t z;
 	int cachefree;
@@ -3648,8 +3753,7 @@ DB_SHOW_COMMAND(uma, db_show_uma)
 			if (!((z->uz_flags & UMA_ZONE_SECONDARY) &&
 			    (LIST_FIRST(&kz->uk_zones) != z)))
 				cachefree += kz->uk_free;
-			LIST_FOREACH(bucket, &z->uz_buckets, ub_link)
-				cachefree += bucket->ub_cnt;
+			cachefree += z->uz_bktcount;
 			db_printf("%18s %8ju %8jd %8d %12ju %8ju %8u\n",
 			    z->uz_name, (uintmax_t)kz->uk_size,
 			    (intmax_t)(allocs - frees), cachefree,
@@ -3663,7 +3767,6 @@ DB_SHOW_COMMAND(uma, db_show_uma)
 DB_SHOW_COMMAND(umacache, db_show_umacache)
 {
 	uint64_t allocs, frees;
-	uma_bucket_t bucket;
 	uma_zone_t z;
 	int cachefree;
 
@@ -3671,8 +3774,7 @@ DB_SHOW_COMMAND(umacache, db_show_umacache)
 	    "Requests", "Bucket");
 	LIST_FOREACH(z, &uma_cachezones, uz_link) {
 		uma_zone_sumstat(z, &cachefree, &allocs, &frees, NULL);
-		LIST_FOREACH(bucket, &z->uz_buckets, ub_link)
-			cachefree += bucket->ub_cnt;
+		cachefree += z->uz_bktcount;
 		db_printf("%18s %8ju %8jd %8d %12ju %8u\n",
 		    z->uz_name, (uintmax_t)z->uz_size,
 		    (intmax_t)(allocs - frees), cachefree,

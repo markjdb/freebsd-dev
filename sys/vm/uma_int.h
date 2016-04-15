@@ -292,7 +292,11 @@ struct uma_zone {
 	volatile u_long	uz_fails;	/* Total number of alloc failures */
 	volatile u_long	uz_frees;	/* Total number of frees */
 	uint64_t	uz_sleeps;	/* Total number of alloc sleeps */
-	uint16_t	uz_count;	/* Amount of items in full bucket */
+	uint64_t	uz_bktcount;	/* Bucket cache size */
+	int64_t		uz_bktallocs;	/* Items alloced from bucket cache */
+	int64_t		uz_bktset;	/* Bucket cache WS this period */
+	int64_t		uz_bktsetavg;	/* Bucket cache working set average */
+	uint16_t	uz_count;	/* Amount of items in a full bucket */
 	uint16_t	uz_count_min;	/* Minimal amount of items there */
 
 	/* The next two fields are used to print a rate-limited warnings. */
@@ -311,7 +315,8 @@ struct uma_zone {
 /*
  * These flags must not overlap with the UMA_ZONE flags specified in uma.h.
  */
-#define	UMA_ZFLAG_MULTI		0x04000000	/* Multiple kegs in the zone. */
+#define	UMA_ZFLAG_MULTI		0x02000000	/* Multiple kegs in the zone. */
+#define	UMA_ZFLAG_PRUNING	0x04000000	/* Draining excess items only */
 #define	UMA_ZFLAG_DRAINING	0x08000000	/* Running zone_drain. */
 #define	UMA_ZFLAG_BUCKET	0x10000000	/* Bucket zone. */
 #define UMA_ZFLAG_INTERNAL	0x20000000	/* No offpage no PCPU. */
@@ -367,6 +372,7 @@ void uma_large_free(uma_slab_t slab);
 #define	ZONE_LOCK(z)	mtx_lock((z)->uz_lockptr)
 #define	ZONE_TRYLOCK(z)	mtx_trylock((z)->uz_lockptr)
 #define	ZONE_UNLOCK(z)	mtx_unlock((z)->uz_lockptr)
+#define	ZONE_LOCK_ASSERT(z)	mtx_assert((z)->uz_lockptr, MA_OWNED)
 #define	ZONE_LOCK_FINI(z)	mtx_destroy(&(z)->uz_lock)
 
 /*
