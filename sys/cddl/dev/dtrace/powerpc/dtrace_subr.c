@@ -326,7 +326,8 @@ dtrace_probe_error(dtrace_state_t *state, dtrace_epid_t epid, int which,
 static int
 dtrace_invop_start(struct trapframe *frame)
 {
-	switch (dtrace_invop(frame->srr0, (uintptr_t *)frame, frame->fixreg[3])) {
+
+	switch (dtrace_invop(frame->srr0, frame, frame->fixreg[3])) {
 	case DTRACE_INVOP_JUMP:
 		break;
 	case DTRACE_INVOP_BCTR:
@@ -341,9 +342,7 @@ dtrace_invop_start(struct trapframe *frame)
 		break;
 	default:
 		return (-1);
-		break;
 	}
-
 	return (0);
 }
 

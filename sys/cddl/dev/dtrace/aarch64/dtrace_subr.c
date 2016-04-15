@@ -240,7 +240,7 @@ dtrace_invop_start(struct trapframe *frame)
 	int tmp;
 	int i;
 
-	invop = dtrace_invop(frame->tf_elr, (uintptr_t *)frame, frame->tf_elr);
+	invop = dtrace_invop(frame->tf_elr, frame, frame->tf_elr);
 
 	tmp = (invop & LDP_STP_MASK);
 	if (tmp == STP_64 || tmp == LDP_64) {

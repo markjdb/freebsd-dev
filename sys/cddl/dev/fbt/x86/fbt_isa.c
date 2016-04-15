@@ -68,7 +68,8 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 #ifdef __amd64__
 	stack = (uintptr_t *)frame->tf_rsp;
 #else
-	stack = (uintptr_t *)frame->tf_esp;
+	/* Skip hardware-saved registers. */
+	stack = (uintptr_t *)frame->tf_isp + 3;
 #endif
 
 	cpu = &solaris_cpu[curcpu];
@@ -87,6 +88,7 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 				arg4 = frame->tf_r8;
 #else
 				int i = 0;
+
 				/*
 				 * When accessing the arguments on the stack,
 				 * we must protect against accessing beyond

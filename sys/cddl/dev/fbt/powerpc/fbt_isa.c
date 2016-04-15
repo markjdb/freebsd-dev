@@ -51,7 +51,7 @@
 #define	FBT_AFRAMES	7
 
 int
-fbt_invop(uintptr_t addr, struct trapframe *stack, uintptr_t rval)
+fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 {
 	solaris_cpu_t *cpu = &solaris_cpu[curcpu];
 	fbt_probe_t *fbt = fbt_probetab[FBT_ADDR2NDX(addr)];
