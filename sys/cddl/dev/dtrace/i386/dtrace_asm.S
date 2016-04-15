@@ -38,7 +38,7 @@
 
 	pushl	%eax			/* push %eax -- may be return value */
 	pushl	%esp			/* push stack pointer */
-	addl	$48, (%esp)		/* adjust to incoming args */
+	addl	$8, (%esp)		/* adjust to incoming args */
 	pushl	40(%esp)		/* push calling EIP */
 
 	/*
