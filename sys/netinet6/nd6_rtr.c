@@ -1004,7 +1004,9 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
 	IN6_MASK_ADDR(&new->ndpr_prefix.sin6_addr, &new->ndpr_mask);
 
 	/* link ndpr_entry to nd_prefix list */
+	ND6_WLOCK();
 	LIST_INSERT_HEAD(&V_nd_prefix, new, ndpr_entry);
+	ND6_WLOCK();
 
 	/* ND_OPT_PI_FLAG_ONLINK processing */
 	if (new->ndpr_raf_onlink) {
