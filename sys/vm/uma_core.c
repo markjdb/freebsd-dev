@@ -288,6 +288,11 @@ static int zone_warnings = 1;
 SYSCTL_INT(_vm, OID_AUTO, zone_warnings, CTLFLAG_RWTUN, &zone_warnings, 0,
     "Warn when UMA zones becomes full");
 
+static int uma_reclaim_wakeups;
+SYSCTL_INT(_vm, OID_AUTO, uma_reclaim_wakeups, CTLFLAG_RW,
+    &uma_reclaim_wakeups, 0,
+    "Incremented when the UMA reclaim worker thread is signalled");
+
 /*
  * This routine checks to see whether or not it's safe to enable buckets.
  */
@@ -3317,6 +3322,7 @@ uma_reclaim_worker(void *arg __unused)
 		if (uma_reclaim_needed) {
 			uma_reclaim_needed = 0;
 			uma_reclaim_locked(true);
+			uma_reclaim_wakeups++;
 		}
 	}
 }
