@@ -1027,7 +1027,7 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
 }
 
 void
-prelist_remove(struct nd_prefix *pr)
+nd6_prelist_remove(struct nd_prefix *pr)
 {
 	struct nd_pfxrouter *pfr, *next;
 	int e;
