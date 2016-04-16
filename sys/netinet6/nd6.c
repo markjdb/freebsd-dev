@@ -890,6 +890,7 @@ nd6_timer(void *arg)
 {
 	CURVNET_SET((struct vnet *) arg);
 	struct nd_drhead drq;
+	struct nd_prefixhead prl;
 	struct nd_defrouter *dr, *ndr;
 	struct nd_prefix *pr, *npr;
 	struct in6_ifaddr *ia6, *nia6;
@@ -897,6 +898,7 @@ nd6_timer(void *arg)
 	callout_reset(&V_nd6_timer_ch, V_nd6_prune * hz,
 	    nd6_timer, curvnet);
 
+	LIST_INIT(&prl);
 	TAILQ_INIT(&drq);
 
 	/* expire default router list */
@@ -1007,6 +1009,7 @@ nd6_timer(void *arg)
 	}
 
 	/* expire prefix list */
+	ND6_WLOCK();
 	LIST_FOREACH_SAFE(pr, &V_nd_prefix, ndpr_entry, npr) {
 		/*
 		 * check prefix lifetime.
@@ -1014,14 +1017,17 @@ nd6_timer(void *arg)
 		 * prefix is not necessary.
 		 */
 		if (pr->ndpr_vltime != ND6_INFINITE_LIFETIME &&
-		    time_uptime - pr->ndpr_lastupdate > pr->ndpr_vltime) {
+		    time_uptime - pr->ndpr_lastupdate > pr->ndpr_vltime)
+			nd6_prefix_unlink(pr, &prl);
+	}
+	ND6_WUNLOCK();
 
-			/*
-			 * address expiration and prefix expiration are
-			 * separate.  NEVER perform in6_purgeaddr here.
-			 */
-			nd6_prelist_remove(pr);
-		}
+	while ((pr = LIST_FIRST(&prl)) != NULL) {
+		/*
+		 * Address and prefix expiration are separate. Never perform
+		 * in6_purgeaddr() here.
+		 */
+		nd6_prelist_remove(pr);
 	}
 	CURVNET_RESTORE();
 }
@@ -1104,9 +1110,11 @@ void
 nd6_purge(struct ifnet *ifp)
 {
 	struct nd_drhead drq;
+	struct nd_prefixhead prl;
 	struct nd_defrouter *dr, *ndr;
 	struct nd_prefix *pr, *npr;
 
+	LIST_INIT(&prl);
 	TAILQ_INIT(&drq);
 
 	/*
@@ -1137,6 +1145,7 @@ nd6_purge(struct ifnet *ifp)
 	}
 
 	/* Nuke prefix list entries toward ifp */
+	ND6_WLOCK();
 	LIST_FOREACH_SAFE(pr, &V_nd_prefix, ndpr_entry, npr) {
 		if (pr->ndpr_ifp == ifp) {
 			/*
@@ -1147,8 +1156,13 @@ nd6_purge(struct ifnet *ifp)
 			 */
 			pr->ndpr_refcnt = 0;
 
-			nd6_prelist_remove(pr);
+			nd6_prefix_unlink(pr, &prl);
 		}
+	}
+	ND6_WUNLOCK();
+
+	while ((pr = LIST_FIRST(&prl)) != NULL) {
+		nd6_prelist_remove(pr);
 	}
 
 	/* cancel default outgoing interface setting */
@@ -1252,6 +1266,7 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 	 * If the address matches one of our on-link prefixes, it should be a
 	 * neighbor.
 	 */
+	ND6_RLOCK();
 	LIST_FOREACH(pr, &V_nd_prefix, ndpr_entry) {
 		if (pr->ndpr_ifp != ifp)
 			continue;
@@ -1284,6 +1299,7 @@ nd6_is_new_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 		    &addr->sin6_addr, &pr->ndpr_mask))
 			return (1);
 	}
+	ND6_RUNLOCK();
 
 	/*
 	 * If the address is assigned on the node of the other side of
@@ -1714,14 +1730,21 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 	case SIOCSPFXFLUSH_IN6:
 	{
 		/* flush all the prefix advertised by routers */
+		struct nd_prefixhead prl;
 		struct nd_prefix *pr, *next;
 
-		LIST_FOREACH_SAFE(pr, &V_nd_prefix, ndpr_entry, next) {
-			struct in6_ifaddr *ia, *ia_next;
+		LIST_INIT(&prl);
 
+		ND6_WLOCK();
+		LIST_FOREACH_SAFE(pr, &V_nd_prefix, ndpr_entry, next) {
 			if (IN6_IS_ADDR_LINKLOCAL(&pr->ndpr_prefix.sin6_addr))
 				continue; /* XXX */
+			nd6_prefix_unlink(pr, &prl);
+		}
+		ND6_WUNLOCK();
 
+		while ((pr = LIST_FIRST(&prl)) != NULL) {
+			struct in6_ifaddr *ia, *ia_next;
 			/* do we really have to remove addresses as well? */
 			/* XXXRW: in6_ifaddrhead locking. */
 			TAILQ_FOREACH_SAFE(ia, &V_in6_ifaddrhead, ia_link,

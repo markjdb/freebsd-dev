@@ -13784,6 +13784,7 @@ sctp_v6src_match_nexthop(struct sockaddr_in6 *src6, sctp_route_t * ro)
 		return (0);
 
 	/* get prefix entry of address */
+	ND6_RLOCK();
 	LIST_FOREACH(pfx, &MODULE_GLOBAL(nd_prefix), ndpr_entry) {
 		if (pfx->ndpr_stateflags & NDPRF_DETACHED)
 			continue;
@@ -13793,6 +13794,7 @@ sctp_v6src_match_nexthop(struct sockaddr_in6 *src6, sctp_route_t * ro)
 	}
 	/* no prefix entry in the prefix list */
 	if (pfx == NULL) {
+		ND6_RUNLOCK();
 		SCTPDBG(SCTP_DEBUG_OUTPUT2, "No prefix entry for ");
 		SCTPDBG_ADDR(SCTP_DEBUG_OUTPUT2, (struct sockaddr *)src6);
 		return (0);
@@ -13813,10 +13815,12 @@ sctp_v6src_match_nexthop(struct sockaddr_in6 *src6, sctp_route_t * ro)
 		SCTPDBG_ADDR(SCTP_DEBUG_OUTPUT2, ro->ro_rt->rt_gateway);
 		if (sctp_cmpaddr((struct sockaddr *)&gw6,
 		    ro->ro_rt->rt_gateway)) {
+			ND6_RUNLOCK();
 			SCTPDBG(SCTP_DEBUG_OUTPUT2, "pfxrouter is installed\n");
 			return (1);
 		}
 	}
+	ND6_RUNLOCK();
 	SCTPDBG(SCTP_DEBUG_OUTPUT2, "pfxrouter is not installed\n");
 	return (0);
 }

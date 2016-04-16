@@ -256,7 +256,7 @@ struct nd_prefixctl {
 	struct prf_ra ndpr_flags;
 };
 
-
+LIST_HEAD(nd_prefixhead, nd_prefix);
 struct nd_prefix {
 	struct ifnet *ndpr_ifp;
 	LIST_ENTRY(nd_prefix) ndpr_entry;
@@ -462,6 +462,8 @@ void defrouter_del(struct nd_defrouter *);
 int nd6_prelist_add(struct nd_prefixctl *, struct nd_defrouter *,
     struct nd_prefix **);
 void nd6_prelist_remove(struct nd_prefix *);
+void nd6_prefix_link(struct nd_prefix *);
+void nd6_prefix_unlink(struct nd_prefix *, struct nd_prefixhead *);
 void pfxlist_onlink_check(void);
 struct nd_defrouter *defrouter_lookup(struct in6_addr *, struct ifnet *);
 struct nd_defrouter *defrouter_lookup_locked(struct in6_addr *, struct ifnet *);
