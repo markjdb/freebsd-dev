@@ -54,6 +54,11 @@ static const char *_libctf_zlib = "/usr/lib/libz.so";
 #endif
 #endif
 
+#ifdef __FreeBSD__
+/* from debug.h */
+int aok;
+#endif
+
 static struct {
 	int (*z_uncompress)(uchar_t *, ulong_t *, const uchar_t *, ulong_t);
 	int (*z_initcomp)(z_stream *, int, const char *, int);

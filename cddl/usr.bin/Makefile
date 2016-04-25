@@ -4,6 +4,7 @@
 
 SUBDIR= \
 	ctfconvert \
+	ctfdiff \
 	ctfdump \
 	ctfmerge \
 	${_tests} \

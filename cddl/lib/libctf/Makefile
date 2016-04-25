@@ -7,6 +7,7 @@
 LIB=		ctf
 SRCS=		ctf_create.c \
 		ctf_decl.c \
+		ctf_diff.c \
 		ctf_error.c \
 		ctf_hash.c \
 		ctf_labels.c \

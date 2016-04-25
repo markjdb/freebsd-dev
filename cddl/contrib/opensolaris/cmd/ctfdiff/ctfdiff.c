@@ -24,6 +24,9 @@
 #include <libctf.h>
 #include <libgen.h>
 #include <stdarg.h>
+#ifdef __FreeBSD__
+#include <unistd.h>
+#endif
 
 #define	CTFDIFF_NAMELEN	256
 
