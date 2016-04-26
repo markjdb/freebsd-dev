@@ -447,6 +447,9 @@ void debug(int, const char *, ...);
 void watch_dump(int);
 void watch_set(void *, int);
 
+/* altexec.c */
+void ctf_altexec(const char *, int argc, char **);
+
 #ifdef __cplusplus
 }
 #endif
