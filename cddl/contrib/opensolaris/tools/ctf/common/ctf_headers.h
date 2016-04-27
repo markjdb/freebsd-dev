@@ -37,6 +37,7 @@
  * as part of Solaris.  These include the following:
  *
  * $(SRC)/lib/libctf/common/libctf.h
+ * $(SRC)/lib/libctf/common/libctf_impl.h
  * $(SRC)/uts/common/sys/ctf_api.h
  * $(SRC)/uts/common/sys/ctf.h
  *
@@ -69,5 +70,6 @@
 #include <uts/common/sys/ctf_api.h>
 #include <common/ctf/ctf_impl.h>
 #include <lib/libctf/common/libctf.h>
+#include <lib/libctf/common/libctf_impl.h>
 
 #endif /* _CTF_HEADERS_H */
