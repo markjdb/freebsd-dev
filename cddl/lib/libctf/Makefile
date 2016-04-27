@@ -8,11 +8,13 @@ LIB=		ctf
 SRCS=		ctf_create.c \
 		ctf_decl.c \
 		ctf_diff.c \
+		ctf_elfwrite.c \
 		ctf_error.c \
 		ctf_hash.c \
 		ctf_labels.c \
 		ctf_lib.c \
 		ctf_lookup.c \
+		ctf_merge.c \
 		ctf_open.c \
 		ctf_subr.c \
 		ctf_types.c \
@@ -27,6 +29,7 @@ CFLAGS+=	-I${.CURDIR}/../../../sys/cddl/compat/opensolaris \
 		-I${OPENSOLARIS_USR_DISTDIR}/head \
 		-I${OPENSOLARIS_USR_DISTDIR}/common/ctf \
 		-I${OPENSOLARIS_USR_DISTDIR}/lib/libctf/common \
+		-I${OPENSOLARIS_USR_DISTDIR}/lib/mergeq \
 		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common
 
 LIBADD+=	z
