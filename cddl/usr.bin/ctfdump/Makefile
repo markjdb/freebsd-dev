@@ -1,12 +1,9 @@
 # $FreeBSD$
 
-.PATH: ${.CURDIR}/../../../cddl/contrib/opensolaris/tools/ctf/common
-.PATH: ${.CURDIR}/../../../cddl/contrib/opensolaris/tools/ctf/dump
+.PATH: ${.CURDIR}/../../../cddl/contrib/opensolaris/cmd/ctfdump
 
 PROG=		ctfdump
-SRCS=		dump.c \
-		symbol.c \
-		utils.c
+SRCS=		ctfdump.c
 
 CFLAGS+=	-I${OPENSOLARIS_USR_DISTDIR} \
 		-I${OPENSOLARIS_SYS_DISTDIR} \
@@ -14,9 +11,14 @@ CFLAGS+=	-I${OPENSOLARIS_USR_DISTDIR} \
 		-I${OPENSOLARIS_USR_DISTDIR}/cmd/mdb/tools/common \
 		-I${.CURDIR}/../../../sys/cddl/compat/opensolaris \
 		-I${.CURDIR}/../../../cddl/compat/opensolaris/include \
+		-I${OPENSOLARIS_USR_DISTDIR}/lib/libctf/common \
 		-I${OPENSOLARIS_USR_DISTDIR}/tools/ctf/common \
 		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common
 
-LIBADD=		elf z
+LIBADD=		ctf z
+
+MAN=		ctfdump.1
 
 .include <bsd.prog.mk>
+
+CFLAGS+=	-Wno-unused-parameter

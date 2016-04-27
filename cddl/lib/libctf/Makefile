@@ -2,7 +2,9 @@
 
 .PATH:		${.CURDIR}/../../../cddl/contrib/opensolaris/common/ctf
 .PATH:		${.CURDIR}/../../../cddl/contrib/opensolaris/lib/libctf/common
+.PATH:		${.CURDIR}/../../../cddl/contrib/opensolaris/lib/mergeq
 .PATH:		${.CURDIR}/../../../sys/cddl/contrib/opensolaris/common/ctf
+.PATH:		${.CURDIR}/../../../sys/cddl/contrib/opensolaris/uts/common/os
 
 LIB=		ctf
 SRCS=		ctf_create.c \
@@ -18,7 +20,10 @@ SRCS=		ctf_create.c \
 		ctf_open.c \
 		ctf_subr.c \
 		ctf_types.c \
-		ctf_util.c
+		ctf_util.c \
+		mergeq.c \
+		workq.c \
+		list.c
 MAN=		ctf.5
 
 WARNS?=		2
@@ -32,6 +37,6 @@ CFLAGS+=	-I${.CURDIR}/../../../sys/cddl/compat/opensolaris \
 		-I${OPENSOLARIS_USR_DISTDIR}/lib/mergeq \
 		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common
 
-LIBADD+=	z
+LIBADD+=	elf pthread z
 
 .include <bsd.lib.mk>

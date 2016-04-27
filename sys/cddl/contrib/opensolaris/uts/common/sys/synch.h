@@ -31,7 +31,9 @@
 
 #ifndef _ASM
 #include <sys/types.h>
+#ifndef __FreeBSD__
 #include <sys/int_types.h>
+#endif
 #endif /* _ASM */
 
 #ifdef	__cplusplus

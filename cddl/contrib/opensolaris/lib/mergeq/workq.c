@@ -25,7 +25,9 @@
 #include <strings.h>
 #include <sys/debug.h>
 #include <thread.h>
+#ifndef __FreeBSD__
 #include <synch.h>
+#endif
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>

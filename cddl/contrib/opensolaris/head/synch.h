@@ -33,8 +33,10 @@
  */
 
 #ifndef _ASM
+#ifndef __FreeBSD__
 #include <sys/machlock.h>
 #include <sys/time_impl.h>
+#endif
 #include <sys/synch.h>
 #endif /* _ASM */
 

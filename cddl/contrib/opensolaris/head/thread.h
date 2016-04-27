@@ -44,15 +44,17 @@ typedef pthread_rwlock_t rwlock_t;
 
 #define USYNC_THREAD 0
 
+#define	thr_join(t,d,s)		pthread_join(t,s)
 #define	thr_self()		(unsigned long)pthread_self()
 #define	thr_equal(a,b)		pthread_equal(a,b)
-#define	thr_join(t,d,s)		pthread_join(t,s)
 #define	thr_exit(r)		pthread_exit(r)
 #define	_mutex_init(l,f,a)	pthread_mutex_init(l,NULL)
+#define	mutex_init(l,f,a)	_mutex_init(l,f,a)
 #define	_mutex_destroy(l)	pthread_mutex_destroy(l)
 #define	mutex_lock(l)		pthread_mutex_lock(l)
 #define	mutex_trylock(l)	pthread_mutex_trylock(l)
 #define	mutex_unlock(l)		pthread_mutex_unlock(l)
+#define	mutex_destroy(l)	pthread_mutex_destroy(l)
 #define	rwlock_init(l,f,a)	pthread_rwlock_init(l,NULL)
 #define	rwlock_destroy(l)	pthread_rwlock_destroy(l)
 #define	rw_rdlock(l)		pthread_rwlock_rdlock(l)
@@ -65,6 +67,8 @@ typedef pthread_rwlock_t rwlock_t;
 #define	cond_wait(l,m)		pthread_cond_wait(l,m)
 #define	cond_signal(l)		pthread_cond_signal(l)
 #define	cond_broadcast(l)	pthread_cond_broadcast(l)
+
+#define	MUTEX_HELD(l)		pthread_mutex_isowned_np(l)
 
 #define THR_BOUND     0x00000001  /* = PTHREAD_SCOPE_SYSTEM */
 #define THR_NEW_LWP   0x00000002
