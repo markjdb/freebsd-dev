@@ -1458,6 +1458,7 @@ vm_page_cache_lookup(vm_object_t object, vm_pindex_t pindex)
 	return (vm_radix_lookup(&object->cache, pindex));
 }
 
+#ifdef VM_PAGE_CACHE
 /*
  *	Remove the given cached page from its containing object's
  *	collection of cached pages.
@@ -1475,6 +1476,7 @@ vm_page_cache_remove(vm_page_t m)
 	m->object = NULL;
 	vm_cnt.v_cache_count--;
 }
+#endif
 
 /*
  *	Transfer all of the cached pages with offset greater than or
@@ -1625,6 +1627,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		 * Allocate from the free queue if the number of free pages
 		 * exceeds the minimum for the request class.
 		 */
+#ifdef VM_PAGE_CACHE
 		if (object != NULL &&
 		    (m = vm_page_cache_lookup(object, pindex)) != NULL) {
 			if ((req & VM_ALLOC_IFNOTCACHED) != 0) {
@@ -1660,6 +1663,25 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 			}
 #endif
 		}
+#else /* VM_PAGE_CACHE */
+#if VM_NRESERVLEVEL > 0
+		if (object == NULL || (object->flags & (OBJ_COLORED |
+		    OBJ_FICTITIOUS)) != OBJ_COLORED || (m =
+		    vm_reserv_alloc_page(object, pindex, mpred)) == NULL) {
+#else
+		} else {
+#endif
+			m = vm_phys_alloc_pages(object != NULL ?
+			    VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT, 0);
+#if VM_NRESERVLEVEL > 0
+			if (m == NULL && vm_reserv_reclaim_inactive()) {
+				m = vm_phys_alloc_pages(object != NULL ?
+				    VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT,
+				    0);
+			}
+#endif
+		}
+#endif /* !VM_PAGE_CACHE */
 	} else {
 		/*
 		 * Not allocatable, give up.
@@ -1685,6 +1707,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	KASSERT(pmap_page_get_memattr(m) == VM_MEMATTR_DEFAULT,
 	    ("vm_page_alloc: page %p has unexpected memattr %d", m,
 	    pmap_page_get_memattr(m)));
+#ifdef VM_PAGE_CACHE
 	if ((m->flags & PG_CACHED) != 0) {
 		KASSERT((m->flags & PG_ZERO) == 0,
 		    ("vm_page_alloc: cached page %p is PG_ZERO", m));
@@ -1706,6 +1729,11 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		if ((m->flags & PG_ZERO) != 0)
 			vm_page_zero_count--;
 	}
+#else /* VM_PAGE_CACHE */
+	(void)m_object;
+	(void)vp;
+	(void)vm_page_alloc_init(m);
+#endif
 	mtx_unlock(&vm_page_queue_free_mtx);
 
 	/*
@@ -1738,9 +1766,11 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 
 	if (object != NULL) {
 		if (vm_page_insert_after(m, object, pindex, mpred)) {
+#ifdef VM_PAGE_CACHE
 			/* See the comment below about hold count. */
 			if (vp != NULL)
 				vdrop(vp);
+#endif
 			pagedaemon_wakeup();
 			if (req & VM_ALLOC_WIRED) {
 				atomic_subtract_int(&vm_cnt.v_wire_count, 1);
@@ -1760,6 +1790,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	} else
 		m->pindex = pindex;
 
+#ifdef VM_PAGE_CACHE
 	/*
 	 * The following call to vdrop() must come after the above call
 	 * to vm_page_insert() in case both affect the same object and
@@ -1768,6 +1799,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	 */
 	if (vp != NULL)
 		vdrop(vp);
+#endif
 
 	/*
 	 * Don't wakeup too often - wakeup the pageout daemon when
@@ -1779,6 +1811,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	return (m);
 }
 
+#ifdef VM_PAGE_CACHE
 static void
 vm_page_alloc_contig_vdrop(struct spglist *lst)
 {
@@ -1788,6 +1821,7 @@ vm_page_alloc_contig_vdrop(struct spglist *lst)
 		SLIST_REMOVE_HEAD(lst, plinks.s.ss);
 	}
 }
+#endif
 
 /*
  *	vm_page_alloc_contig:
@@ -1883,6 +1917,7 @@ retry:
 	}
 	if (m_ret != NULL)
 		for (m = m_ret; m < &m_ret[npages]; m++) {
+#ifdef VM_PAGE_ALLOC
 			drop = vm_page_alloc_init(m);
 			if (drop != NULL) {
 				/*
@@ -1892,6 +1927,10 @@ retry:
 				SLIST_INSERT_HEAD(&deferred_vdrop_list, m,
 				    plinks.s.ss);
 			}
+#else
+			(void)drop;
+			(void)vm_page_alloc_init(m);
+#endif
 		}
 	else {
 #if VM_NRESERVLEVEL > 0
@@ -1935,8 +1974,10 @@ retry:
 		m->oflags = VPO_UNMANAGED;
 		if (object != NULL) {
 			if (vm_page_insert(m, object, pindex)) {
+#ifdef VM_PAGE_CACHE
 				vm_page_alloc_contig_vdrop(
 				    &deferred_vdrop_list);
+#endif
 				if (vm_paging_needed())
 					pagedaemon_wakeup();
 				if ((req & VM_ALLOC_WIRED) != 0)
@@ -1961,7 +2002,9 @@ retry:
 			pmap_page_set_memattr(m, memattr);
 		pindex++;
 	}
+#ifdef VM_PAGE_CACHE
 	vm_page_alloc_contig_vdrop(&deferred_vdrop_list);
+#endif
 	if (vm_paging_needed())
 		pagedaemon_wakeup();
 	return (m_ret);
@@ -1997,6 +2040,7 @@ vm_page_alloc_init(vm_page_t m)
 	    m, pmap_page_get_memattr(m)));
 	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
 	drop = NULL;
+#ifdef VM_PAGE_CACHE
 	if ((m->flags & PG_CACHED) != 0) {
 		KASSERT((m->flags & PG_ZERO) == 0,
 		    ("vm_page_alloc_init: cached page %p is PG_ZERO", m));
@@ -2014,6 +2058,16 @@ vm_page_alloc_init(vm_page_t m)
 			vm_page_zero_count--;
 	}
 	return (drop);
+#else
+	KASSERT(m->valid == 0,
+	    ("vm_page_alloc_init: free page %p is valid", m));
+	vm_phys_freecnt_adj(m, -1);
+	if ((m->flags & PG_ZERO) != 0)
+		vm_page_zero_count--;
+	(void)m_object;
+	(void)drop;
+	return (NULL);
+#endif
 }
 
 /*
@@ -2073,7 +2127,12 @@ vm_page_alloc_freelist(int flind, int req)
 		mtx_unlock(&vm_page_queue_free_mtx);
 		return (NULL);
 	}
+#ifdef VM_PAGE_CACHE
 	drop = vm_page_alloc_init(m);
+#else
+	(void)drop;
+	(void)vm_page_alloc_init(m);
+#endif
 	mtx_unlock(&vm_page_queue_free_mtx);
 
 	/*
@@ -2094,8 +2153,10 @@ vm_page_alloc_freelist(int flind, int req)
 	}
 	/* Unmanaged pages don't use "act_count". */
 	m->oflags = VPO_UNMANAGED;
+#ifdef VM_PAGE_CACHE
 	if (drop != NULL)
 		vdrop(drop);
+#endif
 	if (vm_paging_needed())
 		pagedaemon_wakeup();
 	return (m);
@@ -2221,8 +2282,9 @@ retry:
 			/* Don't care: PG_NODUMP, PG_WINATCFLS, PG_ZERO. */
 			if (object->type != OBJT_DEFAULT &&
 			    object->type != OBJT_SWAP &&
-			    object->type != OBJT_VNODE)
+			    object->type != OBJT_VNODE) {
 				run_ext = 0;
+#ifdef VM_PAGE_CACHE
 			else if ((m->flags & PG_CACHED) != 0 ||
 			    m != vm_page_lookup(object, m->pindex)) {
 				/*
@@ -2253,6 +2315,7 @@ retry:
 					m_inc = 1 << order;
 				} else
 					run_ext = 0;
+#endif /* VM_PAGE_CACHE */
 #if VM_NRESERVLEVEL > 0
 			} else if ((options & VPSC_NOSUPER) != 0 &&
 			    (level = vm_reserv_level_iffullpop(m)) >= 0) {
@@ -2419,6 +2482,7 @@ retry:
 			    object->type != OBJT_SWAP &&
 			    object->type != OBJT_VNODE)
 				error = EINVAL;
+#ifdef VM_PAGE_CACHE
 			else if ((m->flags & PG_CACHED) != 0 ||
 			    m != vm_page_lookup(object, m->pindex)) {
 				/*
@@ -2427,7 +2491,9 @@ retry:
 				 */
 				VM_OBJECT_WUNLOCK(object);
 				goto cached;
-			} else if (object->memattr != VM_MEMATTR_DEFAULT)
+			}
+#endif
+			else if (object->memattr != VM_MEMATTR_DEFAULT)
 				error = EINVAL;
 			else if (m->queue != PQ_NONE && !vm_page_busied(m)) {
 				KASSERT(pmap_page_get_memattr(m) ==
@@ -2528,7 +2594,9 @@ retry:
 unlock:
 			VM_OBJECT_WUNLOCK(object);
 		} else {
+#ifdef VM_PAGE_CACHE
 cached:
+#endif
 			mtx_lock(&vm_page_queue_free_mtx);
 			order = m->order;
 			if (order < VM_NFREEORDER) {
