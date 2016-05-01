@@ -19,12 +19,8 @@ sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t rval)
 }
 
 void
-sdt_probe_enable(struct sdt_probedesc *desc)
+sdt_probe_enable(struct sdt_probedesc *desc __unused)
 {
-
-
-	*fbt->fbtp_patchpoint = val;
-	icache_sync((vm_offset_t)fbt->fbtp_patchpoint, sizeof(val));
 }
 
 void

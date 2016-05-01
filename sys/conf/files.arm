@@ -117,6 +117,7 @@ cddl/compat/opensolaris/kern/opensolaris_atomic.c	optional zfs | dtrace compile-
 cddl/dev/dtrace/arm/dtrace_asm.S			optional dtrace compile-with "${DTRACE_S}"
 cddl/dev/dtrace/arm/dtrace_subr.c			optional dtrace compile-with "${DTRACE_C}"
 cddl/dev/fbt/arm/fbt_isa.c				optional dtrace_fbt | dtraceall compile-with "${FBT_C}"
+cddl/dev/sdt/arm/sdt_isa.c				optional dtrace_sdt | dtraceall compile-with "${FBT_C} -I $S/cddl/dev/sdt"
 crypto/blowfish/bf_enc.c	optional	crypto | ipsec | ipsec_support
 crypto/des/des_enc.c		optional	crypto | ipsec | ipsec_support | netsmb
 dev/cpufreq/cpufreq_dt.c	optional	cpufreq fdt

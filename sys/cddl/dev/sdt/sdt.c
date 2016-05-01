@@ -264,7 +264,7 @@ sdt_create_probe(struct sdt_probe *probe, struct linker_file *lf)
 			error = linker_file_function_listall(lf, sdt_desc_match,
 			    &match);
 			if (error != EJUSTRETURN)
-				printf("sdt: no function found at %#lx (%d)\n",
+				printf("sdt: no function at %#lx (error %d)\n",
 				    desc->spd_offset, error);
 			SLIST_REMOVE_HEAD(&probe->site_list, li.spd_entry);
 			desc->li.spd_probe = probe;

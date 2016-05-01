@@ -1,5 +1,5 @@
 /*-
- * Copyright 2015 Mark Johnston <markj@FreeBSD.org>
+ * Copyright (c) 2016 Mark Johnston <markj@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,7 +55,7 @@ sdt_md_patch_callsite(struct sdt_probe *probe, uint64_t offset, bool reloc)
 	opcode = callinstr[0];
 	if (opcode != X86_OPC_CALL32 && opcode != X86_OPC_JMP32) {
 		printf("sdt: opcode mismatch (0x%x) for %s:::%s@%p\n",
-		    callinstr[0], probe->prov->name, probe->name,
+		    opcode, probe->prov->name, probe->name,
 		    (void *)(uintptr_t)offset);
 		return (0);
 	}

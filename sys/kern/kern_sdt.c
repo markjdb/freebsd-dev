@@ -1,6 +1,6 @@
 /*-
  * Copyright 2006-2008 John Birrell <jb@FreeBSD.org>
- * Copyright 2015 Mark Johnston <markj@FreeBSD.org>
+ * Copyright (c) 2016 Mark Johnston <markj@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,9 +39,13 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/cpu.h>
 
+#ifdef __arm__
+void _start(void);
+#endif
+
 SDT_PROVIDER_DEFINE(sdt);
 
-static MALLOC_DEFINE(M_SDT, "sdt", "statically-defined tracing");
+MALLOC_DEFINE(M_SDT, "sdt", "statically-defined tracing");
 
 static eventhandler_tag sdt_kld_unload_try_tag;
 
@@ -111,8 +115,13 @@ sdt_patch_linker_file(linker_file_t lf, void *arg __unused)
 	 */
 	for (desc = start; desc < end; desc++) {
 		probe = desc->li.spd_probe;
+#ifdef __arm__
+		sdt_patch_callsite(probe, desc, desc->spd_offset +
+		    (uintptr_t)_start);
+#else
 		sdt_patch_callsite(probe, desc, desc->spd_offset +
 		    (uintptr_t)btext);
+#endif
 	}
 
 	/*
