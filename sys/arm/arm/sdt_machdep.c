@@ -1,5 +1,5 @@
 /*-
- * Copyright 2015 Mark Johnston <markj@FreeBSD.org>
+ * Copyright (c) 2016 Mark Johnston <markj@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,8 +27,17 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/systm.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
+
+#include <machine/cpu.h>
+
+#define	ARM_OPC_B	0xea
+#define	ARM_OPC_BL	0xeb
+
+#define	ARM_NOP		0xe1a00000 /* mov r0, r0 */
+#define	ARM_MOV_PC_LR	0xe1a0f00e /* mov pc, lr */
 
 /*
  * Defined by sdtstubs.sh at compile-time.
@@ -36,9 +45,31 @@ __FBSDID("$FreeBSD$");
 void	_sdt_probe_stub(void);
 
 uint64_t
-sdt_md_patch_callsite(struct sdt_probe *probe __unused,
-    uint64_t offset __unused, bool reloc __unused)
+sdt_md_patch_callsite(struct sdt_probe *probe, uint64_t offset, bool reloc)
 {
+	uint32_t *callinstr, newinstr;
+	uint8_t opcode;
 
-	return (0);
+	callinstr = (uint32_t *)(uintptr_t)offset;
+	opcode = (*callinstr & 0xff000000) >> 24;
+	if (opcode != ARM_OPC_B && opcode != ARM_OPC_BL) {
+		printf("sdt: opcode mismatch (0x%x) for %s:::%s@%p\n",
+		    opcode, probe->prov->name, probe->name,
+		    (void *)(uintptr_t)offset);
+		return (0);
+	}
+
+	/* XXX check the branch target */
+	switch (opcode) {
+	case ARM_OPC_B:
+		newinstr = ARM_MOV_PC_LR;
+		break;
+	case ARM_OPC_BL:
+		newinstr = ARM_NOP;
+		break;
+	}
+
+	*callinstr = newinstr;
+	icache_sync((vm_offset_t)callinstr, sizeof(*callinstr));
+	return (offset);
 }
