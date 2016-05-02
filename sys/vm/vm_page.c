@@ -3019,6 +3019,10 @@ void
 vm_page_free_toq(vm_page_t m)
 {
 
+#ifndef VM_PAGE_CACHE
+	MPASS((m->flags & PG_CACHED) == 0);
+#endif
+
 	if ((m->oflags & VPO_UNMANAGED) == 0) {
 		vm_page_lock_assert(m, MA_OWNED);
 		KASSERT(!pmap_page_is_mapped(m),
