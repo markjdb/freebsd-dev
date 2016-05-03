@@ -2354,6 +2354,8 @@ zalloc_start:
 	/* We are no longer associated with this CPU. */
 	critical_exit();
 
+	zone->uz_bktcachemisses++;
+
 	/*
 	 * We bump the uz count when the cache size is insufficient to
 	 * handle the working set.

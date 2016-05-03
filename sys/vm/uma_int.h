@@ -296,6 +296,7 @@ struct uma_zone {
 	int64_t		uz_bktallocs;	/* Items alloced from bucket cache */
 	int64_t		uz_bktset;	/* Bucket cache WS this period */
 	int64_t		uz_bktsetavg;	/* Bucket cache working set average */
+	uint64_t	uz_bktcachemisses; /* Number of bucket cache misses */
 	uint16_t	uz_count;	/* Amount of items in a full bucket */
 	uint16_t	uz_count_min;	/* Minimal amount of items there */
 
