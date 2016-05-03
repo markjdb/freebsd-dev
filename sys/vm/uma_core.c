@@ -2129,6 +2129,7 @@ uma_zalloc_arg(uma_zone_t zone, void *udata, int flags)
 	 * the current cache; when we re-acquire the critical section, we
 	 * must detect and handle migration if it has occurred.
 	 */
+zalloc_restart:
 	critical_enter();
 	cpu = curcpu;
 	cache = &zone->uz_cpu[cpu];
@@ -2257,12 +2258,21 @@ zalloc_start:
 		 * initialized bucket to make this less likely or claim
 		 * the memory directly.
 		 */
-		if (cache->uc_allocbucket == NULL)
+		if (cache->uc_allocbucket == NULL) {
 			cache->uc_allocbucket = bucket;
-		else
+			ZONE_UNLOCK(zone);
+			goto zalloc_start;
+		} else if ((zone->uz_flags & UMA_ZONE_NOBUCKETCACHE) == 0) {
 			LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
-		ZONE_UNLOCK(zone);
-		goto zalloc_start;
+			ZONE_UNLOCK(zone);
+			goto zalloc_start;
+		} else {
+			critical_exit();
+			ZONE_UNLOCK(zone);
+			bucket_drain(zone, bucket);
+			bucket_free(zone, bucket, udata);
+			goto zalloc_restart;
+		}
 	}
 
 	/*
@@ -2739,6 +2749,13 @@ zfree_start:
 	/* We are no longer associated with this CPU. */
 	critical_exit();
 
+	/*
+	 * We bump the uz count when the cache size is insufficient to
+	 * handle the working set.
+	 */
+	if (lockfail && zone->uz_count < BUCKET_MAX)
+		zone->uz_count++;
+
 	/* Can we throw this on the zone full list? */
 	if (bucket != NULL) {
 #ifdef UMA_DEBUG_ALLOC
@@ -2747,16 +2764,21 @@ zfree_start:
 		/* ub_cnt is pointing to the last free item */
 		KASSERT(bucket->ub_cnt != 0,
 		    ("uma_zfree: Attempting to insert an empty bucket onto the full list.\n"));
-		LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+		if ((zone->uz_flags & UMA_ZONE_NOBUCKETCACHE) == 0) {
+			LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+			ZONE_UNLOCK(zone);
+		} else {
+			/*
+			 * Free the bucket instead of reusing it so that per-CPU
+			 * caches are properly sized.
+			 */
+			ZONE_UNLOCK(zone);
+			bucket_drain(zone, bucket);
+			bucket_free(zone, bucket, udata);
+		}
+	} else {
+		ZONE_UNLOCK(zone);
 	}
-
-	/*
-	 * We bump the uz count when the cache size is insufficient to
-	 * handle the working set.
-	 */
-	if (lockfail && zone->uz_count < BUCKET_MAX)
-		zone->uz_count++;
-	ZONE_UNLOCK(zone);
 
 #ifdef UMA_DEBUG_ALLOC
 	printf("uma_zfree: Allocating new free bucket.\n");
