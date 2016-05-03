@@ -262,7 +262,7 @@ uma_zone_t uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 					 * information in the vm_page.
 					 */
 #define	UMA_ZONE_SECONDARY	0x0200	/* Zone is a Secondary Zone */
-/*				0x0400	   Unused */
+#define	UMA_ZONE_NOBUCKETCACHE	0x0400	/* Zone does not cache buckets */
 #define	UMA_ZONE_MAXBUCKET	0x0800	/* Use largest buckets */
 #define	UMA_ZONE_CACHESPREAD	0x1000	/*
 					 * Spread memory start locations across
