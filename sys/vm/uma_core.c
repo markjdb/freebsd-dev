@@ -293,6 +293,11 @@ SYSCTL_INT(_vm, OID_AUTO, uma_reclaim_wakeups, CTLFLAG_RW,
     &uma_reclaim_wakeups, 0,
     "Incremented when the UMA reclaim worker thread is signalled");
 
+static int uma_reclaim_ws = 1;
+SYSCTL_INT(_vm, OID_AUTO, uma_reclaim_ws, CTLFLAG_RW,
+    &uma_reclaim_ws, 0,
+    "Only reclaim zone items in excess of the zone's working set");
+
 /*
  * This routine checks to see whether or not it's safe to enable buckets.
  */
@@ -877,7 +882,8 @@ bucket_cache_drain(uma_zone_t zone)
 	LIST_SWAP(&bh, &zone->uz_buckets, uma_bucket, ub_link);
 	prev = NULL;
 	zone->uz_bktcount = 0;
-	while ((bucket = LIST_FIRST(&bh)) != NULL && skip > 0) {
+	while ((bucket = LIST_FIRST(&bh)) != NULL &&
+	    (!uma_reclaim_ws || skip > 0)) {
 		skip -= bucket->ub_cnt;
 		LIST_REMOVE(bucket, ub_link);
 		if (prev != NULL)
