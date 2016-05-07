@@ -4289,6 +4289,19 @@ bus_generic_get_domain(device_t dev, device_t child, int *domain)
 	return (ENOENT);
 }
 
+/**
+ * @brief Helper function for implementing BUS_RESCAN().
+ *
+ * This null implementation of BUS_RESCAN() always fails to indicate
+ * the bus does not support rescanning.
+ */
+int
+bus_null_rescan(device_t dev)
+{
+
+	return (ENXIO);
+}
+
 /*
  * Some convenience functions to make it easier for drivers to use the
  * resource-management functions.  All these really do is hide the
@@ -4686,7 +4699,7 @@ root_setup_intr(device_t dev, device_t child, struct resource *irq, int flags,
 }
 
 /*
- * If we get here, assume that the device is permanant and really is
+ * If we get here, assume that the device is permanent and really is
  * present in the system.  Removable bus drivers are expected to intercept
  * this call long before it gets here.  We return -1 so that drivers that
  * really care can check vs -1 or some ERRNO returned higher in the food
@@ -5173,7 +5186,7 @@ find_device(struct devreq *req, device_t *devp)
 }
 
 static bool
-driver_exists(struct device *bus, const char *driver)
+driver_exists(device_t bus, const char *driver)
 {
 	devclass_t dc;
 
