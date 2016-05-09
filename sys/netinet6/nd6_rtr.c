@@ -82,7 +82,6 @@ static struct nd_pfxrouter *find_pfxlist_reachable_router(struct nd_prefix *);
 static void defrouter_delreq(struct nd_defrouter *);
 static void nd6_rtmsg(int, struct rtentry *);
 
-static int in6_init_prefix_ltimes(struct nd_prefix *);
 static void in6_init_address_ltimes(struct nd_prefix *,
     struct in6_addrlifetime *);
 
@@ -1007,9 +1006,8 @@ int
 nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
     struct nd_prefix **newp)
 {
-	struct nd_prefix *new = NULL;
-	int error = 0;
 	char ip6buf[INET6_ADDRSTRLEN];
+	struct nd_prefix *new;
 
 	new = malloc(sizeof(*new), M_IP6NDP, M_NOWAIT | M_ZERO);
 	if (new == NULL)
@@ -1020,10 +1018,6 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
 	new->ndpr_vltime = pr->ndpr_vltime;
 	new->ndpr_pltime = pr->ndpr_pltime;
 	new->ndpr_flags = pr->ndpr_flags;
-	if ((error = in6_init_prefix_ltimes(new)) != 0) {
-		free(new, M_IP6NDP);
-		return (error);
-	}
 	new->ndpr_lastupdate = time_uptime;
 
 	/* initialization */
@@ -1161,7 +1155,6 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 		if (new->ndpr_raf_onlink) {
 			pr->ndpr_vltime = new->ndpr_vltime;
 			pr->ndpr_pltime = new->ndpr_pltime;
-			(void)in6_init_prefix_ltimes(pr); /* XXX error case? */
 			pr->ndpr_lastupdate = time_uptime;
 		}
 
@@ -1208,7 +1201,6 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 		if (pr->ndpr_raf_onlink == 0) {
 			pr->ndpr_vltime = 0;
 			pr->ndpr_pltime = 0;
-			in6_init_prefix_ltimes(pr);
 		}
 	}
 
@@ -2183,21 +2175,6 @@ in6_tmpifadd(const struct in6_ifaddr *ia0, int forcegen, int delay)
 	pfxlist_onlink_check();
 
 	return (0);
-}
-
-static int
-in6_init_prefix_ltimes(struct nd_prefix *ndpr)
-{
-	if (ndpr->ndpr_pltime == ND6_INFINITE_LIFETIME)
-		ndpr->ndpr_preferred = 0;
-	else
-		ndpr->ndpr_preferred = time_uptime + ndpr->ndpr_pltime;
-	if (ndpr->ndpr_vltime == ND6_INFINITE_LIFETIME)
-		ndpr->ndpr_expire = 0;
-	else
-		ndpr->ndpr_expire = time_uptime + ndpr->ndpr_vltime;
-
-	return 0;
 }
 
 static void

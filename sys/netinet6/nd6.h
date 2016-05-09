@@ -266,8 +266,6 @@ struct nd_prefix {
 	u_int32_t ndpr_vltime;	/* advertised valid lifetime */
 	u_int32_t ndpr_pltime;	/* advertised preferred lifetime */
 
-	time_t ndpr_expire;	/* expiration time of the prefix */
-	time_t ndpr_preferred;	/* preferred time of the prefix */
 	time_t ndpr_lastupdate; /* reception time of last advertisement */
 
 	struct prf_ra ndpr_flags;
