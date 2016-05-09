@@ -1148,14 +1148,7 @@ nd6_purge(struct ifnet *ifp)
 	ND6_WLOCK();
 	LIST_FOREACH_SAFE(pr, &V_nd_prefix, ndpr_entry, npr) {
 		if (pr->ndpr_ifp == ifp) {
-			/*
-			 * Because if_detach() does *not* release prefixes
-			 * while purging addresses the reference count will
-			 * still be above zero. We therefore reset it to
-			 * make sure that the prefix really gets purged.
-			 */
-			pr->ndpr_refcnt = 0;
-
+			MPASS(pr->ndpr_refcnt == 0);
 			nd6_prefix_unlink(pr, &prl);
 		}
 	}

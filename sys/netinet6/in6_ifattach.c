@@ -772,9 +772,6 @@ in6_ifdetach(struct ifnet *ifp)
 	if (ifp->if_afdata[AF_INET6] == NULL)
 		return;
 
-	/* remove neighbor management table */
-	nd6_purge(ifp);
-
 	/*
 	 * nuke any of IPv6 addresses we have
 	 * XXX: all addresses should be already removed
@@ -790,14 +787,7 @@ in6_ifdetach(struct ifnet *ifp)
 	/* leave from all multicast groups joined */
 	in6_purgemaddrs(ifp);
 
-	/*
-	 * remove neighbor management table.  we call it twice just to make
-	 * sure we nuke everything.  maybe we need just one call.
-	 * XXX: since the first call did not release addresses, some prefixes
-	 * might remain.  We should call nd6_purge() again to release the
-	 * prefixes after removing all addresses above.
-	 * (Or can we just delay calling nd6_purge until at this point?)
-	 */
+	/* Remove the neighbor management table for this ifnet. */
 	nd6_purge(ifp);
 }
 

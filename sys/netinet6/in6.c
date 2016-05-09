@@ -1322,7 +1322,7 @@ static void
 in6_unlink_ifa(struct in6_ifaddr *ia, struct ifnet *ifp)
 {
 	char ip6buf[INET6_ADDRSTRLEN];
-	int remove_lle;
+	int autoconf, remove_lle;
 
 	IF_ADDR_WLOCK(ifp);
 	TAILQ_REMOVE(&ifp->if_addrhead, &ia->ia_ifa, ifa_link);
@@ -1343,11 +1343,13 @@ in6_unlink_ifa(struct in6_ifaddr *ia, struct ifnet *ifp)
 	 * Release the reference to the base prefix.  There should be a
 	 * positive reference.
 	 */
+	autoconf = (ia->ia_flags & IN6_IFF_AUTOCONF) != 0;
 	remove_lle = 0;
 	if (ia->ia6_ndpr == NULL) {
-		nd6log((LOG_NOTICE,
-		    "in6_unlink_ifa: autoconf'ed address "
-		    "%s has no prefix\n", ip6_sprintf(ip6buf, IA6_IN6(ia))));
+		if (autoconf)
+			nd6log((LOG_NOTICE,
+			    "in6_unlink_ifa: autoconf addr %s has no prefix\n",
+			    ip6_sprintf(ip6buf, IA6_IN6(ia))));
 	} else {
 		ia->ia6_ndpr->ndpr_refcnt--;
 		/* Do not delete lles within prefix if refcont != 0 */
@@ -1363,9 +1365,8 @@ in6_unlink_ifa(struct in6_ifaddr *ia, struct ifnet *ifp)
 	 * pfxlist_onlink_check() since the release might affect the status of
 	 * other (detached) addresses.
 	 */
-	if ((ia->ia6_flags & IN6_IFF_AUTOCONF)) {
+	if (autoconf)
 		pfxlist_onlink_check();
-	}
 	ifa_free(&ia->ia_ifa);			/* in6_ifaddrhead */
 }
 

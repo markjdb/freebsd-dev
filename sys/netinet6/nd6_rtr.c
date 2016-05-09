@@ -1009,6 +1009,9 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
 	char ip6buf[INET6_ADDRSTRLEN];
 	struct nd_prefix *new;
 
+	KASSERT(pr->ndpr_vltime > 0,
+	    ("invalid lifetime for new prefix %p", pr));
+
 	new = malloc(sizeof(*new), M_IP6NDP, M_NOWAIT | M_ZERO);
 	if (new == NULL)
 		return (ENOMEM);
@@ -1027,7 +1030,9 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
 	IN6_MASK_ADDR(&new->ndpr_prefix.sin6_addr, &new->ndpr_mask);
 
 	/* add the prefix to the global prefix list */
-	nd6_prefix_link(new);
+	ND6_WLOCK();
+	LIST_INSERT_HEAD(&V_nd_prefix, new, ndpr_entry);
+	ND6_WUNLOCK();
 
 	/* ND_OPT_PI_FLAG_ONLINK processing */
 	if (new->ndpr_raf_onlink) {
@@ -1047,15 +1052,6 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
 	if (newp != NULL)
 		*newp = new;
 	return (0);
-}
-
-void
-nd6_prefix_link(struct nd_prefix *pr)
-{
-
-	ND6_WLOCK();
-	LIST_INSERT_HEAD(&V_nd_prefix, pr, ndpr_entry);
-	ND6_WUNLOCK();
 }
 
 void
@@ -1781,12 +1777,12 @@ nd6_prefix_onlink(struct nd_prefix *pr)
 
 		if (opr->ndpr_plen == pr->ndpr_plen &&
 		    in6_are_prefix_equal(&pr->ndpr_prefix.sin6_addr,
-		    &opr->ndpr_prefix.sin6_addr, pr->ndpr_plen))
-			break;
+		    &opr->ndpr_prefix.sin6_addr, pr->ndpr_plen)) {
+			ND6_RUNLOCK();
+			return (0);
+		}
 	}
 	ND6_RUNLOCK();
-	if (opr != NULL)
-		return (0);
 
 	/*
 	 * We prefer link-local addresses as the associated interface address.

@@ -265,15 +265,14 @@ struct nd_prefix {
 
 	u_int32_t ndpr_vltime;	/* advertised valid lifetime */
 	u_int32_t ndpr_pltime;	/* advertised preferred lifetime */
+	time_t ndpr_lastupdate;	/* reception time of last advertisement */
 
-	time_t ndpr_lastupdate; /* reception time of last advertisement */
-
-	struct prf_ra ndpr_flags;
+	struct prf_ra ndpr_flags; /* RA prefix information flags */
 	u_int32_t ndpr_stateflags; /* actual state flags */
 	/* list of routers that advertise the prefix: */
 	LIST_HEAD(pr_rtrhead, nd_pfxrouter) ndpr_advrtrs;
-	u_char	ndpr_plen;
-	int	ndpr_refcnt;	/* reference couter from addresses */
+	u_char	ndpr_plen;	/* prefix length */
+	int	ndpr_refcnt;	/* reference counter from addresses */
 };
 
 #define ndpr_raf		ndpr_flags
@@ -460,7 +459,6 @@ void defrouter_del(struct nd_defrouter *);
 int nd6_prelist_add(struct nd_prefixctl *, struct nd_defrouter *,
     struct nd_prefix **);
 void nd6_prelist_remove(struct nd_prefix *);
-void nd6_prefix_link(struct nd_prefix *);
 void nd6_prefix_unlink(struct nd_prefix *, struct nd_prefixhead *);
 void pfxlist_onlink_check(void);
 struct nd_defrouter *defrouter_lookup(struct in6_addr *, struct ifnet *);
