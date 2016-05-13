@@ -1409,10 +1409,8 @@ fasttrap_pid_probe(struct reg *rp)
 			ret = fasttrap_sulword((void *)rp->r_rsp, rp->r_rbp);
 		} else {
 #endif
-#ifdef __i386__
 			rp->r_rsp -= sizeof (uint32_t);
 			ret = fasttrap_suword32((void *)rp->r_rsp, rp->r_rbp);
-#endif
 #ifdef __amd64
 		}
 #endif
