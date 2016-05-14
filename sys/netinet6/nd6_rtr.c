@@ -1056,7 +1056,7 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
 }
 
 void
-nd6_prelist_remove(struct nd_prefix *pr)
+nd6_prefix_del(struct nd_prefix *pr)
 {
 	char ip6buf[INET6_ADDRSTRLEN];
 	struct nd_pfxrouter *pfr, *next;
@@ -1065,6 +1065,7 @@ nd6_prelist_remove(struct nd_prefix *pr)
 	ND6_UNLOCK_ASSERT();
 
 	/* make sure to invalidate the prefix until it is really freed. */
+	/* XXX this is incorrect without the nd6 lock held */
 	pr->ndpr_vltime = 0;
 	pr->ndpr_pltime = 0;
 
