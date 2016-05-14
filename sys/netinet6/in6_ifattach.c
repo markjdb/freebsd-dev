@@ -529,18 +529,16 @@ in6_ifattach_linklocal(struct ifnet *ifp, struct ifnet *altifp)
 	pr0.ndpr_vltime = ND6_INFINITE_LIFETIME;
 	pr0.ndpr_pltime = ND6_INFINITE_LIFETIME;
 	/*
-	 * Since there is no other link-local addresses, nd6_prefix_lookup()
-	 * probably returns NULL.  However, we cannot always expect the result.
+	 * Since there are no other link-local addresses, this prefix shouldn't
+	 * already exist.  However, we cannot always expect this result.
 	 * For example, if we first remove the (only) existing link-local
 	 * address, and then reconfigure another one, the prefix is still
 	 * valid with referring to the old link-local address.
 	 */
-	if (nd6_prefix_lookup(&pr0) == NULL) {
-		if ((error = nd6_prelist_add(&pr0, NULL, NULL)) != 0)
-			return (error);
-	}
-
-	return 0;
+	error = nd6_prelist_add(&pr0, NULL, NULL);
+	if (error == EEXIST)
+		error = 0;
+	return (error);
 }
 
 /*
