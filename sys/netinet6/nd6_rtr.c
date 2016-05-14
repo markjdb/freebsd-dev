@@ -132,8 +132,8 @@ nd6_rs_input(struct mbuf *m, int off, int icmp6len)
 	char ip6bufs[INET6_ADDRSTRLEN], ip6bufd[INET6_ADDRSTRLEN];
 
 	/*
-	 * Accept RS only when V_ip6_forwarding=1 and the interface has
-	 * no ND6_IFF_ACCEPT_RTADV.
+	 * Accept RS only when V_ip6_forwarding != 0 and the interface has
+	 * ND6_IFF_ACCEPT_RTADV set.
 	 */
 	if (!V_ip6_forwarding || ND_IFINFO(ifp)->flags & ND6_IFF_ACCEPT_RTADV)
 		goto freeit;
