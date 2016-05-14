@@ -1062,6 +1062,7 @@ nd6_prefix_del(struct nd_prefix *pr)
 	int e;
 
 	ND6_UNLOCK_ASSERT();
+	KASSERT(pr->ndpr_refcnt == 0, ("prefix %p has non-zero refcount", pr));
 
 	/* make sure to invalidate the prefix until it is really freed. */
 	/* XXX this is incorrect without the nd6 lock held */
@@ -1082,19 +1083,7 @@ nd6_prefix_del(struct nd_prefix *pr)
 		/* what should we do? */
 	}
 
-	if (pr->ndpr_refcnt > 0) {
-		nd6log((LOG_NOTICE,
-		    "prelist_remove: attempted to remove busy prefix %s/%d\n",
-		    ip6_sprintf(ip6buf, &pr->ndpr_prefix.sin6_addr),
-		    pr->ndpr_plen));
-		/* XXX this should be a kassert...? */
-		return;
-	}
-
 	ND6_WLOCK();
-	/* This list can be the global list or one local to the caller. */
-	LIST_REMOVE(pr, ndpr_entry);
-	/* Release references on routers that advertise this prefix. */
 	LIST_FOREACH_SAFE(pfr, &pr->ndpr_advrtrs, pfr_entry, next) {
 		pfxrtr_del(pfr);
 	}

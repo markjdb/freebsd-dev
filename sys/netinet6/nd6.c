@@ -1027,6 +1027,7 @@ nd6_timer(void *arg)
 		 * Address and prefix expiration are separate. Never perform
 		 * in6_purgeaddr() here.
 		 */
+		LIST_REMOVE(pr, ndpr_entry);
 		nd6_prefix_del(pr);
 	}
 	CURVNET_RESTORE();
@@ -1155,6 +1156,7 @@ nd6_purge(struct ifnet *ifp)
 	ND6_WUNLOCK();
 
 	while ((pr = LIST_FIRST(&prl)) != NULL) {
+		LIST_REMOVE(pr, ndpr_entry);
 		nd6_prefix_del(pr);
 	}
 
@@ -1740,16 +1742,14 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 
 		while ((pr = LIST_FIRST(&prl)) != NULL) {
 			struct in6_ifaddr *ia, *ia_next;
-			/* do we really have to remove addresses as well? */
 			/* XXXRW: in6_ifaddrhead locking. */
 			TAILQ_FOREACH_SAFE(ia, &V_in6_ifaddrhead, ia_link,
 			    ia_next) {
-				if ((ia->ia6_flags & IN6_IFF_AUTOCONF) == 0)
-					continue;
-
-				if (ia->ia6_ndpr == pr)
+				if ((ia->ia6_flags & IN6_IFF_AUTOCONF) != 0 &&
+				    ia->ia6_ndpr == pr)
 					in6_purgeaddr(&ia->ia_ifa);
 			}
+			LIST_REMOVE(pr, ndpr_entry);
 			nd6_prefix_del(pr);
 		}
 		break;
