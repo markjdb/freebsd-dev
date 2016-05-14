@@ -1164,7 +1164,7 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 			pr->ndpr_lastupdate = time_uptime;
 		}
 
-		if (new->ndpr_raf_onlink &&
+		if (new->ndpr_raf_onlink && new->ndpr_vltime != 0 &&
 		    (pr->ndpr_stateflags & NDPRF_ONLINK) == 0) {
 			int e;
 
