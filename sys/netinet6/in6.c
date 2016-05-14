@@ -658,17 +658,16 @@ in6_control(struct socket *so, u_long cmd, caddr_t data,
 		pr0.ndpr_vltime = ifra->ifra_lifetime.ia6t_vltime;
 		pr0.ndpr_pltime = ifra->ifra_lifetime.ia6t_pltime;
 
-		/* add the prefix if not yet. */
-		if ((pr = nd6_prefix_lookup(&pr0)) == NULL) {
-			/*
-			 * nd6_prelist_add will install the corresponding
-			 * interface route.
-			 */
-			if ((error = nd6_prelist_add(&pr0, NULL, &pr)) != 0) {
-				if (carp_attached)
-					(*carp_detach_p)(&ia->ia_ifa);
-				goto out;
-			}
+		/*
+		 * nd6_prelist_add() will install the corresponding interface
+		 * route.
+		 */
+		pr = NULL;
+		error = nd6_prelist_add(&pr0, NULL, &pr);
+		if (error != 0 && error != EEXIST) {
+			if (carp_attached)
+				(*carp_detach_p)(&ia->ia_ifa);
+			goto out;
 		}
 
 		/* relate the address to the prefix */

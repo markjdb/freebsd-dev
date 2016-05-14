@@ -968,21 +968,30 @@ pfxrtr_del(struct nd_pfxrouter *pfr)
 	free(pfr, M_IP6NDP);
 }
 
+static struct nd_prefix *
+nd6_prefix_lookup_locked(struct nd_prefixctl *key)
+{
+	struct nd_prefix *search;
+
+	ND6_LOCK_ASSERT();
+	LIST_FOREACH(search, &V_nd_prefix, ndpr_entry) {
+		if (key->ndpr_ifp == search->ndpr_ifp &&
+		    key->ndpr_plen == search->ndpr_plen &&
+		    in6_are_prefix_equal(&key->ndpr_prefix.sin6_addr,
+		    &search->ndpr_prefix.sin6_addr, key->ndpr_plen)) {
+			break;
+		}
+	}
+	return (search);
+}
+
 struct nd_prefix *
 nd6_prefix_lookup(struct nd_prefixctl *key)
 {
 	struct nd_prefix *search;
 
 	ND6_RLOCK();
-	LIST_FOREACH(search, &V_nd_prefix, ndpr_entry) {
-		if (key->ndpr_ifp == search->ndpr_ifp &&
-		    key->ndpr_plen == search->ndpr_plen &&
-		    in6_are_prefix_equal(&key->ndpr_prefix.sin6_addr,
-		    &search->ndpr_prefix.sin6_addr, key->ndpr_plen)) {
-			/* XXX should acquire a ref. */
-			break;
-		}
-	}
+	search = nd6_prefix_lookup_locked(key);
 	ND6_RUNLOCK();
 	return (search);
 }
@@ -1002,12 +1011,16 @@ nd6_prefix_unlink(struct nd_prefix *pr, struct nd_prefixhead *prl)
 		LIST_INSERT_HEAD(prl, pr, ndpr_entry);
 }
 
+/*
+ * Add a prefix to the global prefix list. Returns EEXIST if a matching prefix
+ * is already in the list.
+ */
 int
 nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
     struct nd_prefix **newp)
 {
 	char ip6buf[INET6_ADDRSTRLEN];
-	struct nd_prefix *new;
+	struct nd_prefix *old, *new;
 
 	KASSERT(pr->ndpr_vltime > 0,
 	    ("invalid lifetime for new prefix %p", pr));
@@ -1029,8 +1042,15 @@ nd6_prelist_add(struct nd_prefixctl *pr, struct nd_defrouter *dr,
 	/* make prefix in the canonical form */
 	IN6_MASK_ADDR(&new->ndpr_prefix.sin6_addr, &new->ndpr_mask);
 
-	/* add the prefix to the global prefix list */
+	/* add the prefix to the global prefix list if not already present */
 	ND6_WLOCK();
+	if ((old = nd6_prefix_lookup_locked(pr)) != NULL) {
+		ND6_WUNLOCK();
+		free(new, M_IP6NDP);
+		if (newp != NULL)
+			*newp = old;
+		return (EEXIST);
+	}
 	LIST_INSERT_HEAD(&V_nd_prefix, new, ndpr_entry);
 	ND6_WUNLOCK();
 
