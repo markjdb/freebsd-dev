@@ -1027,7 +1027,7 @@ nd6_timer(void *arg)
 		 * Address and prefix expiration are separate. Never perform
 		 * in6_purgeaddr() here.
 		 */
-		nd6_prelist_remove(pr);
+		nd6_prefix_del(pr);
 	}
 	CURVNET_RESTORE();
 }
@@ -1155,7 +1155,7 @@ nd6_purge(struct ifnet *ifp)
 	ND6_WUNLOCK();
 
 	while ((pr = LIST_FIRST(&prl)) != NULL) {
-		nd6_prelist_remove(pr);
+		nd6_prefix_del(pr);
 	}
 
 	/* cancel default outgoing interface setting */
@@ -1750,7 +1750,7 @@ nd6_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp)
 				if (ia->ia6_ndpr == pr)
 					in6_purgeaddr(&ia->ia_ifa);
 			}
-			nd6_prelist_remove(pr);
+			nd6_prefix_del(pr);
 		}
 		break;
 	}

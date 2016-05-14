@@ -458,7 +458,7 @@ void defrouter_unlink(struct nd_defrouter *, struct nd_drhead *);
 void defrouter_del(struct nd_defrouter *);
 int nd6_prelist_add(struct nd_prefixctl *, struct nd_defrouter *,
     struct nd_prefix **);
-void nd6_prelist_remove(struct nd_prefix *);
+void nd6_prefix_del(struct nd_prefix *);
 void nd6_prefix_unlink(struct nd_prefix *, struct nd_prefixhead *);
 void pfxlist_onlink_check(void);
 struct nd_defrouter *defrouter_lookup(struct in6_addr *, struct ifnet *);

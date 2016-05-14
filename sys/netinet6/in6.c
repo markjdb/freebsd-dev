@@ -739,7 +739,7 @@ aifaddr_out:
 		pr = ia->ia6_ndpr;
 		in6_purgeaddr(&ia->ia_ifa);
 		if (pr != NULL && pr->ndpr_refcnt == 0)
-			nd6_prelist_remove(pr);
+			nd6_prefix_del(pr);
 		EVENTHANDLER_INVOKE(ifaddr_event, ifp);
 		break;
 	}
