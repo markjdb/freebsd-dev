@@ -15,19 +15,17 @@ __FBSDID("$FreeBSD$");
 #define	AMD64_NOP	0x90
 
 int
-sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t rval)
+sdt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 {
 	struct sdt_invoprec *rec;
-	struct trapframe *tf;
 
 	rec = sdt_lookup_site(addr);
 	if (rec == NULL)
 		return (0);
 
-	tf = (struct trapframe *)(stack + 1);
 #ifdef __amd64__
-	dtrace_probe(rec->sr_id, tf->tf_rdi, tf->tf_rsi, tf->tf_rdx, tf->tf_rcx,
-	    tf->tf_r8);
+	dtrace_probe(rec->sr_id, frame->tf_rdi, frame->tf_rsi, frame->tf_rdx,
+	    frame->tf_rcx, frame->tf_r8);
 #else
 	dtrace_probe(rec->sr_id, stack[0], stack[1], stack[2], stack[3],
 	    stack[4]);

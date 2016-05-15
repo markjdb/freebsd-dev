@@ -1,6 +1,7 @@
 #ifndef _SDT_H_
 #define	_SDT_H_
 
+struct trapframe;
 struct sdt_probedesc;
 
 /*
@@ -17,7 +18,7 @@ struct sdt_invoprec {
 };
 
 struct sdt_invoprec *sdt_lookup_site(uint64_t);
-int	sdt_invop(uintptr_t, uintptr_t *, uintptr_t);
+int	sdt_invop(uintptr_t, struct trapframe *, uintptr_t);
 void	sdt_probe_enable(struct sdt_probedesc *);
 void	sdt_probe_disable(struct sdt_probedesc *);
 
