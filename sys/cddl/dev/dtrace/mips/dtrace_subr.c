@@ -249,6 +249,11 @@ dtrace_invop_start(struct trapframe *frame)
 	int invop;
 
 	invop = dtrace_invop(frame->pc, frame, frame->pc);
+	if (invop == DTRACE_INVOP_NOP) {
+		frame->pc += INSN_SIZE;
+		return (0);
+	}
+
 	offs = (invop & LDSD_DATA_MASK);
 	sp = (register_t *)((uint8_t *)frame->sp + offs);
 
