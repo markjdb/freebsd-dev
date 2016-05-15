@@ -12,7 +12,7 @@ __FBSDID("$FreeBSD$");
 #include "sdt.h"
 
 int
-sdt_invop(uintptr_t addr, uintptr_t *stack, uintptr_t rval)
+sdt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 {
 
 	return (DTRACE_INVOP_NOP);
