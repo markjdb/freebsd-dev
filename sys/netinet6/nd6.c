@@ -2656,7 +2656,7 @@ nd6_sysctl_prlist(SYSCTL_HANDLER_ARGS)
 			else
 				p.expire = maxexpire;
 		}
-		p.refcnt = pr->ndpr_refcnt;
+		p.refcnt = pr->ndpr_addr_refs;
 		p.flags = pr->ndpr_stateflags;
 		p.advrtrs = 0;
 		LIST_FOREACH(pfr, &pr->ndpr_advrtrs, pfr_entry)

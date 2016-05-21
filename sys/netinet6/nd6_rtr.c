@@ -1081,7 +1081,7 @@ nd6_prefix_del(struct nd_prefix *pr)
 	struct nd_pfxrouter *pfr, *next;
 	int e;
 
-	KASSERT(pr->ndpr_refcnt == 0, ("prefix %p has non-zero refcount", pr));
+	KASSERT(pr->ndpr_addr_refs == 0, ("prefix %p has non-zero refcount", pr));
 	ND6_UNLOCK_ASSERT();
 
 	/*
@@ -1395,7 +1395,7 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 			/*
 			 * note that we should use pr (not new) for reference.
 			 */
-			pr->ndpr_refcnt++;
+			refcount_acquire(&pr->ndpr_addr_refs);
 			ia6->ia6_ndpr = pr;
 
 			/*
@@ -2162,7 +2162,7 @@ in6_tmpifadd(const struct in6_ifaddr *ia0, int forcegen, int delay)
 		return (EINVAL); /* XXX */
 	}
 	newia->ia6_ndpr = ia0->ia6_ndpr;
-	newia->ia6_ndpr->ndpr_refcnt++;
+	refcount_acquire(&newia->ia6_ndpr->ndpr_addr_refs);
 	ifa_free(&newia->ia_ifa);
 
 	/*
