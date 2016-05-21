@@ -1081,13 +1081,8 @@ nd6_prefix_del(struct nd_prefix *pr)
 	struct nd_pfxrouter *pfr, *next;
 	int e;
 
-	ND6_UNLOCK_ASSERT();
 	KASSERT(pr->ndpr_refcnt == 0, ("prefix %p has non-zero refcount", pr));
-
-	/* make sure to invalidate the prefix until it is really freed. */
-	/* XXX this is incorrect without the nd6 lock held */
-	pr->ndpr_vltime = 0;
-	pr->ndpr_pltime = 0;
+	ND6_UNLOCK_ASSERT();
 
 	/*
 	 * Though these flags are now meaningless, we'd rather keep the value
