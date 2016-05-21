@@ -82,8 +82,7 @@ static struct nd_pfxrouter *find_pfxlist_reachable_router(struct nd_prefix *);
 static void defrouter_delreq(struct nd_defrouter *);
 static void nd6_rtmsg(int, struct rtentry *);
 
-static void in6_init_address_ltimes(struct nd_prefix *,
-    struct in6_addrlifetime *);
+static void in6_init_address_ltimes(struct in6_addrlifetime *);
 
 static int nd6_prefix_onlink(struct nd_prefix *);
 static int nd6_prefix_offlink(struct nd_prefix *);
@@ -1191,23 +1190,12 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 			    new->ndpr_plen, if_name(new->ndpr_ifp), error));
 			goto end; /* we should just give up in this case. */
 		}
-
-		/*
-		 * XXX: from the ND point of view, we can ignore a prefix
-		 * with the on-link bit being zero.  However, we need a
-		 * prefix structure for references from autoconfigured
-		 * addresses.  Thus, we explicitly make sure that the prefix
-		 * itself expires now.
-		 */
-		if (pr->ndpr_raf_onlink == 0) {
-			pr->ndpr_vltime = 0;
-			pr->ndpr_pltime = 0;
-		}
 	}
+
+	MPASS(pr != NULL);
 
 	/*
 	 * Address autoconfiguration based on Section 5.5.3 of RFC 2462.
-	 * Note that pr must be non NULL at this point.
 	 */
 
 	/* 5.5.3 (a). Ignore the prefix without the A bit set. */
@@ -1317,7 +1305,7 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 		/* The 2 hour rule is not imposed for preferred lifetime. */
 		lt6_tmp.ia6t_pltime = new->ndpr_pltime;
 
-		in6_init_address_ltimes(pr, &lt6_tmp);
+		in6_init_address_ltimes(&lt6_tmp);
 
 		/*
 		 * We need to treat lifetimes for temporary addresses
@@ -1383,18 +1371,15 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 			    if_name(ifp));
 			goto end;
 		}
-		if (ifidlen + pr->ndpr_plen != 128) {
+		if (ifidlen + new->ndpr_plen != 128) {
 			nd6log((LOG_INFO,
 			    "prelist_update: invalid prefixlen "
 			    "%d for %s, ignored\n",
-			    pr->ndpr_plen, if_name(ifp)));
+			    new->ndpr_plen, if_name(ifp)));
 			goto end;
 		}
 
 		if ((ia6 = in6_ifadd(new, mcast)) != NULL) {
-			/*
-			 * note that we should use pr (not new) for reference.
-			 */
 			refcount_acquire(&pr->ndpr_addr_refs);
 			ia6->ia6_ndpr = pr;
 
@@ -1756,14 +1741,9 @@ nd6_prefix_onlink(struct nd_prefix *pr)
 	int error = 0;
 	char ip6buf[INET6_ADDRSTRLEN];
 
-	/* sanity check */
-	if ((pr->ndpr_stateflags & NDPRF_ONLINK) != 0) {
-		nd6log((LOG_ERR,
-		    "nd6_prefix_onlink: %s/%d is already on-link\n",
-		    ip6_sprintf(ip6buf, &pr->ndpr_prefix.sin6_addr),
-		    pr->ndpr_plen));
-		return (EEXIST);
-	}
+	KASSERT((pr->ndpr_stateflags & NDPRF_ONLINK) == 0,
+	    ("nd6_prefix_onlink: %s/%d is already on-link",
+	    ip6_sprintf(ip6buf, &pr->ndpr_prefix.sin6_addr), pr->ndpr_plen));
 
 	/*
 	 * Add the interface route associated with the prefix.  Before
@@ -2179,7 +2159,7 @@ in6_tmpifadd(const struct in6_ifaddr *ia0, int forcegen, int delay)
 }
 
 static void
-in6_init_address_ltimes(struct nd_prefix *new, struct in6_addrlifetime *lt6)
+in6_init_address_ltimes(struct in6_addrlifetime *lt6)
 {
 	/* init ia6t_expire */
 	if (lt6->ia6t_vltime == ND6_INFINITE_LIFETIME)
