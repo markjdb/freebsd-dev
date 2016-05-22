@@ -939,6 +939,13 @@ pfxrtr_add(struct nd_prefix *pr, struct nd_defrouter *dr)
 
 	ND6_UNLOCK_ASSERT();
 
+	ND6_RLOCK();
+	if (pfxrtr_lookup(pr, dr) != NULL) {
+		ND6_RUNLOCK();
+		return;
+	}
+	ND6_RUNLOCK();
+
 	new = malloc(sizeof(*new), M_IP6NDP, M_NOWAIT | M_ZERO);
 	if (new == NULL)
 		return;
@@ -950,6 +957,9 @@ pfxrtr_add(struct nd_prefix *pr, struct nd_defrouter *dr)
 	if (pfxrtr_lookup(pr, dr) == NULL) {
 		LIST_INSERT_HEAD(&pr->ndpr_advrtrs, new, pfr_entry);
 		check = true;
+	} else {
+		defrouter_rele(dr);
+		free(new, M_IP6NDP);
 	}
 	ND6_WUNLOCK();
 
