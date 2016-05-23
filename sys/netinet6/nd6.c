@@ -1025,9 +1025,14 @@ nd6_timer(void *arg)
 		 * check prefix lifetime.
 		 * since pltime is just for autoconf, pltime processing for
 		 * prefix is not necessary.
+		 *
+		 * Only unlink after all derived addresses have expired. This
+		 * may not occur until two hours after the prefix has expired,
+		 * per section 5.5.3 of RFC 4862.
 		 */
 		if (pr->ndpr_vltime != ND6_INFINITE_LIFETIME &&
-		    time_uptime - pr->ndpr_lastupdate > pr->ndpr_vltime)
+		    time_uptime - pr->ndpr_lastupdate > pr->ndpr_vltime &&
+		    pr->ndpr_addr_refs == 0)
 			nd6_prefix_unlink(pr, &prl);
 	}
 	ND6_WUNLOCK();
