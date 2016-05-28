@@ -51,7 +51,7 @@ typedef struct fbt_probe {
 } fbt_probe_t;
 
 #define	FBTPF_TAIL_CALL		0x01	/* probe site is a tail call */
-#define	FBTPF_TAIL_RET		0x02	/* return from tail call */
+#define	FBTPF_TAIL_CALL_RET	0x02	/* return from tail call trampoline */
 
 struct linker_file;
 struct linker_symval;

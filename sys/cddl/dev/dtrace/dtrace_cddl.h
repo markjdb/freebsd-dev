@@ -86,17 +86,23 @@ typedef struct kdtrace_thread {
 	void		*td_systrace_args; /* syscall probe arguments. */
 
 #ifdef __amd64__
+	/*
+	 * A structure for recording information needed to implement tail call
+	 * return probes.
+	 */
 	struct {
+#define	DTRACE_TAIL_CALL_RECORDS	15
 		union {
-			void	*td_stack_arg;
-			uintptr_t td_stack_retaddr;
-		} td_fbt_stack[8];
-		uint8_t		td_fbt_stack_map;
-		uint8_t		td_fbt_stack_head;
-	};
+			void	*arg;
+			uintptr_t retaddr;
+		} stack[DTRACE_TAIL_CALL_RECORDS];
+		uint16_t	map;
+		uint8_t		head;
+	} td_tail_call;
 #endif
 #endif
 } kdtrace_thread_t;
+
 CTASSERT(sizeof(struct kdtrace_thread) < 256);
 
 /*
@@ -123,6 +129,9 @@ CTASSERT(sizeof(struct kdtrace_thread) < 256);
 #define	t_dtrace_regv	td_dtrace->td_dtrace_regv
 #define	t_dtrace_sscr	td_dtrace->td_dtrace_sscr
 #define	t_dtrace_systrace_args	td_dtrace->td_systrace_args
+#define	t_dtrace_tc_stack	td_dtrace->td_tail_call.stack
+#define	t_dtrace_tc_map		td_dtrace->td_tail_call.map
+#define	t_dtrace_tc_head	td_dtrace->td_tail_call.head
 #define	p_dtrace_helpers	p_dtrace->p_dtrace_helpers
 #define	p_dtrace_count	p_dtrace->p_dtrace_count
 #define	p_dtrace_probes	p_dtrace->p_dtrace_probes

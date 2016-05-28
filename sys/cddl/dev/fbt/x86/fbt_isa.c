@@ -39,6 +39,7 @@ __FBSDID("$FreeBSD$");
 #include "fbt.h"
 
 #define	FBT_PUSHL_EBP		0x55
+#define	FBT_PUSHQ_RBP		0x55
 #define	FBT_MOVL_ESP_EBP0_V0	0x8b
 #define	FBT_MOVL_ESP_EBP1_V0	0xec
 #define	FBT_MOVL_ESP_EBP0_V1	0x89
@@ -65,7 +66,7 @@ __FBSDID("$FreeBSD$");
 
 #define	FBT_TRAMPOLINE_ADDR	((uintptr_t)&fbt_tail_ret_trampoline)
 
-static uintptr_t fbt_tail_call_pop(uintptr_t);
+static uintptr_t fbt_tail_call_return(uintptr_t);
 static int	fbt_tail_call_push(fbt_probe_t *, uintptr_t);
 
 void
@@ -75,12 +76,17 @@ fbt_md_init(void)
 	fbt_probe_t *fbt;
 	uintptr_t instr;
 
+	/*
+	 * Create a probe for the tail call return trampoline. When it fires, we
+	 * know we have returned from a tail call, and pop the last sequence of
+	 * consecutive tail calls, causing return probes to fire.
+	 */
 	instr = FBT_TRAMPOLINE_ADDR;
 
 	fbt = malloc(sizeof(*fbt), M_FBT, M_WAITOK | M_ZERO);
 	fbt->fbtp_patchpoint = (fbt_patchval_t *)instr;
 	fbt->fbtp_rval = DTRACE_INVOP_NOP;
-	fbt->fbtp_flags = FBTPF_TAIL_RET;
+	fbt->fbtp_flags = FBTPF_TAIL_CALL_RET;
 
 	fbt->fbtp_hashnext = fbt_probetab[FBT_ADDR2NDX(instr)];
 	fbt_probetab[FBT_ADDR2NDX(instr)] = fbt;
@@ -91,13 +97,11 @@ int
 fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 {
 	solaris_cpu_t *cpu;
-	uintptr_t *stack;
-	uintptr_t arg0, arg1, arg2, arg3, arg4, retaddr;
+	uintptr_t *stack, arg0, arg1, arg2, arg3, arg4;
 	fbt_probe_t *fbt;
 
 #ifdef __amd64__
-	stack = (uintptr_t *)frame->tf_rsp;
-	stack = (uintptr_t *)(frame->tf_rsp & ~0xf);
+	stack = (uintptr_t *)(frame->tf_rsp & ~0xf); /* XXX why? */
 #else
 	/* Skip hardware-saved registers. */
 	stack = (uintptr_t *)frame->tf_isp + 3;
@@ -109,17 +113,30 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 		if ((uintptr_t)fbt->fbtp_patchpoint != addr)
 			continue;
 		if ((fbt->fbtp_flags & FBTPF_TAIL_CALL) != 0) {
-			/* XXX comment */
+			/*
+			 * We instrument tail calls by overwriting a pop of the
+			 * frame pointer. At this point the stack pointer is not
+			 * aligned
+			 */
+			/*
+			 * Record info needed to effect a tail call return
+			 * probe, and plant a return to our trampoline. It's
+			 * possible the current return address is already that
+			 * of the trampoline.
+			 */
 			if (fbt_tail_call_push(fbt, stack[1])) {
-				/* Update the return address. */
 				DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
 				stack[1] = FBT_TRAMPOLINE_ADDR;
 				DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT |
 				    CPU_DTRACE_BADADDR);
 			}
-		} else if ((fbt->fbtp_flags & FBTPF_TAIL_RET) != 0) {
-			frame->tf_rip = fbt_tail_call_pop(rval);
-			return (DTRACE_INVOP_NOP);
+		} else if ((fbt->fbtp_flags & FBTPF_TAIL_CALL_RET) != 0) {
+			/*
+			 * Fire return probes for any intermediate tail calls.
+			 * There should be at least one.
+			 */
+			frame->tf_rip = fbt_tail_call_return(rval);
+			MPASS(fbt->fbtp_rval == DTRACE_INVOP_NOP);
 		} else if (fbt->fbtp_roffset == 0) {
 #ifdef __amd64__
 			DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
@@ -195,7 +212,7 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	char *modname = opaque;
 	const char *name = symval->name;
 	fbt_probe_t *fbt, *retfbt;
-	uint8_t *instr, *limit;
+	uint8_t *instr, *limit, *first;
 	int j, size;
 	uint8_t flags, next;
 
@@ -225,8 +242,9 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	limit = (uint8_t *) symval->value + symval->size;
 
 #ifdef __amd64__
+	first = instr;
 	while (instr < limit) {
-		if (*instr == FBT_PUSHL_EBP)
+		if (*instr == FBT_PUSHQ_RBP)
 			break;
 
 		if ((size = dtrace_instr_size(instr)) <= 0)
@@ -235,7 +253,7 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 		instr += size;
 	}
 
-	if (instr >= limit || *instr != FBT_PUSHL_EBP) {
+	if (instr >= limit || *instr != FBT_PUSHQ_RBP) {
 		/*
 		 * We either don't save the frame pointer in this
 		 * function, or we ran into some disassembly
@@ -290,15 +308,19 @@ again:
 	 * unconditional jmp depending on whether it's part of a normal return
 	 * or a tail call respectively.
 	 */
-	if (*instr == FBT_POPQ_RBP && instr + 1 < limit) {
+	if (size == 1 && *instr == FBT_POPQ_RBP && instr + 1 < limit) {
+		/* Verify that we can disassemble the next instruction. */
+		if (dtrace_instr_size(instr + 1) <= 0)
+			return (0);
+
 		next = *(instr + 1);
 		if (next == FBT_JMP_SHORT ||
 		    next == FBT_JMP_REL32 ||
 		    next == FBT_JMP_ABS) {
-			/* Make sure we can actually disassemble the jmp. */
-			if (dtrace_instr_size(instr) <= 0)
-				return (0);
 			flags |= FBTPF_TAIL_CALL;
+			goto found;
+		} else if (next == FBT_RET && (dtrace_instr_size(first) != 1 ||
+		    *first != FBT_PUSHQ_RBP)) {
 			goto found;
 		}
 
@@ -313,7 +335,8 @@ again:
 	 */
 	if (*instr == FBT_RET_IMM16)
 		printf("fbt: skipping ret immediate instruction\n");
-	if (*instr != FBT_RET) {
+	if (*instr != FBT_RET || dtrace_instr_size(first) != 1 ||
+	    *first != FBT_PUSHQ_RBP) {
 		instr += size;
 		goto again;
 	}
@@ -410,33 +433,37 @@ found:
 }
 
 static uintptr_t
-fbt_tail_call_pop(uintptr_t rval)
+fbt_tail_call_return(uintptr_t rval)
 {
 	fbt_probe_t *fbt;
 	struct thread *td;
 	int si;
-	uint8_t map;
+	uint16_t map;
 
 	td = curthread;
-	si = --td->td_dtrace->td_fbt_stack_head;
-	map = td->td_dtrace->td_fbt_stack_map;
+	si = --td->t_dtrace_tc_head;
+	map = td->t_dtrace_tc_map;
 
-	MPASS(si >= 0 && si < nitems(td->td_dtrace->td_fbt_stack));
+	MPASS(si >= 0 && si < nitems(td->t_dtrace_tc_stack));
 	MPASS((map & (1 << si)) == 0);
-
 	do {
-		fbt = td->td_dtrace->td_fbt_stack[si].td_stack_arg;
+		fbt = td->t_dtrace_tc_stack[si].arg;
 		dtrace_probe(fbt->fbtp_id, fbt->fbtp_roffset, rval, 0, 0, 0);
 	} while ((map & (1 << --si)) == 0);
-
-	MPASS(si >= 0 && si < nitems(td->td_dtrace->td_fbt_stack));
-	MPASS((map & (1 << si)) != 0);
-
-	td->td_dtrace->td_fbt_stack_map &= ~(1 << si);
-	td->td_dtrace->td_fbt_stack_head = si;
-	return (td->td_dtrace->td_fbt_stack[si].td_stack_retaddr);
+	MPASS(si >= 0 && si < DTRACE_TAIL_CALL_RECORDS);
+	td->t_dtrace_tc_map &= ~(1 << si);
+	td->t_dtrace_tc_head = si;
+	return (td->t_dtrace_tc_stack[si].retaddr);
 }
 
+/*
+ * Record the information needed for a return probe to fire upon return from a
+ * tail call. Specifically, we keep a pointer to the probe metadata and the
+ * return address currently on the stack. If the return address is already that
+ * of our tail return trampoline, it doesn't need to be recorded. We use a map
+ * to keep track of sequences of consecutive tail calls, for which return
+ * addresses do not need to be saved.
+ */
 static int
 fbt_tail_call_push(fbt_probe_t *fbt, uintptr_t retaddr)
 {
@@ -444,18 +471,19 @@ fbt_tail_call_push(fbt_probe_t *fbt, uintptr_t retaddr)
 	int si;
 
 	td = curthread;
-	si = td->td_dtrace->td_fbt_stack_head;
+	si = td->t_dtrace_tc_head;
 	if (retaddr != FBT_TRAMPOLINE_ADDR) {
-		if (si >= nitems(td->td_dtrace->td_fbt_stack) - 1)
-			/* XXX flag */
+		if (si >= DTRACE_TAIL_CALL_RECORDS - 1) {
+			DTRACE_CPUFLAG_SET(CPU_DTRACE_TAILCALLDROP);
 			return (0);
-		td->td_dtrace->td_fbt_stack[si].td_stack_retaddr = retaddr;
-		td->td_dtrace->td_fbt_stack_map |= (1 << si);
-		si++;
-	} else if (si >= nitems(td->td_dtrace->td_fbt_stack))
-		/* XXX flag */
+		}
+		td->t_dtrace_tc_stack[si].retaddr = retaddr;
+		td->t_dtrace_tc_map |= (1 << si++);
+	} else if (si >= DTRACE_TAIL_CALL_RECORDS) {
+		DTRACE_CPUFLAG_SET(CPU_DTRACE_TAILCALLDROP);
 		return (0);
-	td->td_dtrace->td_fbt_stack[si].td_stack_arg = fbt;
-	td->td_dtrace->td_fbt_stack_head = ++si;
+	}
+	td->t_dtrace_tc_stack[si].arg = fbt;
+	td->t_dtrace_tc_head = ++si;
 	return (1);
 }
