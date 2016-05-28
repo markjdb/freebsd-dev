@@ -99,6 +99,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/proc.h>
 #include <sys/rwlock.h>
 #include <sys/sbuf.h>
+#include <sys/smp.h>
 #include <sys/sysctl.h>
 #include <sys/vmmeter.h>
 #include <sys/vnode.h>
@@ -144,6 +145,12 @@ static int pa_tryrelock_restart;
 SYSCTL_INT(_vm, OID_AUTO, tryrelock_restart, CTLFLAG_RD,
     &pa_tryrelock_restart, 0, "Number of tryrelock restarts");
 
+static int pcpu_frees;
+SYSCTL_INT(_vm, OID_AUTO, pcpu_frees, CTLFLAG_RD, &pcpu_frees, 0, "");
+
+static int non_pcpu_frees;
+SYSCTL_INT(_vm, OID_AUTO, non_pcpu_frees, CTLFLAG_RD, &non_pcpu_frees, 0, "");
+
 static TAILQ_HEAD(, vm_page) blacklist_head;
 static int sysctl_vm_page_blacklist(SYSCTL_HANDLER_ARGS);
 SYSCTL_PROC(_vm, OID_AUTO, page_blacklist, CTLTYPE_STRING | CTLFLAG_RD |
@@ -183,6 +190,446 @@ vm_page_init_fakepg(void *dummy)
 CTASSERT(sizeof(u_long) >= 8);
 #endif
 #endif
+
+#ifndef VM_PAGE_CACHE
+
+#define	PCPU_MAX_IN_CACHE	255
+
+struct vm_percpu_stats {
+	long		vpp_cachehit;
+	long		vpp_cachefill;
+	long		vpp_fills;
+	long		vpp_listhit;
+	long		vpp_cachemiss;
+	long		vpp_donations;
+	long		vpp_prunes;
+};
+
+struct vm_page_percpu_cache {
+	uint32_t	vppc_cnt;
+	uint32_t	vppc_max;
+	vm_page_t	vppc_m[PCPU_MAX_IN_CACHE];
+};
+
+struct vm_page_percpu {
+	struct mtx	vpp_lock;
+	struct pglist	vpp_pages;
+	int		vpp_cnt;
+	u_int		vpp_min;
+	u_int		vpp_target;
+	u_int		vpp_max;
+	struct	vm_percpu_stats vpp_stats;
+	struct vm_page_percpu_cache *vpp_cache;
+} __aligned(CACHE_LINE_SIZE);
+
+struct vm_page_percpu page_percpu[MAXCPU] __aligned(CACHE_LINE_SIZE);
+
+#define	VM_PERCPU_MIN		5000	
+#define	VM_PERCPU_TARGET	8000 /* (VM_PERCPU_MIN * 2) */
+#define	VM_PERCPU_MAX		10000 /* (VM_PERCPU_MIN * 3) */
+
+static void
+vm_page_percpu_init(void)
+{
+	struct vm_page_percpu *vpp;
+	int i;
+
+	for (i = 0; i < MAXCPU; i++) {
+		vpp = &page_percpu[i];
+		mtx_init(&page_percpu[i].vpp_lock, "per-cpu free mtx", NULL,
+				 MTX_RECURSE);
+		TAILQ_INIT(&vpp->vpp_pages);
+		vpp->vpp_cnt = 0;
+		vpp->vpp_min = VM_PERCPU_MIN;
+		vpp->vpp_target = VM_PERCPU_TARGET;
+		vpp->vpp_max = VM_PERCPU_MAX;
+		vpp->vpp_cache = NULL;
+		memset(&vpp->vpp_stats, 0, sizeof(vpp->vpp_stats));
+	}
+}
+
+static int
+sysctl_vm_page_pcpu_cnt(SYSCTL_HANDLER_ARGS)
+{
+	int i, error, idx;
+	u_int val;
+
+	error = 0;
+	idx = 0;
+	CPU_FOREACH(i) {
+		val = page_percpu[i].vpp_cnt;
+		error = SYSCTL_OUT(req, &val, sizeof(val));
+		if (error)
+			break;
+		idx++;
+	}
+	return (error);
+}
+
+SYSCTL_PROC(_vm, OID_AUTO, pcpu_cnt, CTLTYPE_INT | CTLFLAG_RD |
+    CTLFLAG_MPSAFE, NULL, 0, sysctl_vm_page_pcpu_cnt, "I", "");
+
+static int
+sysctl_vm_page_pcpu_stats(SYSCTL_HANDLER_ARGS)
+{
+	int i, error;
+	struct vm_percpu_stats res;
+
+	error = 0;
+	CPU_FOREACH(i) {
+		memcpy(&res, &page_percpu[i].vpp_stats, sizeof(struct vm_percpu_stats));
+		error = SYSCTL_OUT(req, &res, sizeof(res));
+		if (error)
+			break;
+	}
+	return (error);
+}
+
+SYSCTL_PROC(_vm, OID_AUTO, pcpu_stats, CTLTYPE_STRUCT | CTLFLAG_RD |
+    CTLFLAG_MPSAFE, NULL, 0, sysctl_vm_page_pcpu_stats, "I", "");
+
+static int
+sysctl_vm_page_pcpu_min(SYSCTL_HANDLER_ARGS)
+{
+	struct vm_page_percpu *vpp;
+	int i, error;
+	u_int val;
+
+	error = 0;
+	for (i = 0; i < MAXCPU; i++) {
+		vpp = &page_percpu[i];
+		val = vpp->vpp_min;
+		error = SYSCTL_OUT(req, &val, sizeof(val));
+		if (error)
+			break;
+	}
+
+	if ((error == 0) && (req->newptr != NULL)) {
+		error = SYSCTL_IN(req, &val, sizeof(val));
+		if (error)
+			return (error);
+		for (i = 0; i < MAXCPU; i++) {
+			vpp = &page_percpu[i];
+			vpp->vpp_min = val;
+		}
+	}
+
+	return (error);
+}
+
+SYSCTL_PROC(_vm, OID_AUTO, pcpu_min, CTLTYPE_UINT | CTLFLAG_RW |
+    CTLFLAG_MPSAFE, NULL, 0, sysctl_vm_page_pcpu_min, "I", "");
+
+static int
+sysctl_vm_page_pcpu_target(SYSCTL_HANDLER_ARGS)
+{
+	struct vm_page_percpu *vpp;
+	int i, error;
+	u_int val;
+
+	error = 0;
+	for (i = 0; i < MAXCPU; i++) {
+		vpp = &page_percpu[i];
+		val = vpp->vpp_target;
+		error = SYSCTL_OUT(req, &val, sizeof(val));
+		if (error)
+			break;
+	}
+
+	if ((error == 0) && (req->newptr != NULL)) {
+		error = SYSCTL_IN(req, &val, sizeof(val));
+		if (error)
+			return (error);
+		for (i = 0; i < MAXCPU; i++) {
+			vpp = &page_percpu[i];
+			vpp->vpp_target = val;
+		}
+	}
+
+	return (error);
+}
+
+SYSCTL_PROC(_vm, OID_AUTO, pcpu_target, CTLTYPE_UINT | CTLFLAG_RW |
+    CTLFLAG_MPSAFE, NULL, 0, sysctl_vm_page_pcpu_target, "I", "");
+
+static int
+sysctl_vm_page_pcpu_max(SYSCTL_HANDLER_ARGS)
+{
+	struct vm_page_percpu *vpp;
+	int i, error;
+	u_int val;
+
+	error = 0;
+	for (i = 0; i < MAXCPU; i++) {
+		vpp = &page_percpu[i];
+		val = vpp->vpp_max;
+		error = SYSCTL_OUT(req, &val, sizeof(val));
+		if (error)
+			return (error);
+	}
+
+	if ((error == 0) && (req->newptr != NULL)) {
+		error = SYSCTL_IN(req, &val, sizeof(val));
+		if (error)
+			return (error);
+		for (i = 0; i < MAXCPU; i++) {
+			vpp = &page_percpu[i];
+			vpp->vpp_max = val;
+		}
+	}
+
+	return (error);
+}
+
+SYSCTL_PROC(_vm, OID_AUTO, pcpu_max, CTLTYPE_UINT | CTLFLAG_RW |
+    CTLFLAG_MPSAFE, NULL, 0, sysctl_vm_page_pcpu_max, "I", "");
+
+static int percpu_hotcache=1;
+
+SYSCTL_INT(_vm, OID_AUTO, percpu_hotcache, CTLFLAG_RW,
+	    &percpu_hotcache, 0,
+	    "Do we have a per-cpu hot cache?");
+
+static vm_page_t
+vm_page_percpu_alloc(vm_object_t object, int req)
+{
+	struct vm_page_percpu *ppcpu;
+	struct vm_page_percpu_cache *cache;
+	vm_page_t m;
+
+#if VM_NRESERVLEVEL > 0
+	/*
+	 * Skip the cache of free pages for objects that have reservations
+	 * so that they can still get superpages.  This will never be set
+	 * for objects populated via the filesystem buffercache.
+	 */
+	if (object != NULL && (object->flags & OBJ_COLORED) != 0)
+		return (NULL);
+#endif
+	if (percpu_hotcache) {
+		critical_enter();
+		ppcpu = &page_percpu[curcpu];
+		cache = ppcpu->vpp_cache;
+	retry:
+		if (cache) {
+			if (cache->vppc_cnt > 0) {
+				cache->vppc_cnt--;
+				m = cache->vppc_m[cache->vppc_cnt];
+				cache->vppc_m[cache->vppc_cnt] = NULL;
+				if (m) {
+					ppcpu->vpp_stats.vpp_cachehit++;
+					critical_exit();
+					return(m);
+
+				}
+			} else if (ppcpu->vpp_cnt > ppcpu->vpp_min) {
+				/* Fill the cache up if we can */
+				int i, cnt;
+				
+				if(mtx_trylock(&ppcpu->vpp_lock)) {
+					cnt = min(cache->vppc_max/2, ppcpu->vpp_cnt);
+					if (cnt == 0) {
+						/* Empty list */
+						critical_exit();
+						goto none_found;
+					}
+					for(i=0; i<cnt; i++) {
+						m = TAILQ_FIRST(&ppcpu->vpp_pages);
+						if (m == NULL) {
+							panic("%s:pcpu cnt:%d off wanted:%d at:%d ppcpu:%p",
+							      __FUNCTION__,
+							      ppcpu->vpp_cnt, cnt, i, ppcpu);
+						}
+						TAILQ_REMOVE(&ppcpu->vpp_pages, m, plinks.q);
+						ppcpu->vpp_cnt--;
+						cache->vppc_m[cache->vppc_cnt] = m;
+						cache->vppc_cnt++;
+					}
+					m = NULL;
+					ppcpu->vpp_stats.vpp_cachefill++;
+					mtx_unlock(&ppcpu->vpp_lock);
+					goto retry;
+				}
+			}
+		}
+		critical_exit();
+	} else {
+		ppcpu = &page_percpu[PCPU_GET(cpuid)];
+	}
+	mtx_lock(&ppcpu->vpp_lock);
+none_found:
+	if (ppcpu->vpp_cnt < ppcpu->vpp_min) {
+		mtx_lock(&vm_page_queue_free_mtx);
+		if (!vm_page_count_min())
+			ppcpu->vpp_stats.vpp_fills++;
+		while (!vm_page_count_min() &&
+		       ppcpu->vpp_cnt < ppcpu->vpp_target)  {
+			m = vm_phys_alloc_pages((object != NULL) ?
+						VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT, 0);
+			if (m == NULL)
+				break;
+			vm_phys_freecnt_adj(m, -1);
+			ppcpu->vpp_cnt++;
+			TAILQ_INSERT_TAIL(&ppcpu->vpp_pages, m, plinks.q);
+		}
+		mtx_unlock(&vm_page_queue_free_mtx);
+	}
+	m = NULL;
+	if (ppcpu->vpp_cnt > 0) {
+		m = TAILQ_FIRST(&ppcpu->vpp_pages);
+		TAILQ_REMOVE(&ppcpu->vpp_pages, m, plinks.q);
+		ppcpu->vpp_cnt--;
+	}
+	if (m) {
+		ppcpu->vpp_stats.vpp_listhit++;
+	} else {
+		ppcpu->vpp_stats.vpp_cachemiss++;
+	}
+	mtx_unlock(&ppcpu->vpp_lock);
+
+	return (m);
+}
+
+static inline void vm_page_free_wakeup(void);
+
+static void
+ppcpu_donate_pages(struct pglist *tlist)
+{
+	vm_page_t m;
+	int cpu;
+	struct vm_page_percpu *ppcpu;
+
+	/* 
+	 * Attempt to donate pages from a
+	 * per-cpu cache to other per-cpu
+	 * caches that might be low on pages.
+	 */
+	CPU_FOREACH(cpu) {
+		ppcpu = &page_percpu[cpu];
+		if (mtx_trylock(&ppcpu->vpp_lock)) {
+			if (ppcpu->vpp_cnt < ppcpu->vpp_target) {
+				ppcpu->vpp_stats.vpp_donations++;
+				/* We found a friend in need donate the pages */
+				while ((m = TAILQ_FIRST(tlist)) != NULL) {
+					TAILQ_REMOVE(tlist, m, plinks.q);
+					TAILQ_INSERT_HEAD(&ppcpu->vpp_pages, m, plinks.q);
+					ppcpu->vpp_cnt++;
+					if (ppcpu->vpp_cnt >= ppcpu->vpp_target) {
+						break;
+					}
+				}
+				if (TAILQ_EMPTY(tlist)) {
+					mtx_unlock(&ppcpu->vpp_lock);
+					return;
+				}
+			}
+			mtx_unlock(&ppcpu->vpp_lock);
+		} 
+	}
+}
+
+static void
+vm_page_percpu_free(vm_page_t m)
+{
+	struct vm_page_percpu *ppcpu;
+	struct vm_page_percpu_cache *cache;
+	struct pglist tlist;
+
+	if (percpu_hotcache) {
+		critical_enter();
+		ppcpu = &page_percpu[PCPU_GET(cpuid)];
+		cache = ppcpu->vpp_cache;
+		if(cache) {
+			if (cache->vppc_cnt < cache->vppc_max) {
+				cache->vppc_m[cache->vppc_cnt] = m;
+				cache->vppc_cnt++;
+				critical_exit();
+				return;
+			}
+		}
+		critical_exit();
+	} else {
+		ppcpu = &page_percpu[PCPU_GET(cpuid)];
+	}
+	TAILQ_INIT(&tlist);
+	mtx_lock(&ppcpu->vpp_lock);
+	TAILQ_INSERT_HEAD(&ppcpu->vpp_pages, m, plinks.q);
+	ppcpu->vpp_cnt++;
+	if (ppcpu->vpp_cnt > ppcpu->vpp_max) {
+		while (ppcpu->vpp_cnt > ppcpu->vpp_target) {
+			m = TAILQ_FIRST(&ppcpu->vpp_pages);
+			if (m == NULL) {
+				panic("%s:pcpu cnt:%d off ppcpu:%p tlist:%p",
+				      __FUNCTION__,
+				      ppcpu->vpp_cnt, ppcpu, &tlist);
+			}
+			TAILQ_REMOVE(&ppcpu->vpp_pages, m, plinks.q);
+			ppcpu->vpp_cnt--;
+			TAILQ_INSERT_TAIL(&tlist, m, plinks.q);
+		}
+		mtx_unlock(&ppcpu->vpp_lock);
+	} else {
+		mtx_unlock(&ppcpu->vpp_lock);
+	}
+	if (percpu_hotcache &&
+	    (!TAILQ_EMPTY(&tlist))) {	
+		    ppcpu_donate_pages(&tlist);
+	}
+	if (!TAILQ_EMPTY(&tlist)) {	
+		mtx_lock(&vm_page_queue_free_mtx);
+		ppcpu->vpp_stats.vpp_prunes++;
+		while ((m = TAILQ_FIRST(&tlist)) != NULL) {
+			TAILQ_REMOVE(&tlist, m, plinks.q);
+			vm_phys_freecnt_adj(m, 1);
+#if VM_NRESERVLEVEL > 0
+			if (!vm_reserv_free_page(m))
+#else
+				if (TRUE)
+#endif
+					vm_phys_free_pages(m, 0);
+		}
+		vm_page_free_wakeup();
+		mtx_unlock(&vm_page_queue_free_mtx);
+	}
+}
+
+MALLOC_DEFINE(M_VM_VPPCACHE, "vppc_hotcache", "Hot cache for vpp");
+
+static void
+vppc_cache_init(void *dummy)
+{
+	struct vm_page_percpu *vpp;
+	struct vm_page_percpu_cache *cache;
+	void **array;
+	int i, cnt=0, at=0;
+	size_t sz;
+	CPU_FOREACH(i) {
+		cnt++;
+	}
+	sz = sizeof(void *) * cnt;
+	array = malloc(sz, M_VM_VPPCACHE, M_WAITOK);
+	sz = sizeof(struct vm_page_percpu_cache);
+	for(i=0; i<cnt; i++) {
+		array[i] = malloc(sz, M_VM_VPPCACHE, M_WAITOK);
+		memset(array[i], 0, sz);
+	}
+	CPU_FOREACH(i) {
+		vpp = &page_percpu[i];
+		if (vpp->vpp_cache == NULL) {
+			cache = vpp->vpp_cache = array[at];
+			array[at] = NULL;
+			at++;
+			cache->vppc_cnt = 0;
+			cache->vppc_max = PCPU_MAX_IN_CACHE;
+		}
+	}
+	free(array, M_VM_VPPCACHE);
+}
+
+SYSINIT(vmpcpuc, SI_SUB_MBUF, SI_ORDER_FIRST, vppc_cache_init, NULL);
+
+
+#endif /* !VM_PAGE_CACHE */
 
 /*
  * Try to acquire a physical address lock while a pmap is locked.  If we
@@ -623,6 +1070,7 @@ vm_page_startup(vm_offset_t vaddr)
 	 */
 	vm_reserv_init();
 #endif
+	vm_page_percpu_init();
 	return (vaddr);
 }
 
@@ -1612,6 +2060,13 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		   ("vm_page_alloc: pindex already allocated"));
 	}
 
+#ifndef VM_PAGE_CACHE
+	if ((m = vm_page_percpu_alloc(object, req)) != NULL) {
+		flags = 0;
+		goto gotit;
+	}
+#endif
+
 	/*
 	 * The page allocation request can came from consumers which already
 	 * hold the free page queue mutex, like vm_page_insert() in
@@ -1736,6 +2191,7 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 #endif
 	mtx_unlock(&vm_page_queue_free_mtx);
 
+gotit:
 	/*
 	 * Initialize the page.  Only the PG_ZERO flag is inherited.
 	 */
@@ -3018,6 +3474,7 @@ vm_page_cache_turn_free(vm_page_t m)
 void
 vm_page_free_toq(vm_page_t m)
 {
+	int can_cache;
 
 #ifndef VM_PAGE_CACHE
 	MPASS((m->flags & PG_CACHED) == 0);
@@ -3034,6 +3491,14 @@ vm_page_free_toq(vm_page_t m)
 
 	if (vm_page_sbusied(m))
 		panic("vm_page_free: freeing busy page %p", m);
+
+#ifndef VM_PAGE_CACHE
+	can_cache = 0;
+	if (m->object != NULL) {
+		VM_OBJECT_ASSERT_LOCKED(m->object);
+		can_cache = ((m->object->flags & OBJ_COLORED) == 0);
+	}
+#endif
 
 	/*
 	 * Unqueue, then remove page.  Note that we cannot destroy
@@ -3069,6 +3534,18 @@ vm_page_free_toq(vm_page_t m)
 		if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
 			pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
 
+#ifdef VM_PERCPU_FREE
+		if (can_cache) {
+#ifdef VM_PERCPU_STATS
+			pcpu_frees++;
+#endif
+			vm_page_percpu_free(m);
+			return;
+		}
+#ifdef VM_PERCPU_STATS
+		non_pcpu_frees++;
+#endif
+#endif
 		/*
 		 * Insert the page into the physical memory allocator's
 		 * cache/free page queues.
