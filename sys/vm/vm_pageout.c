@@ -163,7 +163,7 @@ SYSINIT(vmdaemon, SI_SUB_KTHREAD_VM, SI_ORDER_FIRST, kproc_start, &vm_kp);
 
 int vm_pages_needed;		/* Event on which pageout daemon sleeps */
 int vm_pageout_deficit;		/* Estimated number of pages deficit */
-int vm_pageout_wakeup_thresh;
+u_int vm_pageout_wakeup_thresh;	/* Free page threshold for pagedaemon wakeups */
 static int vm_pageout_oom_seq = 12;
 
 #if !defined(NO_SWAPPING)
