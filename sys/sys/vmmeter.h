@@ -96,6 +96,8 @@ struct vmmeter {
 	u_int v_active_count;	/* (q) pages active */
 	u_int v_inactive_target; /* (c) pages desired inactive */
 	u_int v_inactive_count;	/* (q) pages inactive */
+	u_int v_laundry_count;	/* (q) pages dirty */
+	u_int v_stasis_count;	/* (q) pages dirty and non-reclaimable */
 	u_int v_cache_count;	/* (f) pages on cache queue */
 	u_int v_pageout_free_min;   /* (c) min pages reserved for kernel */
 	u_int v_interrupt_free_min; /* (c) reserved pages for int code */
@@ -111,13 +113,12 @@ struct vmmeter {
 	u_int v_vforkpages;	/* (p) VM pages affected by vfork() */
 	u_int v_rforkpages;	/* (p) VM pages affected by rfork() */
 	u_int v_kthreadpages;	/* (p) VM pages affected by fork() by kernel */
-	u_int v_spare[2];
 };
 #ifdef _KERNEL
 
 extern struct vmmeter vm_cnt;
 
-extern int vm_pageout_wakeup_thresh;
+extern u_int vm_pageout_wakeup_thresh;
 
 /*
  * Return TRUE if we are under our severe low-free-pages threshold
@@ -181,8 +182,39 @@ vm_paging_needed(void)
 {
 
 	return (vm_cnt.v_free_count + vm_cnt.v_cache_count <
-	    (u_int)vm_pageout_wakeup_thresh);
+	    vm_pageout_wakeup_thresh);
 }
+
+/*
+ * Return the number of pages we need to launder.
+ * A positive number indicates that we have a shortfall of clean pages.
+ */
+static inline int
+vm_laundry_target(void)
+{
+
+	return (vm_cnt.v_inactive_target - vm_cnt.v_inactive_count +
+	    vm_paging_target());
+}
+
+/*
+ * Return true if we are in shortfall and must being laundering dirty memory.
+ */
+static inline int
+vm_laundering_needed(void)
+{
+
+	return (vm_cnt.v_inactive_count < vm_cnt.v_inactive_target &&
+	    vm_paging_needed());
+}
+
+/*
+ * Obtain the value of a per-CPU counter.
+ */
+#define	VM_METER_PCPU_CNT(member)					\
+	vm_meter_cnt(__offsetof(struct vmmeter, member))
+
+u_int	vm_meter_cnt(size_t);
 
 #endif
 

@@ -1526,12 +1526,10 @@ swp_pager_async_iodone(struct buf *bp)
 			    ("swp_pager_async_iodone: page %p is not write"
 			    " protected", m));
 			vm_page_undirty(m);
+			vm_page_lock(m);
+			vm_page_deactivate(m);
+			vm_page_unlock(m);
 			vm_page_sunbusy(m);
-			if (vm_page_count_severe()) {
-				vm_page_lock(m);
-				vm_page_try_to_cache(m);
-				vm_page_unlock(m);
-			}
 		}
 	}
 
@@ -1609,7 +1607,7 @@ swap_pager_isswapped(vm_object_t object, struct swdevt *sp)
  *
  *	This routine dissociates the page at the given index within a
  *	swap block from its backing store, paging it in if necessary.
- *	If the page is paged in, it is placed in the inactive queue,
+ *	If the page is paged in, it is placed in the laundry queue,
  *	since it had its backing store ripped out from under it.
  *	We also attempt to swap in all other pages in the swap block,
  *	we only guarantee that the one at the specified index is
@@ -1641,7 +1639,7 @@ swp_pager_force_pagein(vm_object_t object, vm_pindex_t pindex)
 	vm_object_pip_wakeup(object);
 	vm_page_dirty(m);
 	vm_page_lock(m);
-	vm_page_deactivate(m);
+	vm_page_launder(m);
 	vm_page_unlock(m);
 	vm_page_xunbusy(m);
 	vm_pager_page_unswapped(m);
@@ -2136,6 +2134,7 @@ swaponsomething(struct vnode *vp, void *id, u_long nblks,
 	swapon_check_swzone(swap_total / PAGE_SIZE);
 	swp_sizecheck();
 	mtx_unlock(&sw_dev_mtx);
+	EVENTHANDLER_INVOKE(swapon, sp);
 }
 
 /*
@@ -2235,6 +2234,7 @@ swapoff_one(struct swdevt *sp, struct ucred *cred)
 	}
 	swap_total -= (vm_ooffset_t)nblks * PAGE_SIZE;
 	mtx_unlock(&sw_dev_mtx);
+	EVENTHANDLER_INVOKE(swapoff, sp);
 
 	/*
 	 * Page in the contents of the device and close it.

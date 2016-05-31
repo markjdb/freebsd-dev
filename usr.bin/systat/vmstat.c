@@ -107,7 +107,8 @@ static struct Info {
 	u_int v_wire_count;	/* number of pages wired down */
 	u_int v_active_count;	/* number of pages active */
 	u_int v_inactive_count;	/* number of pages inactive */
-	u_int v_cache_count;	/* number of pages on buffer cache queue */
+	u_int v_laundry_count;	/* number of pages in laundry */
+	u_int v_stasis_count;	/* number of pages in stasis */
 	u_long v_kmem_map_size;	/* Current kmem allocation size */
 	struct	vmtotal Total;
 	struct	nchstats nchstats;
@@ -343,7 +344,7 @@ labelkre(void)
 	mvprintw(VMSTATROW + 12, VMSTATCOL + 9, "wire");
 	mvprintw(VMSTATROW + 13, VMSTATCOL + 9, "act");
 	mvprintw(VMSTATROW + 14, VMSTATCOL + 9, "inact");
-	mvprintw(VMSTATROW + 15, VMSTATCOL + 9, "cache");
+	mvprintw(VMSTATROW + 15, VMSTATCOL + 9, "laund");
 	mvprintw(VMSTATROW + 16, VMSTATCOL + 9, "free");
 	if (LINES - 1 > VMSTATROW + 17)
 		mvprintw(VMSTATROW + 17, VMSTATCOL + 9, "buf");
@@ -519,10 +520,11 @@ showkre(void)
 	putint(pgtokb(s.v_wire_count), VMSTATROW + 12, VMSTATCOL, 8);
 	putint(pgtokb(s.v_active_count), VMSTATROW + 13, VMSTATCOL, 8);
 	putint(pgtokb(s.v_inactive_count), VMSTATROW + 14, VMSTATCOL, 8);
-	putint(pgtokb(s.v_cache_count), VMSTATROW + 15, VMSTATCOL, 8);
-	putint(pgtokb(s.v_free_count), VMSTATROW + 16, VMSTATCOL, 8);
+	putint(pgtokb(s.v_laundry_count), VMSTATROW + 15, VMSTATCOL, 8);
+	putint(pgtokb(s.v_stasis_count), VMSTATROW + 16, VMSTATCOL, 8);
+	putint(pgtokb(s.v_free_count), VMSTATROW + 17, VMSTATCOL, 8);
 	if (LINES - 1 > VMSTATROW + 17)
-		putint(s.bufspace / 1024, VMSTATROW + 17, VMSTATCOL, 8);
+		putint(s.bufspace / 1024, VMSTATROW + 18, VMSTATCOL, 8);
 	PUTRATE(v_vnodein, PAGEROW + 2, PAGECOL + 6, 5);
 	PUTRATE(v_vnodeout, PAGEROW + 2, PAGECOL + 12, 5);
 	PUTRATE(v_swapin, PAGEROW + 2, PAGECOL + 19, 5);
@@ -794,7 +796,7 @@ getinfo(struct Info *ls)
 	GETSYSCTL("vm.stats.vm.v_wire_count", ls->v_wire_count);
 	GETSYSCTL("vm.stats.vm.v_active_count", ls->v_active_count);
 	GETSYSCTL("vm.stats.vm.v_inactive_count", ls->v_inactive_count);
-	GETSYSCTL("vm.stats.vm.v_cache_count", ls->v_cache_count);
+	GETSYSCTL("vm.stats.vm.v_laundry_count", ls->v_laundry_count);
 	GETSYSCTL("vfs.bufspace", ls->bufspace);
 	GETSYSCTL("kern.maxvnodes", ls->desiredvnodes);
 	GETSYSCTL("vfs.numvnodes", ls->numvnodes);
