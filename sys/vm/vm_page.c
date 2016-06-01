@@ -1096,8 +1096,6 @@ static int
 vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
     vm_page_t mpred)
 {
-	vm_pindex_t sidx;
-	vm_object_t sobj;
 	vm_page_t msucc;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
@@ -1118,8 +1116,6 @@ vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
 	/*
 	 * Record the object/offset pair in this page
 	 */
-	sobj = m->object;
-	sidx = m->pindex;
 	m->object = object;
 	m->pindex = pindex;
 
@@ -1127,8 +1123,8 @@ vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
 	 * Now link into the object's ordered list of backed pages.
 	 */
 	if (vm_radix_insert(&object->rtree, m)) {
-		m->object = sobj;
-		m->pindex = sidx;
+		m->object = NULL;
+		m->pindex = 0;
 		return (1);
 	}
 	vm_page_insert_radixdone(m, object, mpred);
