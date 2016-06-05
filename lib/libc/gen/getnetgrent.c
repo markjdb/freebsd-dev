@@ -160,7 +160,6 @@ static int	compat_getnetgrent_r(void *, void *, va_list);
 static int	compat_innetgr(void *, void *, va_list);
 static int	compat_setnetgrent(void *, void *, va_list);
 
-static void	clear_state(struct netgr_state *);
 static int	parse_netgrp(const char *, struct netgr_state *, int);
 static struct linelist *read_for_group(const char *, struct netgr_state *, int);
 static int	_getnetgrent_r(char **, char **, char **, char *, size_t, int *,
