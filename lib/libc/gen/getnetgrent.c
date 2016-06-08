@@ -521,6 +521,10 @@ _revnetgr_lookup(char* lookupdom, char* map, const char* str,
 static int
 compat_innetgr(void *retval, void *mdata, va_list ap)
 {
+	const ns_src src[] = {
+		{ mdata, NS_SUCCESS },
+		{ NULL, 0 },
+	};
 	const char *group, *host, *user, *dom;
 
 	group = va_arg(ap, const char *);
@@ -528,14 +532,13 @@ compat_innetgr(void *retval, void *mdata, va_list ap)
 	user = va_arg(ap, const char *);
 	dom = va_arg(ap, const char *);
 
-	/* Sanity check */
-
 	if (group == NULL || !strlen(group))
 		return (NS_RETURN);
 
 #ifdef YP
 	_yp_innetgr = 1;
-	setnetgrent(group);
+	(void)_nsdispatch(NULL, setnetgrent_dtab, NSDB_NETGROUP, "setnetgrent",
+	    src, group);
 	_yp_innetgr = 0;
 	/*
 	 * If we're in NIS-only mode, do the search using
@@ -656,7 +659,7 @@ innetgr_fallback(void *retval, void *mdata, va_list ap)
  * Parse the netgroup file setting up the linked lists.
  */
 static int
-parse_netgrp(const char *group, struct netgr_state *st, int compat)
+parse_netgrp(const char *group, struct netgr_state *st, int niscompat)
 {
 	struct netgrp *grp;
 	struct linelist *lp = st->st_linehead;
@@ -675,7 +678,7 @@ parse_netgrp(const char *group, struct netgr_state *st, int compat)
 			break;
 		lp = lp->l_next;
 	}
-	if (lp == NULL && (lp = read_for_group(group, st, compat)) == NULL)
+	if (lp == NULL && (lp = read_for_group(group, st, niscompat)) == NULL)
 		return (1);
 	if (lp->l_parsed) {
 #ifdef DEBUG
@@ -759,7 +762,7 @@ parse_netgrp(const char *group, struct netgr_state *st, int compat)
 #endif
 		} else {
 			spos = strsep(&pos, ", \t");
-			if (parse_netgrp(spos, st, compat))
+			if (parse_netgrp(spos, st, niscompat))
 				continue;
 		}
 		if (pos == NULL)
@@ -775,7 +778,7 @@ parse_netgrp(const char *group, struct netgr_state *st, int compat)
  * is found. Return 1 if eof is encountered.
  */
 static struct linelist *
-read_for_group(const char *group, struct netgr_state *st, int compat)
+read_for_group(const char *group, struct netgr_state *st, int niscompat)
 {
 	char *linep, *olinep, *pos, *spos;
 	int len, olen;
@@ -789,7 +792,7 @@ read_for_group(const char *group, struct netgr_state *st, int compat)
 	linep = NULL;
 
 	netf = st->st_netf;
-	while ((_netgr_yp_enabled && compat) ||
+	while ((_netgr_yp_enabled && niscompat) ||
 	    fgets(line, LINSIZ, netf) != NULL) {
 		if (_netgr_yp_enabled) {
 			if (_netgr_yp_domain == NULL)
@@ -814,7 +817,7 @@ read_for_group(const char *group, struct netgr_state *st, int compat)
 #endif
 		pos = (char *)&line;
 #ifdef YP
-		if (compat && *pos == '+') {
+		if (niscompat && *pos == '+') {
 			_netgr_yp_enabled = 1;
 			continue;
 		}
