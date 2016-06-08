@@ -808,6 +808,10 @@ read_for_group(const char *group, struct netgr_state *st, int niscompat)
 					continue;
 				}
 			}
+			if (strlen(result) == 0) {
+				free(result);
+				return (NULL);
+			}
 			snprintf(line, LINSIZ, "%s %s", group, result);
 			free(result);
 		}
