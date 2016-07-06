@@ -138,7 +138,8 @@ _pthread_mutexattr_settype(pthread_mutexattr_t *attr, int type)
 {
 	int	ret;
 
-	if (attr == NULL || *attr == NULL || type >= PTHREAD_MUTEX_TYPE_MAX) {
+	if (attr == NULL || *attr == NULL || type <= 0 ||
+	    type >= PTHREAD_MUTEX_TYPE_MAX) {
 		ret = EINVAL;
 	} else {
 		(*attr)->m_type = type;
@@ -152,8 +153,7 @@ _pthread_mutexattr_gettype(pthread_mutexattr_t *attr, int *type)
 {
 	int	ret;
 
-	if (attr == NULL || *attr == NULL || (*attr)->m_type >=
-	    PTHREAD_MUTEX_TYPE_MAX) {
+	if (attr == NULL || *attr == NULL) {
 		ret = EINVAL;
 	} else {
 		*type = (*attr)->m_type;
@@ -233,8 +233,6 @@ _pthread_mutexattr_getprioceiling(pthread_mutexattr_t *mattr, int *prioceiling)
 	int ret = 0;
 
 	if (mattr == NULL || *mattr == NULL)
-		ret = EINVAL;
-	else if ((*mattr)->m_protocol != PTHREAD_PRIO_PROTECT)
 		ret = EINVAL;
 	else
 		*prioceiling = (*mattr)->m_ceiling;
