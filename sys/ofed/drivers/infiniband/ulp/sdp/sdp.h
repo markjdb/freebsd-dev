@@ -372,6 +372,8 @@ struct sdp_sock {
 
 SYSCTL_DECL(_net_inet_sdp);
 
+MALLOC_DECLARE(M_SDP);
+
 static inline void tx_sa_reset(struct tx_srcavail_state *tx_sa)
 {
 	memset((void *)&tx_sa->busy, 0,
