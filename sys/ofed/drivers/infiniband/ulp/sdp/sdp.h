@@ -372,6 +372,7 @@ struct sdp_moderation {
 #define	SDP_DREQWAIT	0x0020		/* Waiting on DREQ. */
 #define	SDP_DESTROY	0x0040		/* Being destroyed. */
 #define	SDP_DISCON	0x0080		/* rdma_disconnect is owed. */
+#define	SDP_QPACTIVE	0x0100		/* queue pair is activated */
 
 /* These are oobflags */
 #define	SDP_HADOOB	0x0001		/* Had OOB data. */
@@ -405,7 +406,6 @@ struct sdp_sock {
 	struct rwlock	lock;
 	struct mbufq	rxctlq;		/* received control packets */
 
-	int qp_active;	/* XXX Flag. */
 	int max_sge;
 	struct work_struct rx_comp_work;
 #define rcv_nxt(ssk) atomic_read(&(ssk->rcv_nxt))

@@ -60,7 +60,7 @@ sdp_handle_disconn(struct sdp_sock *ssk)
 		    __func__);
 
 		sdp_cancel_dreq_wait_timeout(ssk);
-		ssk->qp_active = 0;
+		ssk->flags &= ~SDP_QPACTIVE;
 		if (ssk->id) {
 			struct rdma_cm_id *id;
 
@@ -165,7 +165,7 @@ sdp_post_recvs_needed(struct sdp_sock *ssk)
 	int buffer_size;
 	int posted;
 
-	if (!ssk->qp_active || !ssk->socket)
+	if ((ssk->flags & SDP_QPACTIVE) == 0 || ssk->socket == NULL)
 		return 0;
 
 	posted = rx_ring_posted(ssk);
@@ -485,12 +485,11 @@ sdp_process_rx_wc(struct sdp_sock *ssk, struct ib_wc *wc)
 		return NULL;
 
 	if (unlikely(wc->status)) {
-		if (ssk->qp_active && sk) {
+		if ((ssk->flags & SDP_QPACTIVE) != 0 && sk != NULL) {
 			sdp_dbg(sk, "Recv completion with error. "
 					"Status %d, vendor: %d\n",
 				wc->status, wc->vendor_err);
 			sdp_abort(sk);
-			ssk->qp_active = 0;
 		}
 		m_freem(mb);
 		return NULL;
@@ -601,7 +600,7 @@ sdp_do_posts(struct sdp_sock *ssk)
 	struct mbuf *mb;
 
 	SDP_WLOCK_ASSERT(ssk);
-	if (!ssk->qp_active) {
+	if ((ssk->flags & SDP_QPACTIVE) == 0) {
 		sdp_dbg(sk, "QP is deactivated\n");
 		return;
 	}

@@ -157,7 +157,7 @@ static int sdp_wait_rdmardcompl(struct sdp_sock *ssk, long *timeo_p,
 
 	sdp_dbg_data(sk, "sleep till RdmaRdCompl. timeo = %ld.\n", *timeo_p);
 	sdp_prf1(sk, NULL, "Going to sleep");
-	while (ssk->qp_active) {
+	while ((ssk->flags & SDP_QPACTIVE) != 0) {
 		prepare_to_wait(sk->sk_sleep, &wait, TASK_INTERRUPTIBLE);
 
 		if (unlikely(!*timeo_p)) {
@@ -229,7 +229,7 @@ static int sdp_wait_rdmardcompl(struct sdp_sock *ssk, long *timeo_p,
 	sdp_dbg_data(sk, "Finished waiting - RdmaRdCompl: %d/%d bytes, flags: 0x%x\n",
 			tx_sa->bytes_acked, tx_sa->bytes_sent, tx_sa->abort_flags);
 
-	if (!ssk->qp_active) {
+	if ((ssk->flags & SDP_QPACTIVE) == 0) {
 		sdp_dbg(sk, "QP destroyed while waiting\n");
 		return -EINVAL;
 	}
@@ -251,7 +251,7 @@ static void sdp_wait_rdma_wr_finished(struct sdp_sock *ssk)
 			break;
 		}
 
-		if (!ssk->qp_active) {
+		if ((ssk->flags & SDP_QPACTIVE) == 0) {
 			sdp_dbg_data(sk, "QP destroyed\n");
 			break;
 		}
@@ -505,7 +505,7 @@ err_umem_get:
 
 void sdp_free_fmr(struct socket *sk, struct ib_pool_fmr **_fmr, struct ib_umem **_umem)
 {
-	if (!sdp_sk(sk)->qp_active)
+	if ((sdp_sk(sk)->flags & SDP_QPACTIVE) == 0)
 		return;
 
 	ib_fmr_pool_unmap(*_fmr);
@@ -588,7 +588,7 @@ int sdp_rdma_to_iovec(struct socket *sk, struct iovec *iov, struct mbuf *mb,
 	sdp_wait_rdma_wr_finished(ssk);
 
 	sdp_prf(sk, mb, "Finished waiting(rc=%d)", rc);
-	if (!ssk->qp_active) {
+	if ((ssk->flags & SDP_QPACTIVE) == 0) {
 		sdp_dbg_data(sk, "QP destroyed during RDMA read\n");
 		rc = -EPIPE;
 		goto err_post_send;
@@ -607,7 +607,7 @@ err_post_send:
 	sdp_free_fmr(sk, &rx_sa->fmr, &rx_sa->umem);
 
 err_alloc_fmr:
-	if (rc && ssk->qp_active) {
+	if (rc != 0 && (ssk->flags & SDP_QPACTIVE) != 0) {
 		sdp_warn(sk, "Couldn't do RDMA - post sendsm\n");
 		rx_sa->flags |= RX_SA_ABORTED;
 	}
@@ -676,7 +676,7 @@ static int do_sdp_sendmsg_zcopy(struct socket *sk, struct tx_srcavail_state *tx_
 			sdp_dbg_data(sk, "SrcAvail error completion\n");
 			sdp_reset(sk);
 			SDPSTATS_COUNTER_INC(zcopy_tx_error);
-		} else if (ssk->qp_active) {
+		} else if ((ssk->flags & SDP_QPACTIVE) != 0) {
 			sdp_post_srcavail_cancel(sk);
 
 			/* Wait for RdmaRdCompl/SendSM to

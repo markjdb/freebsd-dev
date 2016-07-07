@@ -118,7 +118,9 @@ sdp_init_qp(struct socket *sk, struct rdma_cm_id *id)
 	}
 	ssk->qp = id->qp;
 	ssk->ib_device = device;
-	ssk->qp_active = 1;
+	SDP_WLOCK(ssk);
+	ssk->flags |= SDP_QPACTIVE;
+	SDP_WUNLOCK(ssk);
 	ssk->context.device = device;
 
 	sdp_dbg(sk, "%s done\n", __func__);
@@ -405,7 +407,7 @@ sdp_cma_handler(struct rdma_cm_id *id, struct rdma_cm_event *event)
 			sdp_dbg(sk, "%s: waiting for Infiniband tear down\n",
 				__func__);
 		}
-		ssk->qp_active = 0;
+		ssk->flags &= ~SDP_QPACTIVE;
 		SDP_WUNLOCK(ssk);
 		rdma_disconnect(id);
 		SDP_WLOCK(ssk);

@@ -161,6 +161,7 @@ sdp_pcbfree(struct sdp_sock *ssk)
 	sdp_dbg(ssk->socket, "Freeing pcb");
 	SDP_WLOCK_ASSERT(ssk);
 	ssk->flags |= SDP_DESTROY;
+	ssk->flags &= ~SDP_QPACTIVE;
 	SDP_WUNLOCK(ssk);
 	SDP_LIST_WLOCK();
 	sdp_count--;
@@ -168,8 +169,7 @@ sdp_pcbfree(struct sdp_sock *ssk)
 	SDP_LIST_WUNLOCK();
 	crfree(ssk->cred);
 	sdp_destroy_cma(ssk);
-	ssk->qp_active = 0;
-	if (ssk->qp) {
+	if (ssk->qp != NULL) {
 		ib_destroy_qp(ssk->qp);
 		ssk->qp = NULL;
 	}
@@ -276,7 +276,7 @@ sdp_output_reset(struct sdp_sock *ssk)
 	SDP_WLOCK_ASSERT(ssk);
 	if (ssk->id) {
 		id = ssk->id;
-		ssk->qp_active = 0;
+		ssk->flags &= ~SDP_QPACTIVE;
 		SDP_WUNLOCK(ssk);
 		rdma_disconnect(id);
 		SDP_WLOCK(ssk);
@@ -403,7 +403,7 @@ sdp_dreq_timeout(void *data)
 	ssk->flags &= ~SDP_DREQWAIT;
 	ssk->flags |= SDP_DISCON;
 	sdp_2msl_wait(ssk);
-	ssk->qp_active = 0;
+	ssk->flags &= ~SDP_QPACTIVE;
 out:
 	SDP_WUNLOCK(ssk);
 }
@@ -467,7 +467,6 @@ sdp_attach(struct socket *so, int proto, struct thread *td)
 	so->so_pcb = (caddr_t)ssk;
 	sdp_init_sock(so);
 	ssk->flags = 0;
-	ssk->qp_active = 0;
 	ssk->state = TCPS_CLOSED;
 	mbufq_init(&ssk->rxctlq, INT_MAX);
 	SDP_LIST_WLOCK();
@@ -1428,6 +1427,7 @@ sdp_abort(struct socket *so)
 		sdp_drop(ssk, ECONNABORTED);
 	KASSERT(ssk->flags & SDP_DROPPED, ("sdp_abort: %p not dropped 0x%X",
 	    ssk, ssk->flags));
+	ssk->flags &= ~SDP_QPACTIVE;
 	SDP_WUNLOCK(ssk);
 }
 

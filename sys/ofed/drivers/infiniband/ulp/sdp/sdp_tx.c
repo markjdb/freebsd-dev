@@ -77,7 +77,7 @@ sdp_post_send(struct sdp_sock *ssk, struct mbuf *mb)
 	SDPSTATS_COUNTER_MID_INC(post_send, h->mid);
 	SDPSTATS_HIST(send_size, mb->len);
 
-	if (!ssk->qp_active) {
+	if ((ssk->flags & SDP_QPACTIVE) == 0) {
 		m_freem(mb);
 		return;
 	}
