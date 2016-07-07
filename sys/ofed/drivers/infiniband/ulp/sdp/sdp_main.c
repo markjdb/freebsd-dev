@@ -256,22 +256,6 @@ sdp_pcbnotifyall(struct in_addr faddr, int errno,
 	SDP_LIST_WUNLOCK();
 }
 
-#if 0
-static void
-sdp_apply_all(void (*func)(struct sdp_sock *, void *), void *arg)
-{
-	struct sdp_sock *ssk;
-
-	SDP_LIST_RLOCK();
-	LIST_FOREACH(ssk, &sdp_list, list) {
-		SDP_WLOCK(ssk);
-		func(ssk, arg);
-		SDP_WUNLOCK(ssk);
-	}
-	SDP_LIST_RUNLOCK();
-}
-#endif
-
 static void
 sdp_output_reset(struct sdp_sock *ssk)
 {
