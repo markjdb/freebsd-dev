@@ -1562,7 +1562,7 @@ struct domain sdpdomain = {
 	.dom_name =		"SDP",
 	.dom_init =		sdp_init,
 	.dom_protosw =		sdpsw,
-	.dom_protoswNPROTOSW =	&sdpsw[sizeof(sdpsw)/sizeof(sdpsw[0])],
+	.dom_protoswNPROTOSW =	&sdpsw[nitems(sdpsw)],
 };
 
 DOMAIN_SET(sdp);
