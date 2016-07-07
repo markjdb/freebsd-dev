@@ -80,6 +80,9 @@ options 	RCTL			# Resource limits
 
 options		GZIO
 options 	USB_REQ_DEBUG
+options 	OFED
+options 	COMPAT_LINUXKPI
+options 	SDP
 
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.
