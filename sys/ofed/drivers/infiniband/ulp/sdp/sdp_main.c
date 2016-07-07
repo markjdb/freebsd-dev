@@ -66,6 +66,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
+#include <sys/sockbuf.h>
 #include <sys/sysctl.h>
 
 #include "sdp.h"
@@ -834,64 +835,6 @@ out:
 	return (error);
 }
 
-static void
-sdp_append(struct sdp_sock *ssk, struct sockbuf *sb, struct mbuf *mb, int cnt)
-{
-	struct mbuf *n;
-	int ncnt;
-
-	SOCKBUF_LOCK_ASSERT(sb);
-	SBLASTRECORDCHK(sb);
-	KASSERT(mb->m_flags & M_PKTHDR,
-		("sdp_append: %p Missing packet header.\n", mb));
-	n = sb->sb_lastrecord;
-	/*
-	 * If the queue is empty just set all pointers and proceed.
-	 */
-	if (n == NULL) {
-		sb->sb_lastrecord = sb->sb_mb = sb->sb_sndptr = mb;
-		for (; mb; mb = mb->m_next) {
-	                sb->sb_mbtail = mb;
-			sballoc(sb, mb);
-		}
-		return;
-	}
-	/*
-	 * Count the number of mbufs in the current tail.
-	 */
-	for (ncnt = 0; n->m_next; n = n->m_next)
-		ncnt++;
-	n = sb->sb_lastrecord;
-	/*
-	 * If the two chains can fit in a single sdp packet and
-	 * the last record has not been sent yet (WRITABLE) coalesce
-	 * them.  The lastrecord remains the same but we must strip the
-	 * packet header and then let sbcompress do the hard part.
-	 */
-	if (M_WRITABLE(n) && ncnt + cnt < SDP_MAX_SEND_SGES &&
-	    n->m_pkthdr.len + mb->m_pkthdr.len - SDP_HEAD_SIZE <
-	    ssk->xmit_size_goal) {
-		m_adj(mb, SDP_HEAD_SIZE);
-		n->m_pkthdr.len += mb->m_pkthdr.len;
-		n->m_flags |= mb->m_flags & (M_PUSH | M_URG);
-		m_demote(mb, 1, 0);
-		sbcompress(sb, mb, sb->sb_mbtail);
-		return;
-	}
-	/*
-	 * Not compressible, just append to the end and adjust counters.
-	 */
-	sb->sb_lastrecord->m_flags |= M_PUSH;
-	sb->sb_lastrecord->m_nextpkt = mb;
-	sb->sb_lastrecord = mb;
-	if (sb->sb_sndptr == NULL)
-		sb->sb_sndptr = mb;
-	for (; mb; mb = mb->m_next) {
-		sb->sb_mbtail = mb;
-		sballoc(sb, mb);
-	}
-}
-
 /*
  * Do a send by putting data in output queue and updating urgent
  * marker if URG set.  Possibly send more data.  Unlike the other
@@ -923,8 +866,6 @@ sdp_send(struct socket *so, int flags, struct mbuf *m,
 			return (EMSGSIZE);
 		}
 		m = n;
-		for (cnt = 0; n->m_next; n = n->m_next)
-			cnt++;
 	}
 	SDP_WLOCK(ssk);
 	if (ssk->flags & (SDP_TIMEWAIT | SDP_DROPPED)) {
@@ -947,9 +888,7 @@ sdp_send(struct socket *so, int flags, struct mbuf *m,
 		m_freem(control);	/* empty control, just free it */
 	}
 	if (!(flags & PRUS_OOB)) {
-		SOCKBUF_LOCK(&so->so_snd);
-		sdp_append(ssk, &so->so_snd, m, cnt);
-		SOCKBUF_UNLOCK(&so->so_snd);
+		sbappendstream(&so->so_snd, m, 0);
 		if (nam && ssk->state < TCPS_SYN_SENT) {
 			/*
 			 * Do implied connect if not yet connected.
@@ -989,7 +928,7 @@ sdp_send(struct socket *so, int flags, struct mbuf *m,
 		 * Otherwise, snd_up should be one lower.
 		 */
 		m->m_flags |= M_URG | M_PUSH;
-		sdp_append(ssk, &so->so_snd, m, cnt);
+		sbappendstream_locked(&so->so_snd, m, 0);
 		SOCKBUF_UNLOCK(&so->so_snd);
 		if (nam && ssk->state < TCPS_SYN_SENT) {
 			/*
