@@ -153,8 +153,8 @@ sdp_connect_handler(struct socket *sk, struct rdma_cm_id *id,
 	if (!h->max_adverts)
 		return -EINVAL;
 
-	child = sonewconn(sk, SS_ISCONNECTED);
-	if (!child)
+	child = sonewconn(sk, 0);
+	if (child == NULL)
 		return -ENOMEM;
 
 	ssk = sdp_sk(child);
@@ -177,9 +177,9 @@ sdp_connect_handler(struct socket *sk, struct rdma_cm_id *id,
 	ssk->xmit_size_goal = ntohl(h->localrcvsz) - sizeof(struct sdp_bsdh);
 	sdp_init_buffers(ssk, rcvbuf_initial_size);
 	ssk->state = TCPS_SYN_RECEIVED;
+	soisconnecting(child);
 	SDP_WUNLOCK(ssk);
-
-	return 0;
+	return (0);
 }
 
 static int
@@ -213,10 +213,8 @@ sdp_response_handler(struct socket *sk, struct rdma_cm_id *id,
 	dst_addr = (struct sockaddr_in *)&id->route.addr.dst_addr;
 	ssk->fport = dst_addr->sin_port;
 	ssk->faddr = dst_addr->sin_addr.s_addr;
-	soisconnected(sk);
 	SDP_WUNLOCK(ssk);
-
-	return 0;
+	return (0);
 }
 
 static int
@@ -373,11 +371,11 @@ sdp_cma_handler(struct rdma_cm_id *id, struct rdma_cm_event *event)
 	case RDMA_CM_EVENT_CONNECT_RESPONSE:
 		sdp_dbg(sk, "RDMA_CM_EVENT_CONNECT_RESPONSE\n");
 		rc = sdp_response_handler(sk, id, event);
-		if (rc) {
-			sdp_dbg(sk, "Destroying qp\n");
-			rdma_reject(id, NULL, 0);
-		} else
+		if (rc == 0) {
 			rc = rdma_accept(id, NULL);
+			if (rc == 0)
+				soisconnected(sk);
+		}
 		break;
 	case RDMA_CM_EVENT_CONNECT_ERROR:
 		sdp_dbg(sk, "RDMA_CM_EVENT_CONNECT_ERROR\n");
