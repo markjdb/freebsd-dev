@@ -1,4 +1,5 @@
-/*
+/*-
+ * Copyright (c) 2016 EMC Corporation
  * Copyright (c) 2009 Mellanox Technologies Ltd.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -29,12 +30,24 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+#include <sys/sysctl.h>
+
 #include "sdp.h"
 
-SDP_MODPARAM_INT(rcvbuf_initial_size, 32 * 1024,
-		"Receive buffer initial size in bytes.");
-SDP_MODPARAM_SINT(rcvbuf_scale, 0x8,
-		"Receive buffer size scale factor.");
+int sdp_rcvbuf_initial_size = 32 * 1024;
+SYSCTL_INT(_net_inet_sdp, OID_AUTO, rcvbuf_initial_size,
+    CTLFLAG_RWTUN, &sdp_rcvbuf_initial_size, 0,
+    "initial size in bytes for socket receive buffer");
+
+static int sdp_rcvbuf_scale_factor = 8;
+SYSCTL_INT(_net_inet_sdp, OID_AUTO, rcvbuf_scale_factor,
+    CTLFLAG_RWTUN, &sdp_rcvbuf_scale_factor, 0,
+    "receive buffer size scale factor");
 
 /* Like tcp_fin - called when SDP_MID_DISCONNECT is received */
 static void
@@ -176,7 +189,7 @@ sdp_post_recvs_needed(struct sdp_sock *ssk)
 	buffer_size = ssk->recv_bytes;
 	max_bytes = max(ssk->socket->so_snd.sb_hiwat,
 	    (1 + SDP_MIN_TX_CREDITS) * buffer_size);
-	max_bytes *= rcvbuf_scale;
+	max_bytes *= sdp_rcvbuf_scale_factor;
 	/*
 	 * Compute bytes in the receive queue and socket buffer.
 	 */

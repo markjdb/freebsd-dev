@@ -175,7 +175,7 @@ sdp_connect_handler(struct socket *sk, struct rdma_cm_id *id,
 	atomic_set(&ssk->tx_ring.credits, ssk->max_bufs);
 	ssk->min_bufs = tx_credits(ssk) / 4;
 	ssk->xmit_size_goal = ntohl(h->localrcvsz) - sizeof(struct sdp_bsdh);
-	sdp_init_buffers(ssk, rcvbuf_initial_size);
+	sdp_init_buffers(ssk, sdp_rcvbuf_initial_size);
 	ssk->state = TCPS_SYN_RECEIVED;
 	soisconnecting(child);
 	SDP_WUNLOCK(ssk);
@@ -317,7 +317,7 @@ sdp_cma_handler(struct rdma_cm_id *id, struct rdma_cm_event *event)
 		hh.max_adverts = 1;
 		hh.ipv_cap = 0x40;
 		hh.majv_minv = SDP_MAJV_MINV;
-		sdp_init_buffers(sdp_sk(sk), rcvbuf_initial_size);
+		sdp_init_buffers(sdp_sk(sk), sdp_rcvbuf_initial_size);
 		hh.bsdh.bufs = htons(rx_ring_posted(sdp_sk(sk)));
 		hh.localrcvsz = hh.desremrcvsz = htonl(sdp_sk(sk)->recv_bytes);
 		hh.max_adverts = 0x1;

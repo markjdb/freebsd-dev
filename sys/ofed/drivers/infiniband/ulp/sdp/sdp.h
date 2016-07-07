@@ -122,7 +122,7 @@ struct name {                                                           \
 #define rx_ring_posted(ssk) ring_posted(ssk->rx_ring)
 #define tx_ring_posted(ssk) ring_posted(ssk->tx_ring)
 
-extern int rcvbuf_initial_size;
+extern int sdp_rcvbuf_initial_size;
 extern struct workqueue_struct *rx_comp_wq;
 extern struct ib_client sdp_client;
 
@@ -394,6 +394,8 @@ struct sdp_sock {
 #define	SDP_WLOCK_ASSERT(ssk)	rw_assert(&(ssk)->lock, RA_WLOCKED)
 #define	SDP_RLOCK_ASSERT(ssk)	rw_assert(&(ssk)->lock, RA_RLOCKED)
 #define	SDP_LOCK_ASSERT(ssk)	rw_assert(&(ssk)->lock, RA_LOCKED)
+
+SYSCTL_DECL(_net_inet_sdp);
 
 static inline void tx_sa_reset(struct tx_srcavail_state *tx_sa)
 {

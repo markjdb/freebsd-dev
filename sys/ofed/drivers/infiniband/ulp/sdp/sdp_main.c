@@ -63,12 +63,10 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include "sdp.h"
-
-#include <net/if.h>
-#include <net/route.h>
-#include <net/vnet.h>
+#include <sys/types.h>
 #include <sys/sysctl.h>
+
+#include "sdp.h"
 
 uma_zone_t	sdp_zone;
 struct rwlock	sdp_lock;
@@ -100,6 +98,13 @@ u_long	sdp_sendspace = 1024*32;
 u_long	sdp_recvspace = 1024*64;
 
 static int sdp_count;
+
+SYSCTL_NODE(_net_inet, OID_AUTO, sdp, CTLFLAG_RD, 0, "sockets direct protocol");
+
+static int	sdp_pcblist(SYSCTL_HANDLER_ARGS);
+SYSCTL_PROC(_net_inet_sdp, OID_AUTO, pcblist,
+    CTLFLAG_RD | CTLTYPE_STRUCT, 0, 0, sdp_pcblist, "S,xtcpcb",
+    "List of active SDP connections");
 
 /*
  * Disable async. CMA events for sockets which are being torn down.
@@ -1488,12 +1493,6 @@ next:
 	SDP_LIST_RUNLOCK();
 	return (error);
 }
-
-static SYSCTL_NODE(_net_inet, -1,  sdp,    CTLFLAG_RW, 0,  "SDP");
-
-SYSCTL_PROC(_net_inet_sdp, TCPCTL_PCBLIST, pcblist,
-    CTLFLAG_RD | CTLTYPE_STRUCT, 0, 0, sdp_pcblist, "S,xtcpcb",
-    "List of active SDP connections");
 
 static void
 sdp_zone_change(void *tag)
