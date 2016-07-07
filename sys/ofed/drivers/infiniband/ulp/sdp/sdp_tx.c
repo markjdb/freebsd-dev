@@ -45,7 +45,6 @@ sdp_xmit_poll(struct sdp_sock *ssk, int force)
 	int wc_processed = 0;
 
 	SDP_WLOCK_ASSERT(ssk);
-	sdp_prf(ssk->socket, NULL, "%s", __func__);
 
 	/* If we don't have a pending timer, set one up to catch our recent
 	   post in case the interface becomes idle */
@@ -87,20 +86,6 @@ sdp_post_send(struct sdp_sock *ssk, struct mbuf *mb)
 	ssk->tx_packets++;
 	ssk->tx_bytes += mb->m_pkthdr.len;
 
-#ifdef SDP_ZCOPY
-	if (unlikely(h->mid == SDP_MID_SRCAVAIL)) {
-		struct tx_srcavail_state *tx_sa = TX_SRCAVAIL_STATE(mb);
-		if (ssk->tx_sa != tx_sa) {
-			sdp_dbg_data(ssk->socket, "SrcAvail cancelled "
-					"before being sent!\n");
-			WARN_ON(1);
-			m_freem(mb);
-			return;
-		}
-		TX_SRCAVAIL_STATE(mb)->mseq = mseq;
-	}
-#endif
-
 	if (unlikely(mb->m_flags & M_URG))
 		h->flags = SDP_OOB_PRES | SDP_OOB_PEND;
 	else
@@ -111,12 +96,6 @@ sdp_post_send(struct sdp_sock *ssk, struct mbuf *mb)
 	h->len = htonl(mb->m_pkthdr.len);
 	h->mseq = htonl(mseq);
 	h->mseq_ack = htonl(mseq_ack(ssk));
-
-	sdp_prf1(ssk->socket, mb, "TX: %s bufs: %d mseq:%ld ack:%d",
-			mid2str(h->mid), rx_ring_posted(ssk), mseq,
-			ntohl(h->mseq_ack));
-
-	SDP_DUMP_PACKET(ssk->socket, "TX", mb, h);
 
 	tx_req = &ssk->tx_ring.buffer[mseq & (SDP_TX_SIZE - 1)];
 	tx_req->mb = mb;
@@ -180,12 +159,6 @@ sdp_send_completion(struct sdp_sock *ssk, int mseq)
 	mb = tx_req->mb;
 	sdp_cleanup_sdp_buf(ssk, tx_req, DMA_TO_DEVICE);
 
-#ifdef SDP_ZCOPY
-	/* TODO: AIO and real zcopy code; add their context support here */
-	if (BZCOPY_STATE(mb))
-		BZCOPY_STATE(mb)->busy--;
-#endif
-
 	atomic_inc(&tx_ring->tail);
 
 out:
@@ -200,8 +173,6 @@ sdp_handle_send_comp(struct sdp_sock *ssk, struct ib_wc *wc)
 
 	if (unlikely(wc->status)) {
 		if (wc->status != IB_WC_WR_FLUSH_ERR) {
-			sdp_prf(ssk->socket, mb, "Send completion with error. "
-				"Status %d", wc->status);
 			sdp_dbg_data(ssk->socket, "Send completion with error. "
 				"Status %d\n", wc->status);
 			sdp_notify(ssk, ECONNRESET);
@@ -213,7 +184,6 @@ sdp_handle_send_comp(struct sdp_sock *ssk, struct ib_wc *wc)
 		return -1;
 
 	h = mtod(mb, struct sdp_bsdh *);
-	sdp_prf1(ssk->socket, mb, "tx completion. mseq:%d", ntohl(h->mseq));
 	sdp_dbg(ssk->socket, "tx completion. %p %d mseq:%d",
 	    mb, mb->m_pkthdr.len, ntohl(h->mseq));
 	m_freem(mb);
@@ -229,35 +199,6 @@ sdp_process_tx_wc(struct sdp_sock *ssk, struct ib_wc *wc)
 		sdp_handle_send_comp(ssk, wc);
 		return;
 	}
-
-#ifdef SDP_ZCOPY
-	if (wc->wr_id & SDP_OP_RDMA) {
-		/* TODO: handle failed RDMA read cqe */
-
-		sdp_dbg_data(ssk->socket,
-	 	    "TX comp: RDMA read. status: %d\n", wc->status);
-		sdp_prf1(sk, NULL, "TX comp: RDMA read");
-
-		if (!ssk->tx_ring.rdma_inflight) {
-			sdp_warn(ssk->socket, "ERROR: unexpected RDMA read\n");
-			return;
-		}
-
-		if (!ssk->tx_ring.rdma_inflight->busy) {
-			sdp_warn(ssk->socket,
-			    "ERROR: too many RDMA read completions\n");
-			return;
-		}
-
-		/* Only last RDMA read WR is signalled. Order is guaranteed -
-		 * therefore if Last RDMA read WR is completed - all other
-		 * have, too */
-		ssk->tx_ring.rdma_inflight->busy = 0;
-		sowwakeup(ssk->socket);
-		sdp_dbg_data(ssk->socket, "woke up sleepers\n");
-		return;
-	}
-#endif
 
 	/* Keepalive probe sent cleanup */
 	sdp_cnt(sdp_keepalive_probes_sent);
@@ -298,8 +239,6 @@ sdp_process_tx_cq(struct sdp_sock *ssk)
 
 	if (wc_processed) {
 		sdp_post_sends(ssk, M_NOWAIT);
-		sdp_prf1(sk, NULL, "Waking sendmsg. inflight=%d", 
-				(u32) tx_ring_posted(ssk));
 		sowwakeup(ssk->socket);
 	}
 
@@ -312,13 +251,9 @@ sdp_poll_tx(struct sdp_sock *ssk)
 	struct socket *sk = ssk->socket;
 	u32 inflight, wc_processed;
 
-	sdp_prf1(ssk->socket, NULL, "TX timeout: inflight=%d, head=%d tail=%d", 
-		(u32) tx_ring_posted(ssk),
-		ring_head(ssk->tx_ring), ring_tail(ssk->tx_ring));
-
 	if (unlikely(ssk->state == TCPS_CLOSED)) {
 		sdp_warn(sk, "Socket is closed\n");
-		goto out;
+		return;
 	}
 
 	wc_processed = sdp_process_tx_cq(ssk);
@@ -328,8 +263,6 @@ sdp_poll_tx(struct sdp_sock *ssk)
 		SDPSTATS_COUNTER_INC(tx_poll_hit);
 
 	inflight = (u32) tx_ring_posted(ssk);
-	sdp_prf1(ssk->socket, NULL, "finished tx processing. inflight = %d",
-	    inflight);
 
 	/* If there are still packets in flight and the timer has not already
 	 * been scheduled by the Tx routine then schedule it here to guarantee
@@ -337,14 +270,6 @@ sdp_poll_tx(struct sdp_sock *ssk)
 	if (inflight)
 		callout_reset(&ssk->tx_ring.timer, SDP_TX_POLL_TIMEOUT,
 		    sdp_poll_tx_timeout, ssk);
-out:
-#ifdef SDP_ZCOPY
-	if (ssk->tx_ring.rdma_inflight && ssk->tx_ring.rdma_inflight->busy) {
-		sdp_prf1(sk, NULL, "RDMA is inflight - arming irq");
-		sdp_arm_tx_cq(ssk);
-	}
-#endif
-	return;
 }
 
 static void
@@ -364,7 +289,6 @@ sdp_tx_irq(struct ib_cq *cq, void *cq_context)
 	struct sdp_sock *ssk;
 
 	ssk = cq_context;
-	sdp_prf1(ssk->socket, NULL, "tx irq");
 	sdp_dbg_data(ssk->socket, "Got tx comp interrupt\n");
 	SDPSTATS_COUNTER_INC(tx_int_count);
 	SDP_WLOCK(ssk);

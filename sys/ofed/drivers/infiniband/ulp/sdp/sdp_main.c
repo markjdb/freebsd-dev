@@ -427,16 +427,10 @@ sdp_init_sock(struct socket *sk)
 
 	callout_init_rw(&ssk->keep2msl, &ssk->lock, CALLOUT_RETURNUNLOCKED);
 	TASK_INIT(&ssk->shutdown_task, 0, sdp_shutdown_task, ssk);
-#ifdef SDP_ZCOPY
-	INIT_DELAYED_WORK(&ssk->srcavail_cancel_work, srcavail_cancel_timeout);
-	ssk->zcopy_thresh = -1; /* use global sdp_zcopy_thresh */
-	ssk->tx_ring.rdma_inflight = NULL;
-#endif
 	atomic_set(&ssk->mseq_ack, 0);
 	sdp_rx_ring_init(ssk);
 	ssk->tx_ring.buffer = NULL;
-
-	return 0;
+	return (0);
 }
 
 /*
@@ -1715,7 +1709,6 @@ sdp_set_default_moderation(struct sdp_sock *ssk)
 static void
 sdp_dev_add(struct ib_device *device)
 {
-	struct ib_fmr_pool_param param;
 	struct sdp_device *sdp_dev;
 
 	sdp_dev = malloc(sizeof(*sdp_dev), M_SDP, M_WAITOK | M_ZERO);
@@ -1725,21 +1718,9 @@ sdp_dev_add(struct ib_device *device)
         sdp_dev->mr = ib_get_dma_mr(sdp_dev->pd, IB_ACCESS_LOCAL_WRITE);
         if (IS_ERR(sdp_dev->mr))
 		goto out_mr;
-	memset(&param, 0, sizeof param);
-	param.max_pages_per_fmr = SDP_FMR_SIZE;
-	param.page_shift = PAGE_SHIFT;
-	param.access = (IB_ACCESS_LOCAL_WRITE | IB_ACCESS_REMOTE_READ);
-	param.pool_size = SDP_FMR_POOL_SIZE;
-	param.dirty_watermark = SDP_FMR_DIRTY_SIZE;
-	param.cache = 1;
-	sdp_dev->fmr_pool = ib_create_fmr_pool(sdp_dev->pd, &param);
-	if (IS_ERR(sdp_dev->fmr_pool))
-		goto out_fmr;
 	ib_set_client_data(device, &sdp_client, sdp_dev);
 	return;
 
-out_fmr:
-	ib_dereg_mr(sdp_dev->mr);
 out_mr:
 	ib_dealloc_pd(sdp_dev->pd);
 out_pd:
@@ -1769,8 +1750,6 @@ sdp_dev_rem(struct ib_device *device)
 	sdp_dev = ib_get_client_data(device, &sdp_client);
 	if (!sdp_dev)
 		return;
-	ib_flush_fmr_pool(sdp_dev->fmr_pool);
-	ib_destroy_fmr_pool(sdp_dev->fmr_pool);
 	ib_dereg_mr(sdp_dev->mr);
 	ib_dealloc_pd(sdp_dev->pd);
 	free(sdp_dev, M_SDP);

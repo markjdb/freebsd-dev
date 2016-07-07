@@ -53,7 +53,6 @@
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_cm.h>
 #include <rdma/sdp_socket.h>
-#include <rdma/ib_fmr_pool.h>
 
 #ifdef SDP_DEBUG
 #define	CONFIG_INFINIBAND_SDP_DEBUG
@@ -87,12 +86,6 @@ struct name {                                                           \
 #define SDP_TX_SIZE 0x40
 #define SDP_RX_SIZE 0x40
 
-#define SDP_FMR_SIZE (MIN(0x1000, PAGE_SIZE) / sizeof(u64))
-#define SDP_FMR_POOL_SIZE	1024
-#define SDP_FMR_DIRTY_SIZE	( SDP_FMR_POOL_SIZE / 4 )
-
-#define SDP_MAX_RDMA_READ_LEN (PAGE_SIZE * (SDP_FMR_SIZE - 2))
-
 /* mb inlined data len - rest will be rx'ed into frags */
 #define SDP_HEAD_SIZE (sizeof(struct sdp_bsdh))
 
@@ -107,35 +100,16 @@ struct name {                                                           \
 
 #define SDP_NUM_WC 4
 
-#define SDP_DEF_ZCOPY_THRESH 64*1024
-#define SDP_MIN_ZCOPY_THRESH PAGE_SIZE
-#define SDP_MAX_ZCOPY_THRESH 1048576
-
 #define SDP_OP_RECV 0x800000000LL
 #define SDP_OP_SEND 0x400000000LL
 #define SDP_OP_RDMA 0x200000000LL
 #define SDP_OP_NOP  0x100000000LL
 
-/* how long (in jiffies) to block sender till tx completion*/
-#define SDP_BZCOPY_POLL_TIMEOUT (HZ / 10)
-
 #define SDP_AUTO_CONF	0xffff
 #define AUTO_MOD_DELAY (HZ / 4)
 
-struct sdp_mb_cb {
-	__u32		seq;		/* Starting sequence number	*/
-	struct bzcopy_state      *bz;
-	struct rx_srcavail_state *rx_sa;
-	struct tx_srcavail_state *tx_sa;
-};
-
 #define	M_PUSH	M_PROTO1	/* Do a 'push'. */
 #define	M_URG	M_PROTO2	/* Mark as urgent (oob). */
-
-#define SDP_SKB_CB(__mb)      ((struct sdp_mb_cb *)&((__mb)->cb[0]))
-#define BZCOPY_STATE(mb)      (SDP_SKB_CB(mb)->bz)
-#define RX_SRCAVAIL_STATE(mb) (SDP_SKB_CB(mb)->rx_sa)
-#define TX_SRCAVAIL_STATE(mb) (SDP_SKB_CB(mb)->tx_sa)
 
 #ifndef MIN
 #define MIN(a, b) (a < b ? a : b)
@@ -146,14 +120,8 @@ struct sdp_mb_cb {
 #define ring_posted(ring) (ring_head(ring) - ring_tail(ring))
 
 #define rx_ring_posted(ssk) ring_posted(ssk->rx_ring)
-#ifdef SDP_ZCOPY
-#define tx_ring_posted(ssk) (ring_posted(ssk->tx_ring) + \
-	(ssk->tx_ring.rdma_inflight ? ssk->tx_ring.rdma_inflight->busy : 0))
-#else
 #define tx_ring_posted(ssk) ring_posted(ssk->tx_ring)
-#endif
 
-extern int sdp_zcopy_thresh;
 extern int rcvbuf_initial_size;
 extern struct workqueue_struct *rx_comp_wq;
 extern struct ib_client sdp_client;
@@ -251,19 +219,6 @@ struct sdp_chrecvbuf {
 	u32 size;
 } __attribute__((__packed__));
 
-/* Context used for synchronous zero copy bcopy (BZCOPY) */
-struct bzcopy_state {
-	unsigned char __user  *u_base;
-	int                    u_len;
-	int                    left;
-	int                    page_cnt;
-	int                    cur_page;
-	int                    cur_offset;
-	int                    busy;
-	struct sdp_sock      *ssk;
-	struct page         **pages;
-};
-
 enum rx_sa_flag {
 	RX_SA_ABORTED    = 2,
 };
@@ -287,7 +242,6 @@ struct rx_srcavail_state {
 
 	/* Dest buff info */
 	struct ib_umem *umem;
-	struct ib_pool_fmr *fmr;
 
 	/* Utility */
 	u8  busy;
@@ -299,7 +253,6 @@ struct tx_srcavail_state {
 	u8		busy;
 
 	struct ib_umem *umem;
-	struct ib_pool_fmr *fmr;
 
 	u32		bytes_sent;
 	u32		bytes_acked;
@@ -311,9 +264,6 @@ struct tx_srcavail_state {
 };
 
 struct sdp_tx_ring {
-#ifdef SDP_ZCOPY
-	struct rx_srcavail_state *rdma_inflight;
-#endif
 	struct sdp_buf   	*buffer;
 	atomic_t          	head;
 	atomic_t          	tail;
@@ -339,7 +289,6 @@ struct sdp_rx_ring {
 struct sdp_device {
 	struct ib_pd 		*pd;
 	struct ib_mr 		*mr;
-	struct ib_fmr_pool 	*fmr_pool;
 };
 
 struct sdp_moderation {
@@ -434,15 +383,6 @@ struct sdp_sock {
 	unsigned long rx_bytes;
 	struct sdp_moderation auto_mod;
 	struct task shutdown_task;
-#ifdef SDP_ZCOPY
-	struct tx_srcavail_state *tx_sa;
-	struct rx_srcavail_state *rx_sa;
-	spinlock_t tx_sa_lock;
-	struct delayed_work srcavail_cancel_work;
-	int srcavail_cancel_mseq;
-	/* ZCOPY data: -1:use global; 0:disable zcopy; >0: zcopy threshold */
-	int zcopy_thresh;
-#endif
 };
 
 #define	sdp_sk(so)	((struct sdp_sock *)(so->so_pcb))
@@ -483,20 +423,20 @@ static inline void rx_ring_destroy_lock(struct sdp_rx_ring *rx_ring)
 	rw_wunlock(&rx_ring->destroyed_lock);
 }
 
-static inline void sdp_arm_rx_cq(struct sdp_sock *ssk)
+static inline void
+sdp_arm_rx_cq(struct sdp_sock *ssk)
 {
-	sdp_prf(ssk->socket, NULL, "Arming RX cq");
-	sdp_dbg_data(ssk->socket, "Arming RX cq\n");
 
+	sdp_dbg_data(ssk->socket, "Arming RX cq\n");
 	ib_req_notify_cq(ssk->rx_ring.cq, IB_CQ_NEXT_COMP);
 }
 
-static inline void sdp_arm_tx_cq(struct sdp_sock *ssk)
+static inline void
+sdp_arm_tx_cq(struct sdp_sock *ssk)
 {
-	sdp_prf(ssk->socket, NULL, "Arming TX cq");
-	sdp_dbg_data(ssk->socket, "Arming TX cq. credits: %d, posted: %d\n",
-		tx_credits(ssk), tx_ring_posted(ssk));
 
+	sdp_dbg_data(ssk->socket, "Arming TX cq. credits: %d, posted: %d\n",
+	    tx_credits(ssk), tx_ring_posted(ssk));
 	ib_req_notify_cq(ssk->tx_ring.cq, IB_CQ_NEXT_COMP);
 }
 
@@ -702,23 +642,6 @@ int sdp_resize_buffers(struct sdp_sock *ssk, u32 new_size);
 int sdp_init_buffers(struct sdp_sock *ssk, u32 new_size);
 void sdp_do_posts(struct sdp_sock *ssk);
 void sdp_rx_comp_full(struct sdp_sock *ssk);
-
-/* sdp_zcopy.c */
-struct kiocb;
-int sdp_sendmsg_zcopy(struct kiocb *iocb, struct socket *sk, struct iovec *iov);
-int sdp_handle_srcavail(struct sdp_sock *ssk, struct sdp_srcah *srcah);
-void sdp_handle_sendsm(struct sdp_sock *ssk, u32 mseq_ack);
-void sdp_handle_rdma_read_compl(struct sdp_sock *ssk, u32 mseq_ack,
-		u32 bytes_completed);
-int sdp_handle_rdma_read_cqe(struct sdp_sock *ssk);
-int sdp_rdma_to_iovec(struct socket *sk, struct iovec *iov, struct mbuf *mb,
-		unsigned long *used);
-int sdp_post_rdma_rd_compl(struct sdp_sock *ssk,
-		struct rx_srcavail_state *rx_sa);
-int sdp_post_sendsm(struct socket *sk);
-void srcavail_cancel_timeout(struct work_struct *work);
-void sdp_abort_srcavail(struct socket *sk);
-void sdp_abort_rdma_read(struct socket *sk);
 int sdp_process_rx(struct sdp_sock *ssk);
 
 #endif

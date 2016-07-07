@@ -107,7 +107,6 @@ sdp_post_recv(struct sdp_sock *ssk)
 	int id = ring_head(ssk->rx_ring);
 
 	/* Now, allocate and repost recv */
-	sdp_prf(ssk->socket, mb, "Posting mb");
 	mb = m_getm2(NULL, ssk->recv_bytes, M_NOWAIT, MT_DATA, M_PKTHDR);
 	if (mb == NULL) {
 		/* Retry so we can't stall out with no memory. */
@@ -204,39 +203,7 @@ sdp_sock_queue_rcv_mb(struct socket *sk, struct mbuf *mb)
 
 	h = mtod(mb, struct sdp_bsdh *);
 
-#ifdef SDP_ZCOPY
-	SDP_SKB_CB(mb)->seq = rcv_nxt(ssk);
-	if (h->mid == SDP_MID_SRCAVAIL) {
-		struct sdp_srcah *srcah = (struct sdp_srcah *)(h+1);
-		struct rx_srcavail_state *rx_sa;
-		
-		ssk->srcavail_cancel_mseq = 0;
-
-		ssk->rx_sa = rx_sa = RX_SRCAVAIL_STATE(mb) = kzalloc(
-				sizeof(struct rx_srcavail_state), M_NOWAIT);
-
-		rx_sa->mseq = ntohl(h->mseq);
-		rx_sa->used = 0;
-		rx_sa->len = mb_len = ntohl(srcah->len);
-		rx_sa->rkey = ntohl(srcah->rkey);
-		rx_sa->vaddr = be64_to_cpu(srcah->vaddr);
-		rx_sa->flags = 0;
-
-		if (ssk->tx_sa) {
-			sdp_dbg_data(ssk->socket, "got RX SrcAvail while waiting "
-					"for TX SrcAvail. waking up TX SrcAvail"
-					"to be aborted\n");
-			wake_up(sk->sk_sleep);
-		}
-
-		atomic_add(mb->len, &ssk->rcv_nxt);
-		sdp_dbg_data(sk, "queueing SrcAvail. mb_len = %d vaddr = %lld\n",
-			mb_len, rx_sa->vaddr);
-	} else
-#endif
-	{
-		atomic_add(mb->m_pkthdr.len, &ssk->rcv_nxt);
-	}
+	atomic_add(mb->m_pkthdr.len, &ssk->rcv_nxt);
 
 	m_adj(mb, SDP_HEAD_SIZE);
 	SOCKBUF_LOCK(&sk->so_rcv);
@@ -342,42 +309,13 @@ sdp_process_rx_ctl_mb(struct sdp_sock *ssk, struct mbuf *mb)
 		m_freem(mb);
 
 		break;
-#ifdef SDP_ZCOPY
-	case SDP_MID_RDMARDCOMPL:
-		m_freem(mb);
-		break;
-	case SDP_MID_SENDSM:
-		sdp_handle_sendsm(ssk, ntohl(h->mseq_ack));
-		m_freem(mb);
-		break;
-	case SDP_MID_SRCAVAIL_CANCEL:
-		sdp_dbg_data(sk, "Handling SrcAvailCancel\n");
-		sdp_prf(sk, NULL, "Handling SrcAvailCancel");
-		if (ssk->rx_sa) {
-			ssk->srcavail_cancel_mseq = ntohl(h->mseq);
-			ssk->rx_sa->flags |= RX_SA_ABORTED;
-			ssk->rx_sa = NULL; /* TODO: change it into SDP_MID_DATA and get 
-			                      the dirty logic from recvmsg */
-		} else {
-			sdp_dbg(sk, "Got SrcAvailCancel - "
-					"but no SrcAvail in process\n");
-		}
-		m_freem(mb);
-		break;
-	case SDP_MID_SINKAVAIL:
-		sdp_dbg_data(sk, "Got SinkAvail - not supported: ignored\n");
-		sdp_prf(sk, NULL, "Got SinkAvail - not supported: ignored");
-		/* FALLTHROUGH */
-#endif
 	case SDP_MID_ABORT:
 		sdp_dbg_data(sk, "Handling ABORT\n");
-		sdp_prf(sk, NULL, "Handling ABORT");
 		sdp_notify(ssk, ECONNRESET);
 		m_freem(mb);
 		break;
 	case SDP_MID_DISCONN:
 		sdp_dbg_data(sk, "Handling DISCONN\n");
-		sdp_prf(sk, NULL, "Handling DISCONN");
 		sdp_handle_disconn(ssk);
 		break;
 	case SDP_MID_CHRCVBUF:
@@ -429,10 +367,6 @@ sdp_process_rx_mb(struct sdp_sock *ssk, struct mbuf *mb)
 	if (mseq_ack >= ssk->nagle_last_unacked)
 		ssk->nagle_last_unacked = 0;
 
-	sdp_prf1(ssk->socket, mb, "RX %s +%d c:%d->%d mseq:%d ack:%d\n",
-		mid2str(h->mid), ntohs(h->bufs), credits_before,
-		tx_credits(ssk), ntohl(h->mseq), ntohl(h->mseq_ack));
-
 	if (unlikely(h->mid == SDP_MID_DATA &&
 	    mb->m_pkthdr.len == SDP_HEAD_SIZE)) {
 		/* Credit update is valid even after RCV_SHUTDOWN */
@@ -442,33 +376,13 @@ sdp_process_rx_mb(struct sdp_sock *ssk, struct mbuf *mb)
 
 	if ((h->mid != SDP_MID_DATA && h->mid != SDP_MID_SRCAVAIL) ||
 	    TCPS_HAVERCVDFIN(ssk->state)) {
-		sdp_prf(sk, NULL, "Control mb - queing to control queue");
-#ifdef SDP_ZCOPY
-		if (h->mid == SDP_MID_SRCAVAIL_CANCEL) {
-			sdp_dbg_data(sk, "Got SrcAvailCancel. "
-					"seq: 0x%d seq_ack: 0x%d\n",
-					ntohl(h->mseq), ntohl(h->mseq_ack));
-			ssk->srcavail_cancel_mseq = ntohl(h->mseq);
-		}
-
-
-		if (h->mid == SDP_MID_RDMARDCOMPL) {
-			struct sdp_rrch *rrch = (struct sdp_rrch *)(h+1);
-			sdp_dbg_data(sk, "RdmaRdCompl message arrived\n");
-			sdp_handle_rdma_read_compl(ssk, ntohl(h->mseq_ack),
-					ntohl(rrch->len));
-		}
-#endif
 		if (mbufq_enqueue(&ssk->rxctlq, mb) != 0)
 			m_freem(mb);
 		return (0);
 	}
 
-	sdp_prf1(sk, NULL, "queueing %s mb\n", mid2str(h->mid));
 	mb = sdp_sock_queue_rcv_mb(sk, mb);
-
-
-	return 0;
+	return (0);
 }
 
 /* called only from irq */
@@ -521,16 +435,6 @@ sdp_process_rx_wc(struct sdp_sock *ssk, struct ib_wc *wc)
 	return mb;
 }
 
-/* Wakeup writers if we now have credits. */
-static void
-sdp_bzcopy_write_space(struct sdp_sock *ssk)
-{
-	struct socket *sk = ssk->socket;
-
-	if (tx_credits(ssk) >= ssk->min_bufs && sk)
-		sowwakeup(sk);
-}
-
 /* only from interrupt. */
 static int
 sdp_poll_rx_cq(struct sdp_sock *ssk)
@@ -556,9 +460,6 @@ sdp_poll_rx_cq(struct sdp_sock *ssk)
 		}
 	} while (n == SDP_NUM_WC);
 
-	if (wc_processed)
-		sdp_bzcopy_write_space(ssk);
-
 	return wc_processed;
 }
 
@@ -568,19 +469,12 @@ sdp_rx_comp_work(struct work_struct *work)
 	struct sdp_sock *ssk = container_of(work, struct sdp_sock,
 			rx_comp_work);
 
-	sdp_prf(ssk->socket, NULL, "%s", __func__);
-
 	SDP_WLOCK(ssk);
-	if (unlikely(!ssk->qp)) {
-		sdp_prf(ssk->socket, NULL, "qp was destroyed");
+	if (__predict_false(ssk->qp == NULL))
 		goto out;
-	}
-	if (unlikely(!ssk->rx_ring.cq)) {
-		sdp_prf(ssk->socket, NULL, "rx_ring.cq is NULL");
+	if (__predict_false(ssk->rx_ring.cq == NULL))
 		goto out;
-	}
-
-	if (unlikely(!ssk->poll_cq)) {
+	if (__predict_false(ssk->poll_cq == 0)) {
 		struct rdma_cm_id *id = ssk->id;
 		if (id && id->qp)
 			rdma_notify(id, IB_EVENT_COMM_EST);
@@ -625,12 +519,9 @@ sdp_do_posts(struct sdp_sock *ssk)
 
 	if (credit_update_needed(ssk) || xmit_poll_force) {
 		/* if has pending tx because run out of tx_credits - xmit it */
-		sdp_prf(sk, NULL, "Processing to free pending sends");
 		sdp_xmit_poll(ssk,  xmit_poll_force);
-		sdp_prf(sk, NULL, "Sending credit update");
 		sdp_post_sends(ssk, M_NOWAIT);
 	}
-
 }
 
 int
@@ -647,13 +538,9 @@ sdp_process_rx(struct sdp_sock *ssk)
 	credits_before = tx_credits(ssk);
 
 	wc_processed = sdp_poll_rx_cq(ssk);
-	sdp_prf(ssk->socket, NULL, "processed %d", wc_processed);
 
-	if (wc_processed) {
-		sdp_prf(ssk->socket, NULL, "credits:  %d -> %d",
-				credits_before, tx_credits(ssk));
+	if (wc_processed)
 		queue_work(rx_comp_wq, &ssk->rx_comp_work);
-	}
 	sdp_arm_rx_cq(ssk);
 
 	rx_ring_unlock(&ssk->rx_ring);
@@ -673,8 +560,6 @@ sdp_rx_irq(struct ib_cq *cq, void *cq_context)
 	}
 
 	SDPSTATS_COUNTER_INC(rx_int_count);
-
-	sdp_prf(sk, NULL, "rx irq");
 
 	sdp_process_rx(ssk);
 }

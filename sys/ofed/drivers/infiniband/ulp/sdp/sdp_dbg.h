@@ -28,64 +28,6 @@ do {								\
 	module_param_named(var, var, int, 0644); \
 	MODULE_PARM_DESC(var, msg " [" #def_val "]"); \
 
-#ifdef SDP_PROFILING
-struct mbuf;
-struct sdpprf_log {
-	int 		idx;
-	int 		pid;
-	int 		cpu;
-	int 		sk_num;
-	int 		sk_dport;
-	struct mbuf 	*mb;
-	char		msg[256];
-
-	unsigned long long time;
-
-	const char 	*func;
-	int 		line;
-};
-
-#define SDPPRF_LOG_SIZE 0x20000 /* must be a power of 2 */
-
-extern struct sdpprf_log sdpprf_log[SDPPRF_LOG_SIZE];
-extern int sdpprf_log_count;
-
-#ifdef GETNSTIMEODAY_SUPPORTED
-static inline unsigned long long current_nsec(void)
-{
-	struct timespec tv;
-	getnstimeofday(&tv);
-	return tv.tv_sec * NSEC_PER_SEC + tv.tv_nsec;
-}
-#else
-#define current_nsec() jiffies_to_usecs(jiffies)
-#endif
-
-#define sdp_prf1(sk, s, format, arg...) ({ \
-	struct sdpprf_log *l = \
-		&sdpprf_log[sdpprf_log_count++ & (SDPPRF_LOG_SIZE - 1)]; \
-	preempt_disable(); \
-	l->idx = sdpprf_log_count - 1; \
-	l->pid = current->pid; \
-	l->sk_num = (sk) ? inet_sk(sk)->num : -1;                 \
-	l->sk_dport = (sk) ? ntohs(inet_sk(sk)->dport) : -1; \
-	l->cpu = smp_processor_id(); \
-	l->mb = s; \
-	snprintf(l->msg, sizeof(l->msg) - 1, format, ## arg); \
-	l->time = current_nsec(); \
-	l->func = __func__; \
-	l->line = __LINE__; \
-	preempt_enable(); \
-	1; \
-})
-//#define sdp_prf(sk, s, format, arg...)
-#define sdp_prf(sk, s, format, arg...) sdp_prf1(sk, s, format, ## arg)
-
-#else
-#define sdp_prf1(sk, s, format, arg...)
-#define sdp_prf(sk, s, format, arg...)
-#endif
-
 #ifdef CONFIG_INFINIBAND_SDP_DEBUG
 extern int sdp_debug_level;
 
@@ -118,19 +60,6 @@ extern int sdp_data_debug_level;
 #define sdp_dbg_data(priv, format, arg...)
 #define SDP_DUMP_PACKET(sk, str, mb, h)
 #endif
-
-#define SOCK_REF_RESET "RESET"
-#define SOCK_REF_ALIVE "ALIVE" /* sock_alloc -> destruct_sock */
-#define SOCK_REF_CLONE "CLONE"
-#define SOCK_REF_CMA "CMA" /* sdp_cma_handler() is expected to be invoked */
-#define SOCK_REF_SEQ "SEQ" /* during proc read */
-#define SOCK_REF_DREQ_TO "DREQ_TO" /* dreq timeout is pending */
-#define SOCK_REF_ZCOPY "ZCOPY" /* zcopy send in process */
-#define SOCK_REF_RDMA_RD "RDMA_RD" /* RDMA read in process */
-
-#define sock_hold(sk, msg)  sock_ref(sk, msg, sock_hold)
-#define sock_put(sk, msg)  sock_ref(sk, msg, sock_put)
-#define __sock_put(sk, msg)  sock_ref(sk, msg, __sock_put)
 
 #define ENUM2STR(e) [e] = #e
 
