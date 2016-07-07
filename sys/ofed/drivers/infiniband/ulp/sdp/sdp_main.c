@@ -58,8 +58,8 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
  */
+
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
@@ -175,8 +175,8 @@ sdp_pcbfree(struct sdp_sock *ssk)
 	sdp_tx_ring_destroy(ssk);
 	sdp_rx_ring_destroy(ssk);
 	rw_destroy(&ssk->rx_ring.destroyed_lock);
-	uma_zfree(sdp_zone, ssk);
 	rw_destroy(&ssk->lock);
+	uma_zfree(sdp_zone, ssk);
 }
 
 /*
