@@ -105,9 +105,6 @@ struct name {                                                           \
 #define SDP_OP_RDMA 0x200000000LL
 #define SDP_OP_NOP  0x100000000LL
 
-#define SDP_AUTO_CONF	0xffff
-#define AUTO_MOD_DELAY (HZ / 4)
-
 #define	M_PUSH	M_PROTO1	/* Do a 'push'. */
 #define	M_URG	M_PROTO2	/* Mark as urgent (oob). */
 
@@ -291,27 +288,6 @@ struct sdp_device {
 	struct ib_mr 		*mr;
 };
 
-struct sdp_moderation {
-	unsigned long last_moder_packets;
-	unsigned long last_moder_tx_packets;
-	unsigned long last_moder_bytes;
-	unsigned long last_moder_jiffies;
-	int last_moder_time;
-	u16 rx_usecs;
-	u16 rx_frames;
-	u16 tx_usecs;
-	u32 pkt_rate_low;
-	u16 rx_usecs_low;
-	u32 pkt_rate_high;
-	u16 rx_usecs_high;
-	u16 sample_interval;
-	u16 adaptive_rx_coal;
-	u32 msg_enable;
-
-	int moder_cnt;
-	int moder_time;
-};
-
 /* These are flags fields. */
 #define	SDP_TIMEWAIT	0x0001		/* In ssk timewait state. */
 #define	SDP_DROPPED	0x0002		/* Socket has been dropped. */
@@ -381,7 +357,6 @@ struct sdp_sock {
 	unsigned long rx_packets;
 	unsigned long tx_bytes;
 	unsigned long rx_bytes;
-	struct sdp_moderation auto_mod;
 	struct task shutdown_task;
 };
 
