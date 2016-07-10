@@ -194,6 +194,7 @@ sdp_response_handler(struct socket *sk, struct rdma_cm_id *id,
 	ssk = sdp_sk(sk);
 	SDP_WLOCK(ssk);
 	ssk->state = TCPS_ESTABLISHED;
+	ssk->poll_cq = 1;
 	sdp_set_default_moderation(ssk);
 	if (ssk->flags & SDP_DROPPED) {
 		SDP_WUNLOCK(ssk);
@@ -208,7 +209,6 @@ sdp_response_handler(struct socket *sk, struct rdma_cm_id *id,
 	ssk->min_bufs = tx_credits(ssk) / 4;
 	ssk->xmit_size_goal =
 		ntohl(h->actrcvsz) - sizeof(struct sdp_bsdh);
-	ssk->poll_cq = 1;
 
 	dst_addr = (struct sockaddr_in *)&id->route.addr.dst_addr;
 	ssk->fport = dst_addr->sin_port;
@@ -227,6 +227,7 @@ sdp_connected_handler(struct socket *sk, struct rdma_cm_event *event)
 	ssk = sdp_sk(sk);
 	SDP_WLOCK(ssk);
 	ssk->state = TCPS_ESTABLISHED;
+	ssk->poll_cq = 1;
 
 	sdp_set_default_moderation(ssk);
 
