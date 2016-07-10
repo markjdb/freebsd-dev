@@ -136,8 +136,6 @@ sdp_post_send(struct sdp_sock *ssk, struct mbuf *mb)
 	atomic_inc(&ssk->tx_ring.head);
 	atomic_dec(&ssk->tx_ring.credits);
 	atomic_set(&ssk->remote_credits, rx_ring_posted(ssk));
-
-	return;
 }
 
 static struct mbuf *
