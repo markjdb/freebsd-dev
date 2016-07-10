@@ -564,16 +564,12 @@ sdp_process_rx(struct sdp_sock *ssk)
 static void
 sdp_rx_irq(struct ib_cq *cq, void *cq_context)
 {
-	struct socket *sk = cq_context;
-	struct sdp_sock *ssk = sdp_sk(sk);
+	struct sdp_sock *ssk;
 
-	if (cq != ssk->rx_ring.cq) {
-		sdp_dbg(sk, "cq = %p, ssk->cq = %p\n", cq, ssk->rx_ring.cq);
-		return;
-	}
+	ssk = cq_context;
+	KASSERT(cq == ssk->rx_ring.cq, ("%s: mismatched cq on %p", ssk));
 
 	SDPSTATS_COUNTER_INC(rx_int_count);
-
 	sdp_process_rx(ssk);
 }
 
@@ -617,7 +613,7 @@ sdp_rx_ring_create(struct sdp_sock *ssk, struct ib_device *device)
 	    M_SDP, M_WAITOK);
 
 	rx_cq = ib_create_cq(device, sdp_rx_irq, sdp_rx_cq_event_handler,
-			  ssk->socket, SDP_RX_SIZE, 0);
+	    ssk, SDP_RX_SIZE, 0);
 	if (IS_ERR(rx_cq)) {
 		rc = PTR_ERR(rx_cq);
 		sdp_warn(ssk->socket, "Unable to allocate RX CQ: %d.\n", rc);
