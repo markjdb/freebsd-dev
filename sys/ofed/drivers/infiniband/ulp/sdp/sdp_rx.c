@@ -300,8 +300,7 @@ sdp_recv_completion(struct sdp_sock *ssk, int id)
 	return mb;
 }
 
-/* socket lock should be taken before calling this */
-static int
+static void
 sdp_process_rx_ctl_mb(struct sdp_sock *ssk, struct mbuf *mb)
 {
 	struct sdp_bsdh *h;
@@ -314,19 +313,15 @@ sdp_process_rx_ctl_mb(struct sdp_sock *ssk, struct mbuf *mb)
 	case SDP_MID_DATA:
 	case SDP_MID_SRCAVAIL:
 		sdp_dbg(sk, "DATA after socket rcv was shutdown\n");
-
 		/* got data in RCV_SHUTDOWN */
 		if (ssk->state == TCPS_FIN_WAIT_1) {
 			sdp_dbg(sk, "RX data when state = FIN_WAIT1\n");
 			sdp_notify(ssk, ECONNRESET);
 		}
-		m_freem(mb);
-
 		break;
 	case SDP_MID_ABORT:
 		sdp_dbg_data(sk, "Handling ABORT\n");
 		sdp_notify(ssk, ECONNRESET);
-		m_freem(mb);
 		break;
 	case SDP_MID_DISCONN:
 		sdp_dbg_data(sk, "Handling DISCONN\n");
@@ -335,20 +330,17 @@ sdp_process_rx_ctl_mb(struct sdp_sock *ssk, struct mbuf *mb)
 	case SDP_MID_CHRCVBUF:
 		sdp_dbg_data(sk, "Handling RX CHRCVBUF\n");
 		sdp_handle_resize_request(ssk, (struct sdp_chrecvbuf *)(h+1));
-		m_freem(mb);
 		break;
 	case SDP_MID_CHRCVBUF_ACK:
 		sdp_dbg_data(sk, "Handling RX CHRCVBUF_ACK\n");
 		sdp_handle_resize_ack(ssk, (struct sdp_chrecvbuf *)(h+1));
-		m_freem(mb);
 		break;
 	default:
 		/* TODO: Handle other messages */
 		sdp_warn(sk, "SDP: FIXME MID %d\n", h->mid);
-		m_freem(mb);
+		break;
 	}
-
-	return 0;
+	m_freem(mb);
 }
 
 static int
