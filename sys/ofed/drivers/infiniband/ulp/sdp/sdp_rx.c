@@ -211,20 +211,21 @@ sdp_post_recvs(struct sdp_sock *ssk)
 static inline struct mbuf *
 sdp_sock_queue_rcv_mb(struct socket *sk, struct mbuf *mb)
 {
-	struct sdp_sock *ssk = sdp_sk(sk);
+	struct sdp_sock *ssk;
 	struct sdp_bsdh *h;
 
+	ssk = sdp_sk(sk);
 	h = mtod(mb, struct sdp_bsdh *);
 
 	atomic_add(mb->m_pkthdr.len, &ssk->rcv_nxt);
 
 	m_adj(mb, SDP_HEAD_SIZE);
 	SOCKBUF_LOCK(&sk->so_rcv);
-	if (unlikely(h->flags & SDP_OOB_PRES))
+	if (__predict_false((h->flags & SDP_OOB_PRES) != 0))
 		sdp_urg(ssk, mb);
-	sbappend_locked(&sk->so_rcv, mb, 0);
+	sbappendstream_locked(&sk->so_rcv, mb, 0);
 	sorwakeup_locked(sk);
-	return mb;
+	return (mb);
 }
 
 static int
@@ -432,6 +433,7 @@ sdp_process_rx_wc(struct sdp_sock *ssk, struct ib_wc *wc)
 	}
 	/* Use m_adj to trim the tail of data we didn't use. */
 	m_adj(mb, -(mb->m_pkthdr.len - wc->byte_len));
+	/* XXX don't we need m_pullup? */
 	h = mtod(mb, struct sdp_bsdh *);
 
 	SDP_DUMP_PACKET(ssk->socket, "RX", mb, h);
