@@ -853,41 +853,40 @@ sdp_send(struct socket *so, int flags, struct mbuf *m,
 
 	error = 0;
 	ssk = sdp_sk(so);
-	KASSERT(m->m_flags & M_PKTHDR,
-	    ("sdp_send: %p no packet header", m));
-	M_PREPEND(m, SDP_HEAD_SIZE, M_WAITOK);
-	mtod(m, struct sdp_bsdh *)->mid = SDP_MID_DATA; 
-	for (n = m, cnt = 0; n->m_next; n = n->m_next)
-		cnt++;
-	if (cnt > SDP_MAX_SEND_SGES) {
-		n = m_collapse(m, M_WAITOK, SDP_MAX_SEND_SGES);
-		if (n == NULL) {
-			m_freem(m);
-			return (EMSGSIZE);
+	if (m != NULL) {
+		KASSERT(m->m_flags & M_PKTHDR,
+		    ("sdp_send: %p no packet header", m));
+		M_PREPEND(m, SDP_HEAD_SIZE, M_WAITOK);
+		mtod(m, struct sdp_bsdh *)->mid = SDP_MID_DATA;
+		for (n = m, cnt = 0; n->m_next; n = n->m_next)
+			cnt++;
+		if (cnt > SDP_MAX_SEND_SGES) {
+			n = m_collapse(m, M_WAITOK, SDP_MAX_SEND_SGES);
+			if (n == NULL) {
+				m_freem(m);
+				return (EMSGSIZE);
+			}
+			m = n;
 		}
-		m = n;
 	}
 	SDP_WLOCK(ssk);
 	if (ssk->flags & (SDP_TIMEWAIT | SDP_DROPPED)) {
-		if (control)
-			m_freem(control);
-		if (m)
-			m_freem(m);
+		m_freem(control);
+		m_freem(m);
 		error = ECONNRESET;
 		goto out;
 	}
-	if (control) {
+	if (control != NULL) {
 		/* SDP doesn't support control messages. */
 		if (control->m_len) {
 			m_freem(control);
-			if (m)
-				m_freem(m);
+			m_freem(m);
 			error = EINVAL;
 			goto out;
 		}
 		m_freem(control);	/* empty control, just free it */
 	}
-	if (!(flags & PRUS_OOB)) {
+	if ((flags & PRUS_OOB) == 0) {
 		sbappendstream(&so->so_snd, m, 0);
 		if (nam && ssk->state < TCPS_SYN_SENT) {
 			/*
@@ -927,7 +926,8 @@ sdp_send(struct socket *so, int flags, struct mbuf *m,
 		 * of data past the urgent section.
 		 * Otherwise, snd_up should be one lower.
 		 */
-		m->m_flags |= M_URG | M_PUSH;
+		if (m != NULL)
+			m->m_flags |= M_URG | M_PUSH;
 		sbappendstream_locked(&so->so_snd, m, 0);
 		SOCKBUF_UNLOCK(&so->so_snd);
 		if (nam && ssk->state < TCPS_SYN_SENT) {
