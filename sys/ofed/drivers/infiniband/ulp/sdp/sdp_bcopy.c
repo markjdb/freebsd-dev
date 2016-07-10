@@ -159,7 +159,7 @@ again:
 	 * messages that provide additional credits and also do not contain ULP
 	 * payload. */
 	if ((ssk->flags & SDP_NEEDFIN) && !sk->so_snd.sb_sndptr &&
-	    tx_credits(ssk) > 1) {
+	    tx_credits(ssk) > 1 && sdp_tx_ring_slots_left(ssk)) {
 		mb = sdp_alloc_mb_disconnect(sk, wait);
 		if (mb == NULL)
 			goto allocfail;
