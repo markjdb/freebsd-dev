@@ -450,7 +450,7 @@ ntb_vm_memattr_to_str(vm_memattr_t pat)
 	}
 }
 
-static int g_ntb_msix_idx = 0;
+static int g_ntb_msix_idx = 1;
 SYSCTL_INT(_hw_ntb, OID_AUTO, msix_mw_idx, CTLFLAG_RDTUN, &g_ntb_msix_idx,
     0, "Use this memory window to access the peer MSIX message complex on "
     "certain Xeon-based NTB systems, as a workaround for a hardware errata.  "
@@ -616,8 +616,6 @@ SYSCTL_UQUAD(_hw_ntb_xeon_b2b, OID_AUTO, dsd_bar5_addr32, CTLFLAG_RDTUN,
  * OS <-> Driver interface structures
  */
 MALLOC_DEFINE(M_NTB, "ntb_hw", "ntb_hw driver memory allocations");
-
-SYSCTL_NODE(_hw, OID_AUTO, ntb, CTLFLAG_RW, 0, "NTB sysctls");
 
 /*
  * OS <-> Driver linkage functions
@@ -1440,6 +1438,16 @@ ntb_detect_xeon(struct ntb_softc *ntb)
 	if ((ppd & XEON_PPD_SPLIT_BAR) != 0)
 		ntb->features |= NTB_SPLIT_BAR;
 
+	if (HAS_FEATURE(ntb, NTB_SB01BASE_LOCKUP) &&
+	    !HAS_FEATURE(ntb, NTB_SPLIT_BAR)) {
+		device_printf(ntb->device,
+		    "Can not apply SB01BASE_LOCKUP workaround "
+		    "with split BARs disabled!\n");
+		device_printf(ntb->device,
+		    "Expect system hangs under heavy NTB traffic!\n");
+		ntb->features &= ~NTB_SB01BASE_LOCKUP;
+	}
+
 	/*
 	 * SDOORBELL errata workaround gets in the way of SB01BASE_LOCKUP
 	 * errata workaround; only do one at a time.
@@ -1689,25 +1697,21 @@ xeon_set_sbar_base_and_limit(struct ntb_softc *ntb, uint64_t bar_addr,
 			bar_addr = 0;
 	}
 
-	/*
-	 * Set limit registers first to avoid an errata where setting the base
-	 * registers locks the limit registers.
-	 */
 	if (!bar_is_64bit(ntb, idx)) {
-		ntb_reg_write(4, lmt_reg, bar_addr);
-		reg_val = ntb_reg_read(4, lmt_reg);
-		(void)reg_val;
-
 		ntb_reg_write(4, base_reg, bar_addr);
 		reg_val = ntb_reg_read(4, base_reg);
 		(void)reg_val;
-	} else {
-		ntb_reg_write(8, lmt_reg, bar_addr);
-		reg_val = ntb_reg_read(8, lmt_reg);
-		(void)reg_val;
 
+		ntb_reg_write(4, lmt_reg, bar_addr);
+		reg_val = ntb_reg_read(4, lmt_reg);
+		(void)reg_val;
+	} else {
 		ntb_reg_write(8, base_reg, bar_addr);
 		reg_val = ntb_reg_read(8, base_reg);
+		(void)reg_val;
+
+		ntb_reg_write(8, lmt_reg, bar_addr);
+		reg_val = ntb_reg_read(8, lmt_reg);
 		(void)reg_val;
 	}
 }
@@ -1807,42 +1811,23 @@ xeon_setup_b2b_mw(struct ntb_softc *ntb, const struct ntb_b2b_addr *addr,
 	ntb_reg_write(8, XEON_SBAR4XLAT_OFFSET, 0);
 
 	if (HAS_FEATURE(ntb, NTB_SB01BASE_LOCKUP)) {
-		size_t size, xlatoffset;
+		uint32_t xlat_reg, lmt_reg;
 		enum ntb_bar bar_num;
-
-		bar_num = ntb_mw_to_bar(ntb, ntb->msix_mw_idx);
-		switch (bar_num) {
-		case NTB_B2B_BAR_1:
-			size = 8;
-			xlatoffset = XEON_SBAR2XLAT_OFFSET;
-			break;
-		case NTB_B2B_BAR_2:
-			xlatoffset = XEON_SBAR4XLAT_OFFSET;
-			if (HAS_FEATURE(ntb, NTB_SPLIT_BAR))
-				size = 4;
-			else
-				size = 8;
-			break;
-		case NTB_B2B_BAR_3:
-			xlatoffset = XEON_SBAR5XLAT_OFFSET;
-			size = 4;
-			break;
-		default:
-			KASSERT(false, ("Bogus msix mw idx: %u",
-			    ntb->msix_mw_idx));
-			return (EINVAL);
-		}
 
 		/*
 		 * We point the chosen MSIX MW BAR xlat to remote LAPIC for
 		 * workaround
 		 */
-		if (size == 4) {
-			ntb_reg_write(4, xlatoffset, MSI_INTEL_ADDR_BASE);
-			ntb->msix_xlat = ntb_reg_read(4, xlatoffset);
+		bar_num = ntb_mw_to_bar(ntb, ntb->msix_mw_idx);
+		bar_get_xlat_params(ntb, bar_num, NULL, &xlat_reg, &lmt_reg);
+		if (bar_is_64bit(ntb, bar_num)) {
+			ntb_reg_write(8, xlat_reg, MSI_INTEL_ADDR_BASE);
+			ntb->msix_xlat = ntb_reg_read(8, xlat_reg);
+			ntb_reg_write(8, lmt_reg, 0);
 		} else {
-			ntb_reg_write(8, xlatoffset, MSI_INTEL_ADDR_BASE);
-			ntb->msix_xlat = ntb_reg_read(8, xlatoffset);
+			ntb_reg_write(4, xlat_reg, MSI_INTEL_ADDR_BASE);
+			ntb->msix_xlat = ntb_reg_read(4, xlat_reg);
+			ntb_reg_write(4, lmt_reg, 0);
 		}
 
 		ntb->peer_lapic_bar =  &ntb->bar_info[bar_num];
