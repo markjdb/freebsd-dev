@@ -350,6 +350,7 @@ rd_reset(rd_agent_t *rdap)
 	if (auxv == NULL)
 		goto err;
 
+	base = 0;
 	for (i = 0; i < count; i++) {
 		if (auxv[i].a_type == AT_BASE) {
 			base = auxv[i].a_un.a_val;
@@ -359,6 +360,7 @@ rd_reset(rd_agent_t *rdap)
 	if (i == count)
 		goto err;
 
+	rtldpath = NULL;
 	kve = procstat_getvmmap(rdap->rda_procstat, kp, &count);
 	if (kve == NULL)
 		goto err;
