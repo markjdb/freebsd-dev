@@ -332,13 +332,13 @@ rd_reset(rd_agent_t *rdap)
 	Elf_Auxinfo *auxv;
 	const char *rtldpath;
 	u_long base;
-	rd_err_e err;
+	rd_err_e rderr;
 	int count, i;
 
 	kp = NULL;
 	auxv = NULL;
 	kve = NULL;
-	err = RD_ERR;
+	rderr = RD_ERR;
 
 	kp = procstat_getprocs(rdap->rda_procstat, KERN_PROC_PID,
 	    proc_getpid(rdap->rda_php), &count);
@@ -376,7 +376,7 @@ rd_reset(rd_agent_t *rdap)
 
 	/* XXX need to make sure we allow statically-linked things */
 
-	err = RD_OK;
+	rderr = RD_OK;
 
 err:
 	if (kve != NULL)
@@ -386,5 +386,5 @@ err:
 	if (kp != NULL)
 		procstat_freeprocs(rdap->rda_procstat, kp);
 
-	return (err);
+	return (rderr);
 }
