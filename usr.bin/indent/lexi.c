@@ -197,7 +197,7 @@ lexi(void)
 		    seensfx |= 1;
 		    continue;
 		}
-		if (!(seensfx & 2) && strchr("fFlL", *buf_ptr)) {
+		if (!(seensfx & 2) && (strchr("fFlL", *buf_ptr) != NULL)) {
 		    CHECK_SIZE_TOKEN;
 		    if (buf_ptr[1] == buf_ptr[0])
 		        *e_token++ = *buf_ptr++;
@@ -262,7 +262,7 @@ lexi(void)
 	/*
 	 * This loop will check if the token is a keyword.
 	 */
-	for (p = specials; (j = p->rwd) != 0; p++) {
+	for (p = specials; (j = p->rwd) != NULL; p++) {
 	    const char *q = s_token;	/* point at scanned token */
 	    if (*j++ != *q++ || *j++ != *q++)
 		continue;	/* This test depends on the fact that
@@ -601,6 +601,6 @@ addkey(char *key, int val)
 				 * ignored */
     p->rwd = key;
     p->rwcode = val;
-    p[1].rwd = 0;
+    p[1].rwd = NULL;
     p[1].rwcode = 0;
 }
