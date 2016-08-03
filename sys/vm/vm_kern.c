@@ -183,7 +183,7 @@ retry:
 			if (tries < ((flags & M_NOWAIT) != 0 ? 1 : 3)) {
 				if (!vm_page_reclaim_contig(pflags, 1,
 				    low, high, PAGE_SIZE, 0) &&
-				    (flags & M_WAITOK) != 0)
+				    (flags & M_WAITOK) != 0 && !cold)
 					VM_WAIT;
 				VM_OBJECT_WLOCK(object);
 				tries++;
@@ -238,7 +238,8 @@ retry:
 		VM_OBJECT_WUNLOCK(object);
 		if (tries < ((flags & M_NOWAIT) != 0 ? 1 : 3)) {
 			if (!vm_page_reclaim_contig(pflags, npages, low, high,
-			    alignment, boundary) && (flags & M_WAITOK) != 0)
+			    alignment, boundary) && (flags & M_WAITOK) != 0 &&
+			    !cold)
 				VM_WAIT;
 			VM_OBJECT_WLOCK(object);
 			tries++;
