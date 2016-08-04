@@ -198,9 +198,9 @@ static vm_reserv_t vm_reserv_array;
 /*
  * The partially-populated reservation queue
  *
- * This queue enables the fast recovery of an unused cached or free small page
- * from a partially-populated reservation.  The reservation at the head of
- * this queue is the least-recently-changed, partially-populated reservation.
+ * This queue enables the fast recovery of an unused free small page from a
+ * partially-populated reservation.  The reservation at the head of this queue
+ * is the least-recently-changed, partially-populated reservation.
  *
  * Access to this queue is synchronized by the free page queue lock.
  */
@@ -721,10 +721,9 @@ found:
 }
 
 /*
- * Breaks the given reservation.  Except for the specified cached or free
- * page, all cached and free pages in the reservation are returned to the
- * physical memory allocator.  The reservation's population count and map are
- * reset to their initial state.
+ * Breaks the given reservation.  Except for the specified free page, all
+ * free pages in the reservation are returned to the physical memory allocator.
+ * The reservation's population count and map are reset to their initial state.
  *
  * The given reservation must not be in the partially-populated reservation
  * queue.  The free page queue lock must be held.
@@ -908,47 +907,8 @@ vm_reserv_level_iffullpop(vm_page_t m)
 }
 
 /*
- * Prepare for the reactivation of a cached page.
- *
- * First, suppose that the given page "m" was allocated individually, i.e., not
- * as part of a reservation, and cached.  Then, suppose a reservation
- * containing "m" is allocated by the same object.  Although "m" and the
- * reservation belong to the same object, "m"'s pindex may not match the
- * reservation's.
- *
- * The free page queue must be locked.
- */
-boolean_t
-vm_reserv_reactivate_page(vm_page_t m)
-{
-	vm_reserv_t rv;
-	int index;
-
-	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-	rv = vm_reserv_from_page(m);
-	if (rv->object == NULL)
-		return (FALSE);
-	KASSERT((m->flags & PG_CACHED) != 0,
-	    ("vm_reserv_reactivate_page: page %p is not cached", m));
-	if (m->object == rv->object &&
-	    m->pindex - rv->pindex == (index = VM_RESERV_INDEX(m->object,
-	    m->pindex)))
-		vm_reserv_populate(rv, index);
-	else {
-		KASSERT(rv->inpartpopq,
-	    ("vm_reserv_reactivate_page: reserv %p's inpartpopq is FALSE",
-		    rv));
-		TAILQ_REMOVE(&vm_rvq_partpop, rv, partpopq);
-		rv->inpartpopq = FALSE;
-		/* Don't release "m" to the physical memory allocator. */
-		vm_reserv_break(rv, m);
-	}
-	return (TRUE);
-}
-
-/*
- * Breaks the given partially-populated reservation, releasing its cached and
- * free pages to the physical memory allocator.
+ * Breaks the given partially-populated reservation, releasing its free pages to
+ * the physical memory allocator.
  *
  * The free page queue lock must be held.
  */
@@ -967,8 +927,8 @@ vm_reserv_reclaim(vm_reserv_t rv)
 
 /*
  * Breaks the reservation at the head of the partially-populated reservation
- * queue, releasing its cached and free pages to the physical memory
- * allocator.  Returns TRUE if a reservation is broken and FALSE otherwise.
+ * queue, releasing its free pages to the physical memory allocator.  Returns
+ * TRUE if a reservation is broken and FALSE otherwise.
  *
  * The free page queue lock must be held.
  */
@@ -987,10 +947,9 @@ vm_reserv_reclaim_inactive(void)
 
 /*
  * Searches the partially-populated reservation queue for the least recently
- * active reservation with unused pages, i.e., cached or free, that satisfy the
- * given request for contiguous physical memory.  If a satisfactory reservation
- * is found, it is broken.  Returns TRUE if a reservation is broken and FALSE
- * otherwise.
+ * active reservation with free pages that satisfy the given request for
+ * contiguous physical memory.  If a satisfactory reservation is found, it is
+ * broken.  Returns TRUE if a reservation is broken and FALSE otherwise.
  *
  * The free page queue lock must be held.
  */
