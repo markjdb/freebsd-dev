@@ -116,9 +116,11 @@ static inline void
 vm_phys_freecnt_adj(vm_page_t m, int adj)
 {
 
+#if 0
 	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-	vm_cnt.v_free_count += adj;
-	vm_phys_domain(m)->vmd_free_count += adj;
+#endif
+	atomic_add_int(&vm_cnt.v_free_count, adj);
+	atomic_add_int(&vm_phys_domain(m)->vmd_free_count, adj);
 }
 
 #endif	/* _KERNEL */
