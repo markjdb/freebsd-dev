@@ -751,8 +751,8 @@ vm_phys_add_page(vm_paddr_t pa)
 	    m, m->order));
 	m->pool = VM_FREEPOOL_DEFAULT;
 	pmap_page_init(m);
-	mtx_lock(&vm_page_queue_free_mtx);
 	vm_phys_freecnt_adj(m, 1);
+	mtx_lock(&vm_page_queue_free_mtx);
 	vm_phys_free_pages(m, 0);
 	mtx_unlock(&vm_page_queue_free_mtx);
 }

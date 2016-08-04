@@ -108,6 +108,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_pageout.h>
 #include <vm/vm_pager.h>
 #include <vm/vm_phys.h>
+#include <vm/vm_reserv.h>
 #include <vm/swap_pager.h>
 #include <vm/vm_extern.h>
 #include <vm/uma.h>
@@ -1716,6 +1717,12 @@ drop_page:
 		vm_page_unlock(m);
 	}
 	vm_pagequeue_unlock(pq);
+
+#if VM_NRESERVLEVEL > 0
+	if (vmd == &vm_dom[0])
+		vm_reserv_scan(vmd, 5);
+#endif
+
 #if !defined(NO_SWAPPING)
 	/*
 	 * Idle process swapout -- run once per second when we are reclaiming

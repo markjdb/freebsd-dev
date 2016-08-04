@@ -42,6 +42,8 @@
 
 #if VM_NRESERVLEVEL > 0
 
+struct vm_domain;
+
 /*
  * The following functions are only to be used by the virtual memory system.
  */
@@ -61,6 +63,7 @@ boolean_t	vm_reserv_reclaim_contig(u_long npages, vm_paddr_t low,
 boolean_t	vm_reserv_reclaim_inactive(void);
 void		vm_reserv_rename(vm_page_t m, vm_object_t new_object,
 		    vm_object_t old_object, vm_pindex_t old_object_offset);
+void		vm_reserv_scan(struct vm_domain *, int);
 int		vm_reserv_size(int level);
 vm_paddr_t	vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end,
 		    vm_paddr_t high_water);
