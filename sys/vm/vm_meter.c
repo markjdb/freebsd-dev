@@ -211,7 +211,7 @@ vmtotal(SYSCTL_HANDLER_ARGS)
 		}
 	}
 	mtx_unlock(&vm_object_list_mtx);
-	total.t_free = vm_cnt.v_free_count + vm_cnt.v_cache_count;
+	total.t_free = vm_cnt.v_free_count;
 	return (sysctl_handle_opaque(oidp, &total, sizeof(total), req));
 }
 
@@ -289,7 +289,6 @@ VM_STATS_VM(v_intrans, "In transit page faults");
 VM_STATS_VM(v_reactivated, "Pages reactivated by pagedaemon");
 VM_STATS_VM(v_pdwakeups, "Pagedaemon wakeups");
 VM_STATS_VM(v_pdpages, "Pages analyzed by pagedaemon");
-VM_STATS_VM(v_tcached, "Total pages cached");
 VM_STATS_VM(v_dfree, "Pages freed by pagedaemon");
 VM_STATS_VM(v_pfree, "Pages freed by exiting processes");
 VM_STATS_VM(v_tfree, "Total pages freed");
@@ -304,7 +303,6 @@ VM_STATS_VM(v_active_count, "Active pages");
 VM_STATS_VM(v_inactive_target, "Desired inactive pages");
 VM_STATS_VM(v_inactive_count, "Inactive pages");
 VM_STATS_VM(v_laundry_count, "Dirty pages");
-VM_STATS_VM(v_cache_count, "Pages on cache queue");
 VM_STATS_VM(v_pageout_free_min, "Min pages reserved for kernel");
 VM_STATS_VM(v_interrupt_free_min, "Reserved pages for interrupt code");
 VM_STATS_VM(v_forks, "Number of fork() calls");
