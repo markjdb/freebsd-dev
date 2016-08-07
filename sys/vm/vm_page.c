@@ -1577,19 +1577,6 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	}
 
 	/*
-	 * Try to allocate from per-CPU caches if we're not going to be
-	 * attempting an allocation from a reservation.
-	 */
-	if (object == NULL || (object->flags & OBJ_COLORED) == 0) {
-		zi = object != NULL ? VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT;
-		if (cachepg_zones[zi] != NULL) {
-			m = uma_zalloc(cachepg_zones[zi], M_NOWAIT);
-			if (m != NULL)
-				goto gotpage;
-		}
-	}
-
-	/*
 	 * Allocate a page if the number of free pages exceeds the minimum
 	 * for the request class.
 	 */
@@ -1607,9 +1594,14 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		    vm_reserv_alloc_page(object, pindex, mpred)) == NULL)
 #endif
 		{
-			/*
-			 * If not, allocate it from the free page queues.
-			 */
+			zi = object != NULL ? VM_FREEPOOL_DEFAULT :
+			    VM_FREEPOOL_DIRECT;
+			if (cachepg_zones[zi] != NULL) {
+				m = uma_zalloc(cachepg_zones[zi], M_NOWAIT);
+				if (m != NULL)
+					goto gotpage;
+			}
+
 			mtx_lock(&vm_page_queue_free_mtx);
 			m = vm_phys_alloc_pages(object != NULL ?
 			    VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT, 0);
@@ -2827,7 +2819,6 @@ vm_page_free_wakeup(void)
 void
 vm_page_free_toq(vm_page_t m)
 {
-	bool cacheable;
 
 	if ((m->oflags & VPO_UNMANAGED) == 0) {
 		vm_page_lock_assert(m, MA_OWNED);
@@ -2840,13 +2831,6 @@ vm_page_free_toq(vm_page_t m)
 
 	if (vm_page_sbusied(m))
 		panic("vm_page_free: freeing busy page %p", m);
-
-#ifndef VM_PAGE_CACHE
-	cacheable = m->object == NULL ||
-	    (m->object->flags & OBJ_COLORED) == 0;
-#else
-	cacheable = false;
-#endif
 
 	/*
 	 * Unqueue, then remove page.  Note that we cannot destroy
@@ -2882,29 +2866,27 @@ vm_page_free_toq(vm_page_t m)
 		if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
 			pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
 
-		if (cacheable) {
-			uma_zfree(cachepg_zones[m->pool], m);
-			return;
-		}
-
 		/*
 		 * Insert the page into the physical memory allocator's free
 		 * page queues.
 		 */
-		vm_phys_freecnt_adj(m, 1);
 #if VM_NRESERVLEVEL > 0
 		if (!vm_reserv_free_page(m))
 #else
 		if (TRUE)
 #endif
 		{
+			uma_zfree(cachepg_zones[m->pool], m);
+#if 0
 			mtx_lock(&vm_page_queue_free_mtx);
 			vm_phys_free_pages(m, 0);
-		} else {
-			mtx_lock(&vm_page_queue_free_mtx);
-		}
+			mtx_unlock(&vm_page_queue_free_mtx);
+#endif
+		} else
+			vm_phys_freecnt_adj(m, 1);
+#if 0
 		vm_page_free_wakeup();
-		mtx_unlock(&vm_page_queue_free_mtx);
+#endif
 	}
 }
 

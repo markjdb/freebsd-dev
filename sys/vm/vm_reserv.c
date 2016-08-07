@@ -1048,16 +1048,14 @@ vm_reserv_free_page(vm_page_t m)
 {
 	vm_reserv_t rv;
 
-	if (m->object != NULL)
-		VM_OBJECT_ASSERT_WLOCKED(m->object);
-
-	rv = vm_reserv_from_page(m);
 	/*
 	 * Since we hold the object write lock, we know that a thread isn't
 	 * concurrently setting rv->object to object.
 	 */
+	rv = vm_reserv_from_page(m);
 	if (rv->object == NULL)
 		return (FALSE);
+	VM_OBJECT_ASSERT_WLOCKED(rv->object);
 	vm_reserv_lock(rv);
 	vm_reserv_depopulate(rv, m - rv->pages);
 	vm_reserv_unlock(rv);
