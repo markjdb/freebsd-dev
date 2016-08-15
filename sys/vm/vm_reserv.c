@@ -625,46 +625,54 @@ vm_reserv_alloc_page(vm_object_t object, vm_pindex_t pindex, vm_page_t mpred)
 	/*
 	 * Look for an existing reservation.
 	 */
+	if (mpred != NULL)
+		msucc = TAILQ_NEXT(mpred, listq);
+	else
+		msucc = TAILQ_FIRST(&object->memq);
+	first = pindex - VM_RESERV_INDEX(object, pindex);
 	if (mpred != NULL) {
 		KASSERT(mpred->object == object,
 		    ("vm_reserv_alloc_page: object doesn't contain mpred"));
 		KASSERT(mpred->pindex < pindex,
 		    ("vm_reserv_alloc_page: mpred doesn't precede pindex"));
+		/*
+		 * Can we allocate a page from an active reservation containing
+		 * the preceding page in this object?
+		 */
 		rv = vm_reserv_from_page(mpred);
-		if (rv->object == object && vm_reserv_has_pindex(rv, pindex))
-			goto found;
-		msucc = TAILQ_NEXT(mpred, listq);
-	} else
-		msucc = TAILQ_FIRST(&object->memq);
+		if (rv->object == object) {
+			if (vm_reserv_has_pindex(rv, pindex))
+				goto found;
+			leftcap = rv->pindex + VM_LEVEL_0_NPAGES;
+		} else
+			leftcap = mpred->pindex + 1;
+
+		if (msucc == NULL && leftcap > first)
+			return (NULL);
+	}
 	if (msucc != NULL) {
 		KASSERT(msucc->pindex > pindex,
 		    ("vm_reserv_alloc_page: msucc doesn't succeed pindex"));
+		/*
+		 * Can we allocate a page from an active reservation containing
+		 * the succeeding page in this object?
+		 */
 		rv = vm_reserv_from_page(msucc);
-		if (rv->object == object && vm_reserv_has_pindex(rv, pindex))
-			goto found;
+		if (rv->object == object) {
+			if (vm_reserv_has_pindex(rv, pindex))
+				goto found;
+			rightcap = rv->pindex;
+		} else
+			rightcap = msucc->pindex;
 	}
 
 	/*
 	 * Could a reservation fit between the first index to the left that
 	 * can be used and the first index to the right that cannot be used?
 	 */
-	first = pindex - VM_RESERV_INDEX(object, pindex);
-	if (mpred != NULL) {
-		if ((rv = vm_reserv_from_page(mpred))->object != object)
-			leftcap = mpred->pindex + 1;
-		else
-			leftcap = rv->pindex + VM_LEVEL_0_NPAGES;
-		if (leftcap > first)
-			return (NULL);
-	}
-	if (msucc != NULL) {
-		if ((rv = vm_reserv_from_page(msucc))->object != object)
-			rightcap = msucc->pindex;
-		else
-			rightcap = rv->pindex;
-		if (first + VM_LEVEL_0_NPAGES > rightcap)
-			return (NULL);
-	}
+	if ((mpred != NULL && leftcap > first) ||
+	    (msucc != NULL && first + VM_LEVEL_0_NPAGES > rightcap))
+		return (NULL);
 
 	/*
 	 * Would a new reservation extend past the end of the object? 
