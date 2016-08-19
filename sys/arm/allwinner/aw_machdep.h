@@ -1,5 +1,6 @@
 /*-
- * Copyright (c) 2012 Konstantin Belousov <kib@FreeBSD.org>
+ * Copyright (c) 2015 Emmanuel Vadot <manu@freebsd.org>
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -21,50 +22,30 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * $FreeBSD$
+ *
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#ifndef AW_MACHDEP_H
+#define	AW_MACHDEP_H
 
-#include <sys/types.h>
-#include <sys/elf.h>
-#include <sys/time.h>
-#include <sys/vdso.h>
-#include <machine/cpufunc.h>
-#include "libc_private.h"
+#define	ALLWINNERSOC_A10	0x10000000
+#define	ALLWINNERSOC_A13	0x13000000
+#define	ALLWINNERSOC_A10S	0x10000001
+#define	ALLWINNERSOC_A20	0x20000000
+#define	ALLWINNERSOC_H3		0x30000000
+#define	ALLWINNERSOC_A31	0x31000000
+#define	ALLWINNERSOC_A31S	0x31000001
+#define	ALLWINNERSOC_A83T	0x83000000
 
-static u_int
-__vdso_gettc_low(const struct vdso_timehands *th)
-{
-	u_int rv;
+#define	ALLWINNERSOC_SUN4I	0x40000000
+#define	ALLWINNERSOC_SUN5I	0x50000000
+#define	ALLWINNERSOC_SUN6I	0x60000000
+#define	ALLWINNERSOC_SUN7I	0x70000000
+#define	ALLWINNERSOC_SUN8I	0x80000000
 
-	__asm __volatile("lfence; rdtsc; shrd %%cl, %%edx, %0"
-	    : "=a" (rv) : "c" (th->th_x86_shift) : "edx");
-	return (rv);
-}
+u_int allwinner_soc_type(void);
+u_int allwinner_soc_family(void);
 
-static u_int
-__vdso_rdtsc32(void)
-{
-	u_int rv;
-
-	__asm __volatile("lfence;rdtsc" : "=a" (rv) : : "edx");
-	return (rv);
-}
-
-#pragma weak __vdso_gettc
-u_int
-__vdso_gettc(const struct vdso_timehands *th)
-{
-
-	return (th->th_x86_shift > 0 ? __vdso_gettc_low(th) :
-	    __vdso_rdtsc32());
-}
-
-#pragma weak __vdso_gettimekeep
-int
-__vdso_gettimekeep(struct vdso_timekeep **tk)
-{
-
-	return (_elf_aux_info(AT_TIMEKEEP, tk, sizeof(*tk)));
-}
+#endif /* AW_MACHDEP_H */
