@@ -222,7 +222,7 @@ SLIST_HEAD(spglist, vm_page);
 struct vm_batchqueue {
 	struct pglist	bpq_pl;
 	int		bpq_cnt;
-};
+} __aligned(CACHE_LINE_SIZE);
 
 struct vm_pagequeue {
 	struct mtx	pq_mutex;
@@ -470,6 +470,8 @@ void vm_page_deactivate (vm_page_t);
 void vm_page_deactivate_noreuse(vm_page_t);
 void vm_page_dequeue(vm_page_t m);
 void vm_page_dequeue_locked(vm_page_t m);
+void vm_page_dequeue_locked_nocount(vm_page_t m);
+void vm_page_free_quick(vm_page_t m);
 vm_page_t vm_page_find_least(vm_object_t, vm_pindex_t);
 vm_page_t vm_page_getfake(vm_paddr_t paddr, vm_memattr_t memattr);
 void vm_page_initfake(vm_page_t m, vm_paddr_t paddr, vm_memattr_t memattr);
@@ -492,6 +494,7 @@ vm_page_t vm_page_replace(vm_page_t mnew, vm_object_t object,
     vm_pindex_t pindex);
 void vm_page_requeue(vm_page_t m);
 void vm_page_requeue_locked(vm_page_t m);
+bool vm_page_reset(vm_page_t m);
 int vm_page_sbusied(vm_page_t m);
 vm_page_t vm_page_scan_contig(u_long npages, vm_page_t m_start,
     vm_page_t m_end, u_long alignment, vm_paddr_t boundary, int options);

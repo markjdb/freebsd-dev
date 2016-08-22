@@ -693,6 +693,100 @@ vm_object_destroy(vm_object_t object)
 	uma_zfree(obj_zone, object);
 }
 
+static inline struct vm_pagequeue *
+vm_object_terminate_pagequeue_lock(vm_page_t m, struct vm_pagequeue *prev)
+{
+	struct vm_pagequeue *pq;
+
+	if (m->queue != PQ_NONE) {
+		pq = vm_page_pagequeue(m);
+		if (pq != prev)
+			vm_pagequeue_lock(pq);
+	} else
+		pq = NULL;
+	return (pq);
+}
+
+static void
+vm_object_terminate_clean_memq(vm_object_t object)
+{
+	struct mtx *page_lock;
+	struct vm_pagequeue *pq;
+	vm_page_t m, m_next;
+	int count;
+
+	m = TAILQ_FIRST(&object->memq);
+	if (m == NULL)
+		return;
+
+	/*
+	 * Free any remaining pageable pages.  This also removes them from the
+	 * paging queues.  Rather than incrementally removing each page from
+	 * the object and freeing it, the page and object are first reset to an
+	 * empty state and removed from paging queues.  Then a second pass frees
+	 * the pages with only the object lock held.  Finally, the object's
+	 * radix tree is collapsed in one operation.
+	 */
+	count = 0;
+	page_lock = vm_page_lockptr(m);
+	mtx_lock(page_lock);
+	pq = vm_object_terminate_pagequeue_lock(m, NULL);
+	TAILQ_FOREACH_SAFE(m, &object->memq, listq, m_next) {
+		/*
+		 * Swizzle locks if necessary.  We need to relock the page queue
+		 * if any of the following is true:
+		 * 1. The page lock changed.
+		 * 2. The previous page was on a page queue and this page isn't.
+		 * 3. This page is on a page queue and the previous page either
+		 *    wasn't on a page queue or was on a different one.
+		 * We don't need to relock the page if the queue lock changes.
+		 */
+		if (vm_page_lockptr(m) != page_lock ||
+		    ((m->queue == PQ_NONE || pq != vm_page_pagequeue(m)) &&
+		     pq != NULL)) {
+			vm_pagequeue_cnt_add(pq, -count);
+			vm_pagequeue_unlock(pq);
+			count = 0;
+			pq = NULL;
+		}
+		if (vm_page_lockptr(m) != page_lock) {
+			mtx_unlock(page_lock);
+			page_lock = vm_page_lockptr(m);
+			mtx_lock(page_lock);
+		}
+		pq = vm_object_terminate_pagequeue_lock(m, pq);
+		/*
+		 * Optimize the page's removal from the object by
+		 * resetting its "object" field.  Specifically, if the
+		 * page is not wired, then the effect of this assignment
+		 * is that vm_page_free()'s call to vm_page_remove()
+		 * will return immediately without modifying the page or
+		 * the object.
+		 */
+		m->object = NULL;
+		if (m->queue != PQ_NONE) {
+			vm_page_dequeue_locked_nocount(m);
+			count++;
+		}
+		m->flags &= ~PG_ZERO;
+		if (!vm_page_reset(m))
+			TAILQ_REMOVE(&object->memq, m, listq);
+	}
+	if (pq != NULL) {
+		vm_pagequeue_cnt_add(pq, -count);
+		vm_pagequeue_unlock(pq);
+	}
+	mtx_unlock(page_lock);
+
+	/*
+	 * Free pages to the allocator now that we've detangled them.
+	 */
+	TAILQ_FOREACH_SAFE(m, &object->memq, listq, m_next) {
+		vm_page_free_quick(m);
+		PCPU_INC(cnt.v_pfree);
+	}
+}
+
 /*
  *	vm_object_terminate actually destroys the specified object, freeing
  *	up all previously used resources.
@@ -703,7 +797,6 @@ vm_object_destroy(vm_object_t object)
 void
 vm_object_terminate(vm_object_t object)
 {
-	vm_page_t p, p_next;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 
@@ -747,28 +840,10 @@ vm_object_terminate(vm_object_t object)
 		object->ref_count));
 
 	/*
-	 * Free any remaining pageable pages.  This also removes them from the
-	 * paging queues.  However, don't free wired pages, just remove them
-	 * from the object.  Rather than incrementally removing each page from
-	 * the object, the page and object are reset to any empty state. 
+	 * Free resident pages.
 	 */
-	TAILQ_FOREACH_SAFE(p, &object->memq, listq, p_next) {
-		vm_page_assert_unbusied(p);
-		vm_page_lock(p);
-		/*
-		 * Optimize the page's removal from the object by resetting
-		 * its "object" field.  Specifically, if the page is not
-		 * wired, then the effect of this assignment is that
-		 * vm_page_free()'s call to vm_page_remove() will return
-		 * immediately without modifying the page or the object.
-		 */ 
-		p->object = NULL;
-		if (p->wire_count == 0) {
-			vm_page_free(p);
-			PCPU_INC(cnt.v_pfree);
-		}
-		vm_page_unlock(p);
-	}
+	vm_object_terminate_clean_memq(object);
+
 	/*
 	 * If the object contained any pages, then reset it to an empty state.
 	 * None of the object's fields, including "resident_page_count", were

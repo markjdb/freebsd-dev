@@ -1326,10 +1326,10 @@ vm_page_remove(vm_page_t m)
 	vm_object_t object;
 	vm_page_t mrem;
 
-	if ((m->oflags & VPO_UNMANAGED) == 0)
-		vm_page_assert_locked(m);
 	if ((object = m->object) == NULL)
 		return;
+	if ((m->oflags & VPO_UNMANAGED) == 0)
+		vm_page_assert_locked(m);
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	if (vm_page_xbusied(m))
 		vm_page_xunbusy_maybelocked(m);
@@ -2704,6 +2704,20 @@ vm_page_dequeue_locked(vm_page_t m)
 	vm_pagequeue_cnt_dec(pq);
 }
 
+/* XXX */
+void
+vm_page_dequeue_locked_nocount(vm_page_t m)
+{
+	struct vm_pagequeue *pq;
+
+	vm_page_lock_assert(m, MA_OWNED);
+	pq = vm_page_pagequeue(m);
+	vm_pagequeue_assert_locked(pq);
+	vm_page_queue_batch(pq, BPQ_IDX(m));
+	m->queue = PQ_NONE;
+	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
+}
+
 /*
  *	vm_page_enqueue:
  *
@@ -2845,16 +2859,49 @@ vm_page_free_wakeup(void)
 }
 
 /*
- *	vm_page_free_toq:
+ *	vm_page_free_quick:
  *
- *	Returns the given page to the free list,
- *	disassociating it with any VM object.
- *
- *	The object must be locked.  The page must be locked if it is managed.
+ *	Perform the final portion of a page free operation.  This does not
+ *	require the page lock.
  */
 void
-vm_page_free_toq(vm_page_t m)
+vm_page_free_quick(vm_page_t m)
 {
+
+	MPASS(m->object == NULL && m->queue == PQ_NONE);
+
+	PCPU_INC(cnt.v_tfree);
+
+	/*
+	 * Insert the page into the physical memory allocator's
+	 * cache/free page queues.
+	 */
+#if VM_NRESERVLEVEL > 0
+	if (!vm_reserv_free_page(m))
+#else
+	if (TRUE)
+#endif
+	{
+		uma_zfree(cachepg_zones[m->pool], m);
+#if 0
+		mtx_lock(&vm_page_queue_free_mtx);
+		vm_phys_free_pages(m, 0);
+		mtx_unlock(&vm_page_queue_free_mtx);
+#endif
+	} else
+		vm_phys_freecnt_adj(m, 1);
+#if 0
+	vm_page_free_wakeup();
+#endif
+}
+
+/* XXX */
+bool
+vm_page_reset(vm_page_t m)
+{
+
+	MPASS(m->object == NULL && m->queue == PQ_NONE);
+	MPASS(!vm_page_sbusied(m));
 
 	if ((m->oflags & VPO_UNMANAGED) == 0) {
 		vm_page_lock_assert(m, MA_OWNED);
@@ -2863,10 +2910,41 @@ vm_page_free_toq(vm_page_t m)
 	} else
 		KASSERT(m->queue == PQ_NONE,
 		    ("vm_page_free_toq: unmanaged page %p is queued", m));
-	PCPU_INC(cnt.v_tfree);
 
-	if (vm_page_sbusied(m))
-		panic("vm_page_free: freeing busy page %p", m);
+	if (m->wire_count != 0 || (m->flags & PG_FICTITIOUS) != 0)
+		return (false);
+
+	m->valid = 0;
+	vm_page_undirty(m);
+
+	if (m->hold_count != 0) {
+		m->flags &= ~PG_ZERO;
+		KASSERT((m->flags & PG_UNHOLDFREE) == 0,
+		    ("vm_page_free: freeing PG_UNHOLDFREE page %p", m));
+		m->flags |= PG_UNHOLDFREE;
+		return (false);
+	} else {
+		/*
+		 * Restore the default memory attribute to the page.
+		 */
+		if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
+			pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
+	}
+	return (true);
+}
+
+/*
+ *	vm_page_free_toq:
+ *
+ *	Returns the given page to the free list,
+ *	disassociating it with any VM object.
+ *
+ *	The object must be locked.  The page must be locked if it is managed
+ *	and on a page queue.
+ */
+void
+vm_page_free_toq(vm_page_t m)
+{
 
 	/*
 	 * Unqueue, then remove page.  Note that we cannot destroy
@@ -2877,53 +2955,8 @@ vm_page_free_toq(vm_page_t m)
 	vm_page_remque(m);
 	vm_page_remove(m);
 
-	/*
-	 * If fictitious remove object association and
-	 * return, otherwise delay object association removal.
-	 */
-	if ((m->flags & PG_FICTITIOUS) != 0) {
-		return;
-	}
-
-	m->valid = 0;
-	vm_page_undirty(m);
-
-	if (m->wire_count != 0)
-		panic("vm_page_free: freeing wired page %p", m);
-	if (m->hold_count != 0) {
-		m->flags &= ~PG_ZERO;
-		KASSERT((m->flags & PG_UNHOLDFREE) == 0,
-		    ("vm_page_free: freeing PG_UNHOLDFREE page %p", m));
-		m->flags |= PG_UNHOLDFREE;
-	} else {
-		/*
-		 * Restore the default memory attribute to the page.
-		 */
-		if (pmap_page_get_memattr(m) != VM_MEMATTR_DEFAULT)
-			pmap_page_set_memattr(m, VM_MEMATTR_DEFAULT);
-
-		/*
-		 * Insert the page into the physical memory allocator's free
-		 * page queues.
-		 */
-#if VM_NRESERVLEVEL > 0
-		if (!vm_reserv_free_page(m))
-#else
-		if (TRUE)
-#endif
-		{
-			uma_zfree(cachepg_zones[m->pool], m);
-#if 0
-			mtx_lock(&vm_page_queue_free_mtx);
-			vm_phys_free_pages(m, 0);
-			mtx_unlock(&vm_page_queue_free_mtx);
-#endif
-		} else
-			vm_phys_freecnt_adj(m, 1);
-#if 0
-		vm_page_free_wakeup();
-#endif
-	}
+	if (vm_page_reset(m))
+		vm_page_free_quick(m);
 }
 
 /*
