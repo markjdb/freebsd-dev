@@ -68,6 +68,7 @@
 #define	_VM_PAGE_
 
 #include <vm/pmap.h>
+#include <vm/vm_param.h>
 
 /*
  *	Management of resident (logical) pages.
@@ -210,8 +211,18 @@ struct vm_page {
 #define	PQ_UNSWAPPABLE	3
 #define	PQ_COUNT	4
 
+#define	PQ_BATCHED(m)	((m)->queue == PQ_INACTIVE || (m)->queue == PQ_ACTIVE)
+
+#define	BPQ_COUNT	PA_LOCK_COUNT
+#define	BPQ_IDX(m)	(pa_index(VM_PAGE_TO_PHYS(m)) % BPQ_COUNT)
+
 TAILQ_HEAD(pglist, vm_page);
 SLIST_HEAD(spglist, vm_page);
+
+struct vm_batchqueue {
+	struct pglist	bpq_pl;
+	int		bpq_cnt;
+};
 
 struct vm_pagequeue {
 	struct mtx	pq_mutex;
@@ -219,8 +230,8 @@ struct vm_pagequeue {
 	int		pq_cnt;
 	u_int		* const pq_vcnt;
 	const char	* const pq_name;
+	struct vm_batchqueue pq_bpqs[BPQ_COUNT];
 } __aligned(CACHE_LINE_SIZE);
-
 
 struct vm_domain {
 	struct vm_pagequeue vmd_pagequeues[PQ_COUNT];
