@@ -735,15 +735,15 @@ vm_object_terminate_clean_memq(vm_object_t object)
 		/*
 		 * Swizzle locks if necessary.  We need to relock the page queue
 		 * if any of the following is true:
-		 * 1. The page lock changed.
+		 * 1. The page lock changed and the previous page was on a
+		 *    page queue.
 		 * 2. The previous page was on a page queue and this page isn't.
 		 * 3. This page is on a page queue and the previous page either
 		 *    wasn't on a page queue or was on a different one.
 		 * We don't need to relock the page if the queue lock changes.
 		 */
-		if (vm_page_lockptr(m) != page_lock ||
-		    ((m->queue == PQ_NONE || pq != vm_page_pagequeue(m)) &&
-		     pq != NULL)) {
+		if (pq != NULL && (vm_page_lockptr(m) != page_lock ||
+		    m->queue == PQ_NONE || pq != vm_page_pagequeue(m))) {
 			vm_pagequeue_cnt_add(pq, -count);
 			vm_pagequeue_unlock(pq);
 			count = 0;
