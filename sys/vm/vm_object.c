@@ -693,97 +693,71 @@ vm_object_destroy(vm_object_t object)
 	uma_zfree(obj_zone, object);
 }
 
-static inline struct vm_pagequeue *
-vm_object_terminate_pagequeue_lock(vm_page_t m, struct vm_pagequeue *prev)
+static void
+vm_object_terminate_dequeue_run(vm_object_t object, vm_page_t m,
+    struct pglist *list)
 {
+	struct mtx *page_lock;
 	struct vm_pagequeue *pq;
+	vm_page_t m_next;
+	int count;
+	uint8_t queue;
 
-	if (m->queue != PQ_NONE) {
+	count = 0;
+	page_lock = vm_page_lockptr(m);
+	queue = m->queue;
+	if (queue != PQ_NONE) {
 		pq = vm_page_pagequeue(m);
-		if (pq != prev)
-			vm_pagequeue_lock(pq);
-	} else
-		pq = NULL;
-	return (pq);
+		vm_pagequeue_lock(pq);
+	}
+	TAILQ_FOREACH_FROM_SAFE(m, &object->memq, listq, m_next) {
+		if (m->queue != queue || vm_page_lockptr(m) != page_lock)
+			break;
+		if (queue != PQ_NONE) {
+			vm_page_dequeue_locked_nocount(m);
+			count++;
+		}
+		TAILQ_REMOVE(&object->memq, m, listq);
+		TAILQ_INSERT_TAIL(list, m, listq);
+	}
+	if (queue != PQ_NONE) {
+		vm_pagequeue_cnt_add(pq, -count);
+		vm_pagequeue_unlock(pq);
+	}
 }
 
 static void
 vm_object_terminate_clean_memq(vm_object_t object)
 {
+	struct pglist list;
 	struct mtx *page_lock;
-	struct vm_pagequeue *pq;
 	vm_page_t m, m_next;
-	int count;
 
-	m = TAILQ_FIRST(&object->memq);
-	if (m == NULL)
-		return;
+	VM_OBJECT_ASSERT_WLOCKED(object);
 
 	/*
-	 * Free any remaining pageable pages.  This also removes them from the
-	 * paging queues.  Rather than incrementally removing each page from
-	 * the object and freeing it, the page and object are first reset to an
-	 * empty state and removed from paging queues.  Then a second pass frees
-	 * the pages with only the object lock held.  Finally, the object's
-	 * radix tree is collapsed in one operation.
+	 * XXX describe!
 	 */
-	count = 0;
-	page_lock = vm_page_lockptr(m);
-	mtx_lock(page_lock);
-	pq = vm_object_terminate_pagequeue_lock(m, NULL);
-	TAILQ_FOREACH_SAFE(m, &object->memq, listq, m_next) {
+	TAILQ_INIT(&list);
+	while ((m = TAILQ_FIRST(&object->memq)) != NULL) {
+		page_lock = vm_page_lockptr(m);
+		mtx_lock(page_lock);
+		vm_object_terminate_dequeue_run(object, m, &list);
+		TAILQ_FOREACH_SAFE(m, &list, listq, m_next) {
+			m->object = NULL;
+			m->flags &= ~PG_ZERO;
+			if (!vm_page_reset(m))
+				TAILQ_REMOVE(&list, m, listq);
+		}
+		mtx_unlock(page_lock);
 		/*
-		 * Swizzle locks if necessary.  We need to relock the page queue
-		 * if any of the following is true:
-		 * 1. The page lock changed and the previous page was on a
-		 *    page queue.
-		 * 2. The previous page was on a page queue and this page isn't.
-		 * 3. This page is on a page queue and the previous page either
-		 *    wasn't on a page queue or was on a different one.
-		 * We don't need to relock the page if the queue lock changes.
+		 * Free pages to the allocator now that we've detangled them.
 		 */
-		if (pq != NULL && (vm_page_lockptr(m) != page_lock ||
-		    m->queue == PQ_NONE || pq != vm_page_pagequeue(m))) {
-			vm_pagequeue_cnt_add(pq, -count);
-			vm_pagequeue_unlock(pq);
-			count = 0;
-			pq = NULL;
+		TAILQ_FOREACH_SAFE(m, &list, listq, m_next) {
+			vm_page_free_quick(m);
+			PCPU_INC(cnt.v_pfree);
 		}
-		if (vm_page_lockptr(m) != page_lock) {
-			mtx_unlock(page_lock);
-			page_lock = vm_page_lockptr(m);
-			mtx_lock(page_lock);
-		}
-		pq = vm_object_terminate_pagequeue_lock(m, pq);
-		/*
-		 * Optimize the page's removal from the object by
-		 * resetting its "object" field.  Specifically, if the
-		 * page is not wired, then the effect of this assignment
-		 * is that vm_page_free()'s call to vm_page_remove()
-		 * will return immediately without modifying the page or
-		 * the object.
-		 */
-		m->object = NULL;
-		if (m->queue != PQ_NONE) {
-			vm_page_dequeue_locked_nocount(m);
-			count++;
-		}
-		m->flags &= ~PG_ZERO;
-		if (!vm_page_reset(m))
-			TAILQ_REMOVE(&object->memq, m, listq);
-	}
-	if (pq != NULL) {
-		vm_pagequeue_cnt_add(pq, -count);
-		vm_pagequeue_unlock(pq);
-	}
-	mtx_unlock(page_lock);
-
-	/*
-	 * Free pages to the allocator now that we've detangled them.
-	 */
-	TAILQ_FOREACH_SAFE(m, &object->memq, listq, m_next) {
-		vm_page_free_quick(m);
-		PCPU_INC(cnt.v_pfree);
+		TAILQ_INIT(&list);
 	}
 }
 
