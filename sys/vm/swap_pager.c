@@ -1017,7 +1017,7 @@ swap_pager_haspage(vm_object_t object, vm_pindex_t pindex, int *before,
 	 * find backwards-looking contiguous good backing store
 	 */
 	if (before != NULL) {
-		for (i = 1; i < SWB_NPAGES; ++i) {
+		for (i = 1; i < SWB_NPAGES; i++) {
 			if (i > pindex)
 				break;
 			blk = swp_pager_meta_ctl(object, pindex - i, 0);
@@ -1031,7 +1031,7 @@ swap_pager_haspage(vm_object_t object, vm_pindex_t pindex, int *before,
 	 * find forward-looking contiguous good backing store
 	 */
 	if (after != NULL) {
-		for (i = 1; i < SWB_NPAGES; ++i) {
+		for (i = 1; i < SWB_NPAGES; i++) {
 			blk = swp_pager_meta_ctl(object, pindex + i, 0);
 			if (blk != blk0 + i)
 				break;
