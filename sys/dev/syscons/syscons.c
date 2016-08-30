@@ -1648,7 +1648,22 @@ sc_cnterm(struct consdev *cp)
 }
 
 static void sccnclose(sc_softc_t *sc, struct sc_cnstate *sp);
+static int sc_cngetc_locked(struct sc_cnstate *sp);
 static void sccnopen(sc_softc_t *sc, struct sc_cnstate *sp, int flags);
+static void sccnscrlock(sc_softc_t *sc, struct sc_cnstate *sp);
+static void sccnscrunlock(sc_softc_t *sc, struct sc_cnstate *sp);
+
+static void
+sccnscrlock(sc_softc_t *sc, struct sc_cnstate *sp)
+{
+    SC_VIDEO_LOCK(sc);
+}
+
+static void
+sccnscrunlock(sc_softc_t *sc, struct sc_cnstate *sp)
+{
+    SC_VIDEO_UNLOCK(sc);
+}
 
 static void
 sccnopen(sc_softc_t *sc, struct sc_cnstate *sp, int flags)
@@ -1680,6 +1695,7 @@ sccnopen(sc_softc_t *sc, struct sc_cnstate *sp, int flags)
 over_keyboard: ;
 
     /* The screen is opened iff locking it succeeds. */
+    sccnscrlock(sc, sp);
     sp->scr_opened = TRUE;
 
     /* The screen switch is optional. */
@@ -1698,6 +1714,7 @@ static void
 sccnclose(sc_softc_t *sc, struct sc_cnstate *sp)
 {
     sp->scr_opened = FALSE;
+    sccnscrunlock(sc, sp);
 
     if (!sp->kbd_opened)
 	return;
@@ -1731,8 +1748,10 @@ sc_cngrab(struct consdev *cp)
 
     sc = sc_console->sc;
     lev = atomic_fetchadd_int(&sc->grab_level, 1);
-    if (lev >= 0 && lev < 2)
+    if (lev >= 0 && lev < 2) {
 	sccnopen(sc, &sc->grab_state[lev], 1 | 2);
+	sccnscrunlock(sc, &sc->grab_state[lev]);
+    }
 }
 
 static void
@@ -1743,14 +1762,17 @@ sc_cnungrab(struct consdev *cp)
 
     sc = sc_console->sc;
     lev = atomic_load_acq_int(&sc->grab_level) - 1;
-    if (lev >= 0 && lev < 2)
+    if (lev >= 0 && lev < 2) {
+	sccnscrlock(sc, &sc->grab_state[lev]);
 	sccnclose(sc, &sc->grab_state[lev]);
+    }
     atomic_add_int(&sc->grab_level, -1);
 }
 
 static void
 sc_cnputc(struct consdev *cd, int c)
 {
+    struct sc_cnstate st;
     u_char buf[1];
     scr_stat *scp = sc_console;
 #ifndef SC_NO_HISTORY
@@ -1762,7 +1784,7 @@ sc_cnputc(struct consdev *cd, int c)
 
     /* assert(sc_console != NULL) */
 
-    SC_VIDEO_LOCK(scp->sc);
+    sccnopen(scp->sc, &st, 0);
 
 #ifndef SC_NO_HISTORY
     if (scp == scp->sc->cur_scp && scp->status & SLKED) {
@@ -1797,20 +1819,33 @@ sc_cnputc(struct consdev *cd, int c)
     s = spltty();	/* block sckbdevent and scrn_timer */
     sccnupdate(scp);
     splx(s);
-    SC_VIDEO_UNLOCK(scp->sc);
+    sccnclose(scp->sc, &st);
 }
 
 static int
 sc_cngetc(struct consdev *cd)
 {
+    int c, s;
+
+    /* assert(sc_console != NULL) */
+    s = spltty();	/* block sckbdevent and scrn_timer while we poll */
+    if (sc_console->sc->kbd == NULL) {
+	splx(s);
+	return -1;
+    }
+    c = sc_cngetc_locked(NULL);
+    splx(s);
+    return c;
+}
+
+static int
+sc_cngetc_locked(struct sc_cnstate *sp)
+{
     static struct fkeytab fkey;
     static int fkeycp;
     scr_stat *scp;
     const u_char *p;
-    int s = spltty();	/* block sckbdevent and scrn_timer while we poll */
     int c;
-
-    /* assert(sc_console != NULL) */
 
     /* 
      * Stop the screen saver and update the screen if necessary.
@@ -1820,15 +1855,8 @@ sc_cngetc(struct consdev *cd)
     scp = sc_console->sc->cur_scp;	/* XXX */
     sccnupdate(scp);
 
-    if (fkeycp < fkey.len) {
-	splx(s);
+    if (fkeycp < fkey.len)
 	return fkey.str[fkeycp++];
-    }
-
-    if (scp->sc->kbd == NULL) {
-	splx(s);
-	return -1;
-    }
 
     c = scgetc(scp->sc, SCGETC_CN | SCGETC_NONBLOCK, NULL);
 
