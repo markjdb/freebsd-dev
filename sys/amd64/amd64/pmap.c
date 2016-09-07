@@ -297,8 +297,8 @@ extern	struct pcpu __pcpu[];
 
 #define	NPV_LIST_LOCKS	MAXCPU
 
-#define	PHYS_TO_PV_LIST_LOCK(pa)	\
-			(&pv_list_locks[pa_index(pa) % NPV_LIST_LOCKS])
+#define	PHYS_TO_PV_LIST_LOCK(pa)			\
+	(struct rwlock *)(&pv_list_locks[pa_index(pa) % NPV_LIST_LOCKS])
 
 #define	CHANGE_PV_LIST_LOCK_TO_PHYS(lockp, pa)	do {	\
 	struct rwlock **_lockp = (lockp);		\
@@ -383,7 +383,7 @@ static int pmap_initialized;
  */
 static TAILQ_HEAD(pch, pv_chunk) pv_chunks = TAILQ_HEAD_INITIALIZER(pv_chunks);
 static struct mtx pv_chunks_mutex;
-static struct rwlock pv_list_locks[NPV_LIST_LOCKS];
+static struct rwlock_padalign pv_list_locks[NPV_LIST_LOCKS];
 static u_long pv_invl_gen[NPV_LIST_LOCKS];
 static struct md_page *pv_table;
 static struct md_page pv_dummy;
