@@ -972,23 +972,25 @@ vm_page_unhold_pages(vm_page_t *ma, int count)
 {
 	struct mtx *mtx, *new_mtx;
 
-	mtx = NULL;
+	if (count == 0)
+		return;
+
+	mtx = vm_page_lockptr(*ma);
+	mtx_lock(mtx);
 	for (; count != 0; count--) {
 		/*
 		 * Avoid releasing and reacquiring the same page lock.
 		 */
 		new_mtx = vm_page_lockptr(*ma);
 		if (mtx != new_mtx) {
-			if (mtx != NULL)
-				mtx_unlock(mtx);
+			mtx_unlock(mtx);
 			mtx = new_mtx;
 			mtx_lock(mtx);
 		}
 		vm_page_unhold(*ma);
 		ma++;
 	}
-	if (mtx != NULL)
-		mtx_unlock(mtx);
+	mtx_unlock(mtx);
 }
 
 vm_page_t
