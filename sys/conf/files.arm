@@ -96,6 +96,7 @@ cddl/dev/fbt/arm/fbt_isa.c				optional dtrace_fbt | dtraceall compile-with "${FB
 cddl/dev/sdt/arm/sdt_isa.c				optional dtrace_sdt | dtraceall compile-with "${FBT_C} -I $S/cddl/dev/sdt"
 crypto/blowfish/bf_enc.c	optional	crypto | ipsec 
 crypto/des/des_enc.c		optional	crypto | ipsec | netsmb
+dev/cpufreq/cpufreq_dt.c	optional	cpufreq fdt
 dev/dwc/if_dwc.c		optional	dwc
 dev/dwc/if_dwc_if.m		optional	dwc
 dev/fb/fb.c			optional	sc

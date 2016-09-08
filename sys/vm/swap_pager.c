@@ -1126,7 +1126,7 @@ swap_pager_getpages(vm_object_t object, vm_page_t *m, int count, int *rbehind,
 	if (shift != 0) {
 		for (i = 1; i <= shift; i++) {
 			p = vm_page_alloc(object, m[0]->pindex - i,
-			    VM_ALLOC_NORMAL | VM_ALLOC_IFNOTCACHED);
+			    VM_ALLOC_NORMAL);
 			if (p == NULL) {
 				/* Shift allocated pages to the left. */
 				for (j = 0; j < i - 1; j++)
@@ -1144,8 +1144,7 @@ swap_pager_getpages(vm_object_t object, vm_page_t *m, int count, int *rbehind,
 	if (rahead != NULL) {
 		for (i = 0; i < *rahead; i++) {
 			p = vm_page_alloc(object,
-			    m[reqcount - 1]->pindex + i + 1,
-			    VM_ALLOC_NORMAL | VM_ALLOC_IFNOTCACHED);
+			    m[reqcount - 1]->pindex + i + 1, VM_ALLOC_NORMAL);
 			if (p == NULL)
 				break;
 			bp->b_pages[shift + reqcount + i] = p;
@@ -1554,12 +1553,10 @@ swp_pager_async_iodone(struct buf *bp)
 			    ("swp_pager_async_iodone: page %p is not write"
 			    " protected", m));
 			vm_page_undirty(m);
+			vm_page_lock(m);
+			vm_page_deactivate(m);
+			vm_page_unlock(m);
 			vm_page_sunbusy(m);
-			if (vm_page_count_severe()) {
-				vm_page_lock(m);
-				vm_page_try_to_cache(m);
-				vm_page_unlock(m);
-			}
 		}
 	}
 
@@ -1637,7 +1634,7 @@ swap_pager_isswapped(vm_object_t object, struct swdevt *sp)
  *
  *	This routine dissociates the page at the given index within a
  *	swap block from its backing store, paging it in if necessary.
- *	If the page is paged in, it is placed in the inactive queue,
+ *	If the page is paged in, it is placed in the laundry queue,
  *	since it had its backing store ripped out from under it.
  *	We also attempt to swap in all other pages in the swap block,
  *	we only guarantee that the one at the specified index is
@@ -1669,7 +1666,7 @@ swp_pager_force_pagein(vm_object_t object, vm_pindex_t pindex)
 	vm_object_pip_wakeup(object);
 	vm_page_dirty(m);
 	vm_page_lock(m);
-	vm_page_deactivate(m);
+	vm_page_launder(m);
 	vm_page_unlock(m);
 	vm_page_xunbusy(m);
 	vm_pager_page_unswapped(m);
@@ -2251,10 +2248,8 @@ swapoff_one(struct swdevt *sp, struct ucred *cred)
 	 * of data we will have to page back in, plus an epsilon so
 	 * the system doesn't become critically low on swap space.
 	 */
-	if (vm_cnt.v_free_count + vm_cnt.v_cache_count + swap_pager_avail <
-	    nblks + nswap_lowat) {
+	if (vm_cnt.v_free_count + swap_pager_avail < nblks + nswap_lowat)
 		return (ENOMEM);
-	}
 
 	/*
 	 * Prevent further allocations on this device.
