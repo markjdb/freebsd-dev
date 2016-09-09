@@ -242,7 +242,7 @@ extern pt_entry_t pagetable_dmap[];
 
 static SYSCTL_NODE(_vm, OID_AUTO, pmap, CTLFLAG_RD, 0, "VM/pmap parameters");
 
-static int superpages_enabled = 0;
+static int superpages_enabled = 1;
 SYSCTL_INT(_vm_pmap, OID_AUTO, superpages_enabled,
     CTLFLAG_RDTUN | CTLFLAG_NOFETCH, &superpages_enabled, 0,
     "Are large page mappings enabled?");
@@ -2939,8 +2939,9 @@ validate:
 	pmap_invalidate_page(pmap, va);
 
 	if (pmap != pmap_kernel()) {
-		if (pmap == &curproc->p_vmspace->vm_pmap)
-		    cpu_icache_sync_range(va, PAGE_SIZE);
+		if (pmap == &curproc->p_vmspace->vm_pmap &&
+		    (prot & VM_PROT_EXECUTE) != 0)
+			cpu_icache_sync_range(va, PAGE_SIZE);
 
 		if ((mpte == NULL || mpte->wire_count == NL3PG) &&
 		    pmap_superpages_enabled() &&
