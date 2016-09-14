@@ -1564,7 +1564,7 @@ vm_page_t
 vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 {
 	vm_page_t m, mpred;
-	int flags, req_class, zi;
+	int flags, freepool, req_class;
 
 	mpred = NULL;	/* XXX: pacify gcc */
 	KASSERT((object != NULL) == ((req & VM_ALLOC_NOOBJ) == 0) &&
@@ -1607,23 +1607,20 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 		    vm_reserv_alloc_page(object, pindex, mpred)) == NULL)
 #endif
 		{
-			zi = object != NULL ? VM_FREEPOOL_DEFAULT :
+			freepool = object != NULL ? VM_FREEPOOL_DEFAULT :
 			    VM_FREEPOOL_DIRECT;
-			if (cachepg_zones[zi] != NULL) {
-				m = uma_zalloc(cachepg_zones[zi], M_NOWAIT);
+			if (cachepg_zones[freepool] != NULL) {
+				m = uma_zalloc(cachepg_zones[freepool],
+				    M_NOWAIT);
 				if (m != NULL)
 					goto gotpage;
 			}
 
 			mtx_lock(&vm_page_queue_free_mtx);
-			m = vm_phys_alloc_pages(object != NULL ?
-			    VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT, 0);
+			m = vm_phys_alloc_pages(freepool, 0);
 #if VM_NRESERVLEVEL > 0
-			if (m == NULL && vm_reserv_reclaim_inactive()) {
-				m = vm_phys_alloc_pages(object != NULL ?
-				    VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT,
-				    0);
-			}
+			if (m == NULL && vm_reserv_reclaim_inactive())
+				m = vm_phys_alloc_pages(freepool, 0);
 #endif
 			mtx_unlock(&vm_page_queue_free_mtx);
 		}
