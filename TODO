@@ -1,0 +1,14 @@
+- Implement batch pagequeue insertion for "dontneed" pages.
+  - Cleanest way to do this is probably to make a dedicated
+    INACT_NOLRU pagequeue for them. Then we'll get batch queues
+    automatically.
+    This will require changes to the inactive queue scan.
+- Add a reserv link lock to protect per-object reservation lists
+  and the global reserv LRU queues.
+  - Lock ordering gets tricky.
+- Fuzzy counters.
+  - vmmeter should be split into true counters vs. values that
+    are compared with thresholds (e.g. v_wire_count)
+- Taskqueue for removing pages from the active queue. A dedicated thread
+  will introduce less lock contention on the active queue.
+  - Maybe the pagedaemon should be responsible for this instead?
