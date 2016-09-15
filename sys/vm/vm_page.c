@@ -450,6 +450,10 @@ vm_page_domain_init(struct vm_domain *vmd)
 	vmd->vmd_oom = FALSE;
 	for (i = 0; i < PQ_COUNT; i++) {
 		pq = &vmd->vmd_pagequeues[i];
+		if (i == PQ_ACTIVE)
+			pq->pq_flags = VM_PQF_CLOCK;
+		else
+			pq->pq_flags = 0;
 		TAILQ_INIT(&pq->pq_pl);
 		mtx_init(&pq->pq_mutex, pq->pq_name, "vm pagequeue",
 		    MTX_DEF | MTX_DUPOK);
@@ -2652,7 +2656,11 @@ vm_page_queue_batch(struct vm_pagequeue *pq, u_int idx)
 	vm_pagequeue_assert_locked(pq);
 	bpq = &pq->pq_bpqs[idx];
 	if (bpq->bpq_cnt != 0) {
-		TAILQ_CONCAT(&pq->pq_pl, &bpq->bpq_pl, plinks.q);
+		if ((pq->pq_flags & VM_PQF_CLOCK) != 0)
+			TAILQ_SPLICE_BEFORE(&pq->pq_pl, &bpq->bpq_pl,
+			    &pq->pq_marker, pglist, plinks.q);
+		else
+			TAILQ_CONCAT(&pq->pq_pl, &bpq->bpq_pl, plinks.q);
 		vm_pagequeue_cnt_add(pq, bpq->bpq_cnt);
 		bpq->bpq_cnt = 0;
 	}

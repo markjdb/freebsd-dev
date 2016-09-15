@@ -224,12 +224,16 @@ struct vm_batchqueue {
 	int		bpq_cnt;
 } __aligned(CACHE_LINE_SIZE);
 
+#define	VM_PQF_CLOCK	0x0001
+
 struct vm_pagequeue {
 	struct mtx	pq_mutex;
 	struct pglist	pq_pl;
 	int		pq_cnt;
+	int		pq_flags;
 	u_int		* const pq_vcnt;
 	const char	* const pq_name;
+	struct vm_page	pq_marker;
 	struct vm_batchqueue pq_bpqs[BPQ_COUNT];
 } __aligned(CACHE_LINE_SIZE);
 
@@ -241,8 +245,6 @@ struct vm_domain {
 	boolean_t vmd_oom;
 	int vmd_oom_seq;
 	int vmd_last_active_scan;
-	struct vm_page vmd_laundry_marker;
-	struct vm_page vmd_marker; /* marker for pagedaemon private use */
 	struct vm_page vmd_inacthead; /* marker for LRU-defeating insertions */
 };
 

@@ -974,8 +974,7 @@ scan:
 		 * Unlock the laundry queue, invalidating the 'next' pointer.
 		 * Use a marker to remember our place in the laundry queue.
 		 */
-		TAILQ_INSERT_AFTER(&pq->pq_pl, m, &vmd->vmd_laundry_marker,
-		    plinks.q);
+		TAILQ_INSERT_AFTER(&pq->pq_pl, m, &pq->pq_marker, plinks.q);
 		vm_pagequeue_unlock(pq);
 		queue_locked = false;
 
@@ -1101,8 +1100,8 @@ relock_queue:
 			vm_pagequeue_lock(pq);
 			queue_locked = true;
 		}
-		next = TAILQ_NEXT(&vmd->vmd_laundry_marker, plinks.q);
-		TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_laundry_marker, plinks.q);
+		next = TAILQ_NEXT(&pq->pq_marker, plinks.q);
+		TAILQ_REMOVE(&pq->pq_pl, &pq->pq_marker, plinks.q);
 	}
 	vm_pagequeue_unlock(pq);
 
@@ -1164,7 +1163,8 @@ vm_pageout_laundry_worker(void *arg)
 	domain = &vm_dom[domidx];
 	pq = &domain->vmd_pagequeues[PQ_LAUNDRY];
 	KASSERT(domain->vmd_segs != 0, ("domain without segments"));
-	vm_pageout_init_marker(&domain->vmd_laundry_marker, PQ_LAUNDRY);
+	vm_pageout_init_marker(&domain->vmd_pagequeues[PQ_LAUNDRY].pq_marker,
+	    PQ_LAUNDRY);
 
 	shortfall = 0;
 	in_shortfall = false;
@@ -1385,7 +1385,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 		/*
 		 * skip marker pages
 		 */
-		if (m->flags & PG_MARKER)
+		if (__predict_false(m->flags & PG_MARKER))
 			continue;
 
 		KASSERT((m->flags & PG_FICTITIOUS) == 0,
@@ -1447,7 +1447,7 @@ unlock_page:
 		 * vm_page_free(), or vm_page_launder() is called.  Use a
 		 * marker to remember our place in the inactive queue.
 		 */
-		TAILQ_INSERT_AFTER(&pq->pq_pl, m, &vmd->vmd_marker, plinks.q);
+		TAILQ_INSERT_AFTER(&pq->pq_pl, m, &pq->pq_marker, plinks.q);
 		vm_page_dequeue_locked(m);
 		vm_pagequeue_unlock(pq);
 		queue_locked = FALSE;
@@ -1533,8 +1533,8 @@ drop_page:
 			vm_pagequeue_lock(pq);
 			queue_locked = TRUE;
 		}
-		next = TAILQ_NEXT(&vmd->vmd_marker, plinks.q);
-		TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_marker, plinks.q);
+		next = TAILQ_NEXT(&pq->pq_marker, plinks.q);
+		TAILQ_REMOVE(&pq->pq_pl, &pq->pq_marker, plinks.q);
 	}
 	vm_pagequeue_unlock(pq);
 
@@ -1593,7 +1593,6 @@ drop_page:
 	page_shortage *= act_scan_laundry_weight;
 
 	pq = &vmd->vmd_pagequeues[PQ_ACTIVE];
-	vm_pagequeue_lock(pq);
 	maxscan = pq->pq_cnt;
 
 	/*
@@ -1602,7 +1601,7 @@ drop_page:
 	 */
 	scan_tick = ticks;
 	if (vm_pageout_update_period != 0) {
-		min_scan = pq->pq_cnt;
+		min_scan = maxscan;
 		min_scan *= scan_tick - vmd->vmd_last_active_scan;
 		min_scan /= hz * vm_pageout_update_period;
 	} else
@@ -1615,19 +1614,21 @@ drop_page:
 	 * the per-page activity counter and use it to identify deactivation
 	 * candidates.  Held pages may be deactivated.
 	 */
-	for (m = TAILQ_FIRST(&pq->pq_pl), scanned = 0; m != NULL && (scanned <
-	    min_scan || (inactq_shortage > 0 && scanned < maxscan)); m = next,
-	    scanned++) {
+	vm_pagequeue_lock(pq);
+	m = next = TAILQ_NEXT(&pq->pq_marker, plinks.q);
+	for (scanned = 0; m != NULL &&
+	    (scanned < min_scan || (inactq_shortage > 0 && scanned < maxscan));
+	    m = next, scanned++) {
 		KASSERT(m->queue == PQ_ACTIVE,
 		    ("vm_pageout_scan: page %p isn't active", m));
 		next = TAILQ_NEXT(m, plinks.q);
-		if ((m->flags & PG_MARKER) != 0)
+		if (__predict_false((m->flags & PG_MARKER) != 0))
 			continue;
 		KASSERT((m->flags & PG_FICTITIOUS) == 0,
 		    ("Fictitious page %p cannot be in active queue", m));
 		KASSERT((m->oflags & VPO_UNMANAGED) == 0,
 		    ("Unmanaged page %p cannot be in active queue", m));
-		if (!vm_pageout_page_lock(m, &next)) {
+		if (__predict_false(!vm_pageout_page_lock(m, &next))) {
 			vm_page_unlock(m);
 			continue;
 		}
@@ -1712,10 +1713,14 @@ drop_page:
 					inactq_shortage--;
 				}
 			}
-		} else
-			vm_page_requeue_locked(m);
+		}
 		vm_page_unlock(m);
 	}
+	TAILQ_REMOVE(&pq->pq_pl, &pq->pq_marker, plinks.q);
+	if (next == NULL)
+		TAILQ_INSERT_HEAD(&pq->pq_pl, &pq->pq_marker, plinks.q);
+	else
+		TAILQ_INSERT_BEFORE(next, &pq->pq_marker, plinks.q);
 	vm_pagequeue_unlock(pq);
 
 #if VM_NRESERVLEVEL > 0
@@ -1980,11 +1985,18 @@ vm_pageout_worker(void *arg)
 	 */
 
 	KASSERT(domain->vmd_segs != 0, ("domain without segments"));
-	domain->vmd_last_active_scan = ticks;
-	vm_pageout_init_marker(&domain->vmd_marker, PQ_INACTIVE);
+	vm_pageout_init_marker(&domain->vmd_pagequeues[PQ_INACTIVE].pq_marker,
+	    PQ_INACTIVE);
+	vm_pageout_init_marker(&domain->vmd_pagequeues[PQ_ACTIVE].pq_marker,
+	    PQ_ACTIVE);
 	vm_pageout_init_marker(&domain->vmd_inacthead, PQ_INACTIVE);
+
 	TAILQ_INSERT_HEAD(&domain->vmd_pagequeues[PQ_INACTIVE].pq_pl,
 	    &domain->vmd_inacthead, plinks.q);
+
+	domain->vmd_last_active_scan = ticks;
+	TAILQ_INSERT_HEAD(&domain->vmd_pagequeues[PQ_ACTIVE].pq_pl,
+	    &domain->vmd_pagequeues[PQ_ACTIVE].pq_marker, plinks.q);
 
 	/*
 	 * The pageout daemon worker is never done, so loop forever.
