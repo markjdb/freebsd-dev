@@ -60,7 +60,7 @@
 #include <ifaddrs.h>
 #include "rtsold.h"
 
-static int ifsock;
+static int ifsock = -1;
 
 static int get_llflag(const char *);
 static void get_rtaddrs(int, struct sockaddr *, struct sockaddr **);
@@ -68,9 +68,9 @@ static void get_rtaddrs(int, struct sockaddr *, struct sockaddr **);
 int
 ifinit(void)
 {
-	ifsock = rssock;
 
-	return(0);
+	ifsock = rssock;
+	return (0);
 }
 
 int
@@ -79,7 +79,6 @@ interface_up(char *name)
 	struct ifreq ifr;
 	struct in6_ndireq nd;
 	int llflag;
-	int s;
 
 	memset(&ifr, 0, sizeof(ifr));
 	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
@@ -98,15 +97,9 @@ interface_up(char *name)
 			    "ioctl(SIOCSIFFLAGS): %s", strerror(errno));
 		return (-1);
 	}
-	if ((s = socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
-		warnmsg(LOG_WARNING, __func__, "socket(AF_INET6, SOCK_DGRAM): %s",
-		    strerror(errno));
-		return (-1);
-	}
-	if (ioctl(s, SIOCGIFINFO_IN6, (caddr_t)&nd) < 0) {
+	if (ioctl(ifsock, SIOCGIFINFO_IN6, (caddr_t)&nd) < 0) {
 		warnmsg(LOG_WARNING, __func__, "ioctl(SIOCGIFINFO_IN6): %s",
 		    strerror(errno));
-		close(s);
 		return (-1);
 	}
 
@@ -115,38 +108,33 @@ interface_up(char *name)
 	if (nd.ndi.flags & ND6_IFF_IFDISABLED) {
 		if (Fflag) {
 			nd.ndi.flags &= ~ND6_IFF_IFDISABLED;
-			if (ioctl(s, SIOCSIFINFO_IN6, (caddr_t)&nd)) {
+			if (ioctl(ifsock, SIOCSIFINFO_IN6, (caddr_t)&nd)) {
 				warnmsg(LOG_WARNING, __func__,
 				    "ioctl(SIOCSIFINFO_IN6): %s",
 		    		    strerror(errno));
-				close(s);
 				return (-1);
 			}
 		} else {
 			warnmsg(LOG_WARNING, __func__,
 			    "%s is disabled.", name);
-			close(s);
 			return (-1);
 		}
 	}
 	if (!(nd.ndi.flags & ND6_IFF_ACCEPT_RTADV)) {
 		if (Fflag) {
 			nd.ndi.flags |= ND6_IFF_ACCEPT_RTADV;
-			if (ioctl(s, SIOCSIFINFO_IN6, (caddr_t)&nd)) {
+			if (ioctl(ifsock, SIOCSIFINFO_IN6, (caddr_t)&nd)) {
 				warnmsg(LOG_WARNING, __func__,
 				    "ioctl(SIOCSIFINFO_IN6): %s",
 		    		    strerror(errno));
-				close(s);
 				return (-1);
 			}
 		} else {
 			warnmsg(LOG_WARNING, __func__,
 			    "%s does not accept Router Advertisement.", name);
-			close(s);
 			return (-1);
 		}
 	}
-	close(s);
 
 	llflag = get_llflag(name);
 	if (llflag < 0) {
@@ -372,13 +360,7 @@ get_llflag(const char *name)
 	struct ifaddrs *ifap, *ifa;
 	struct in6_ifreq ifr6;
 	struct sockaddr_in6 *sin6;
-	int s;
 
-	if ((s = socket(PF_INET6, SOCK_DGRAM, 0)) < 0) {
-		warnmsg(LOG_ERR, __func__, "socket(SOCK_DGRAM): %s",
-		    strerror(errno));
-		exit(1);
-	}
 	if (getifaddrs(&ifap) != 0) {
 		warnmsg(LOG_ERR, __func__, "getifaddrs: %s",
 		    strerror(errno));
@@ -398,19 +380,17 @@ get_llflag(const char *name)
 		memset(&ifr6, 0, sizeof(ifr6));
 		strlcpy(ifr6.ifr_name, name, sizeof(ifr6.ifr_name));
 		memcpy(&ifr6.ifr_ifru.ifru_addr, sin6, sin6->sin6_len);
-		if (ioctl(s, SIOCGIFAFLAG_IN6, &ifr6) < 0) {
+		if (ioctl(ifsock, SIOCGIFAFLAG_IN6, &ifr6) < 0) {
 			warnmsg(LOG_ERR, __func__,
 			    "ioctl(SIOCGIFAFLAG_IN6): %s", strerror(errno));
 			exit(1);
 		}
 
 		freeifaddrs(ifap);
-		close(s);
 		return (ifr6.ifr_ifru.ifru_flags6);
 	}
 
 	freeifaddrs(ifap);
-	close(s);
 	return (-1);
 }
 
