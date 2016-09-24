@@ -127,6 +127,7 @@ cddl/compat/opensolaris/kern/opensolaris.c		optional zfs | dtrace compile-with "
 cddl/compat/opensolaris/kern/opensolaris_cmn_err.c	optional zfs | dtrace compile-with "${CDDL_C}"
 cddl/compat/opensolaris/kern/opensolaris_kmem.c		optional zfs | dtrace compile-with "${CDDL_C}"
 cddl/compat/opensolaris/kern/opensolaris_misc.c		optional zfs | dtrace compile-with "${CDDL_C}"
+cddl/compat/opensolaris/kern/opensolaris_proc.c		optional zfs | dtrace compile-with "${CDDL_C}"
 cddl/compat/opensolaris/kern/opensolaris_sunddi.c	optional zfs | dtrace compile-with "${CDDL_C}"
 cddl/compat/opensolaris/kern/opensolaris_taskq.c	optional zfs | dtrace compile-with "${CDDL_C}"
 # zfs specific
@@ -1501,6 +1502,11 @@ dev/etherswitch/ip17x/ip17x_vlans.c	optional ip17x
 dev/etherswitch/miiproxy.c		optional miiproxy
 dev/etherswitch/rtl8366/rtl8366rb.c	optional rtl8366rb
 dev/etherswitch/ukswitch/ukswitch.c	optional ukswitch
+dev/evdev/cdev.c			optional evdev
+dev/evdev/evdev.c			optional evdev
+dev/evdev/evdev_mt.c			optional evdev
+dev/evdev/evdev_utils.c			optional evdev
+dev/evdev/uinput.c			optional evdev uinput
 dev/ex/if_ex.c			optional ex
 dev/ex/if_ex_isa.c		optional ex isa
 dev/ex/if_ex_pccard.c		optional ex pccard
@@ -2221,6 +2227,7 @@ dev/oce/oce_sysctl.c		optional oce pci
 dev/oce/oce_util.c		optional oce pci
 dev/ofw/ofw_bus_if.m		optional fdt
 dev/ofw/ofw_bus_subr.c		optional fdt
+dev/ofw/ofw_cpu.c		optional fdt
 dev/ofw/ofw_fdt.c		optional fdt
 dev/ofw/ofw_if.m		optional fdt
 dev/ofw/ofw_subr.c		optional fdt
