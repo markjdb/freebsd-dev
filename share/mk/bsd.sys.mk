@@ -111,7 +111,35 @@ CWARNFLAGS+=	-Wno-format
 
 # GCC 5.2.0
 .if ${COMPILER_TYPE} == "gcc" && ${COMPILER_VERSION} >= 50200
-CWARNFLAGS+=	-Wno-error=unused-function -Wno-error=enum-compare -Wno-error=logical-not-parentheses -Wno-error=bool-compare -Wno-error=uninitialized -Wno-error=array-bounds -Wno-error=clobbered -Wno-error=cast-align -Wno-error=extra -Wno-error=attributes -Wno-error=inline -Wno-error=unused-but-set-variable -Wno-error=unused-value -Wno-error=strict-aliasing -Wno-error=address
+CWARNFLAGS+=	-Wno-error=address			\
+		-Wno-error=array-bounds			\
+		-Wno-error=attributes			\
+		-Wno-error=bool-compare			\
+		-Wno-error=cast-align			\
+		-Wno-error=clobbered			\
+		-Wno-error=enum-compare			\
+		-Wno-error=extra			\
+		-Wno-error=inline			\
+		-Wno-error=logical-not-parentheses	\
+		-Wno-error=strict-aliasing		\
+		-Wno-error=uninitialized		\
+		-Wno-error=unused-but-set-variable	\
+		-Wno-error=unused-function		\
+		-Wno-error=unused-value
+.endif
+
+# GCC 5.3.0
+.if ${COMPILER_TYPE} == "gcc" && ${COMPILER_VERSION} >= 50300
+CWARNFLAGS+=	-Wno-error=strict-overflow
+.endif
+
+# GCC 6.1.0
+.if ${COMPILER_TYPE} == "gcc" && ${COMPILER_VERSION} >= 60100
+CWARNFLAGS+=	-Wno-error=misleading-indentation	\
+		-Wno-error=nonnull-compare		\
+		-Wno-error=shift-negative-value		\
+		-Wno-error=tautological-compare		\
+		-Wno-error=unused-const-variable
 .endif
 
 # How to handle FreeBSD custom printf format specifiers.
@@ -167,42 +195,17 @@ CFLAGS+=	${SSP_CFLAGS}
 # Allow user-specified additional warning flags, plus compiler and file
 # specific flag overrides, unless we've overriden this...
 .if ${MK_WARNS} != "no"
-CFLAGS+=	${CWARNFLAGS} ${CWARNFLAGS.${COMPILER_TYPE}}
+CFLAGS+=	${CWARNFLAGS:M*} ${CWARNFLAGS.${COMPILER_TYPE}}
 CFLAGS+=	${CWARNFLAGS.${.IMPSRC:T}}
 .endif
 
 CFLAGS+=	 ${CFLAGS.${COMPILER_TYPE}}
 CXXFLAGS+=	 ${CXXFLAGS.${COMPILER_TYPE}}
 
+AFLAGS+=	${AFLAGS.${.IMPSRC:T}}
 ACFLAGS+=	${ACFLAGS.${.IMPSRC:T}}
 CFLAGS+=	${CFLAGS.${.IMPSRC:T}}
 CXXFLAGS+=	${CXXFLAGS.${.IMPSRC:T}}
-
-# Special handling for external GCC.
-.if defined(X_COMPILER_TYPE) && ${X_COMPILER_TYPE} == "gcc"
-# GCC's --sysroot support for a cross-compiler without a default
-# TARGET_SYSTEM_ROOT does not add sysroot/usr/include in or the C++
-# include path of sysroot/usr/include/c++/v1.  They need to be added in
-# when not using -nostdinc/-nostdinc++.  This is not a problem with a
-# non-cross-compiler external GCC or the in-tree cross-compiler GCC which
-# has a default TARGET_SYSTEM_ROOT.
-.if ${CC:M--sysroot=*} || ${CFLAGS:M--sysroot=*}
-.if ${CFLAGS:M-nostdinc} == ""
-CFLAGS+=	-isystem =/usr/include
-.endif
-# Add in sysroot/usr/lib to ensure that it comes before /usr/local/lib
-# from ports compilers.
-LDFLAGS+=	-L=/usr/lib
-# We want to force building the system with our in-tree libc++.  Note that
-# this also requires a symlink in OBJDIR/lib/libc++/libstdc++.so to
-# sysroot/usr/lib/libc++.so.
-.if ${CXXFLAGS:M-nostdinc++} == "" && ${CXXFLAGS:M-nostdlib} == ""
-CXXFLAGS+=	-std=c++11 \
-		-nostdinc++ -isystem =/usr/include/c++/v1
-LDFLAGS+=	-L${OBJTOP}/lib/libc++
-.endif
-.endif	# --sysroot
-.endif	# X_COMPILER_TYPE == gcc
 
 .if defined(SRCTOP)
 # Prevent rebuilding during install to support read-only objdirs.

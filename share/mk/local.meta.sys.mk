@@ -214,7 +214,8 @@ CSU_DIR := ${CSU_DIR.${MACHINE_ARCH}}
 .if !empty(TIME_STAMP)
 TRACER= ${TIME_STAMP} ${:U}
 .endif
-.if !defined(_RECURSING_PROGS) && !defined(_RECURSING_CRUNCH)
+.if !defined(_RECURSING_PROGS) && !defined(_RECURSING_CRUNCH) && \
+    !make(print-dir)
 WITH_META_STATS= t
 .endif
 
@@ -222,7 +223,7 @@ WITH_META_STATS= t
 .if ${MACHINE} == "host"
 MK_SHARED_TOOLCHAIN= no
 .endif
-TOOLCHAIN_VARS=	AS AR CC CLANG_TBLGEN CXX CPP LD NM OBJDUMP OBJCOPY RANLIB \
+TOOLCHAIN_VARS=	AS AR CC CLANG_TBLGEN CXX CPP LD NM OBJCOPY RANLIB \
 		STRINGS SIZE LLVM_TBLGEN
 _toolchain_bin_CLANG_TBLGEN=	/usr/bin/clang-tblgen
 _toolchain_bin_LLVM_TBLGEN=	/usr/bin/llvm-tblgen
@@ -277,4 +278,9 @@ CROSS_TARGET_FLAGS= -target ${MACHINE_ARCH}-unknown-freebsd${FREEBSD_REVISION}
 CFLAGS+= ${CROSS_TARGET_FLAGS}
 ACFLAGS+= ${CROSS_TARGET_FLAGS}
 LDFLAGS+= -Wl,-m -Wl,elf_${MACHINE_ARCH}_fbsd
+.endif
+
+META_MODE+=	missing-meta=yes
+.if empty(META_MODE:Mnofilemon)
+META_MODE+=	missing-filemon=yes
 .endif

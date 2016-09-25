@@ -441,6 +441,7 @@ vdev_alloc_common(spa_t *spa, uint_t id, uint64_t guid, vdev_ops_t *ops)
 	mutex_init(&vd->vdev_dtl_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&vd->vdev_stat_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&vd->vdev_probe_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&vd->vdev_queue_lock, NULL, MUTEX_DEFAULT, NULL);
 	for (int t = 0; t < DTL_TYPES; t++) {
 		vd->vdev_dtl[t] = range_tree_create(NULL, NULL,
 		    &vd->vdev_dtl_lock);
@@ -770,6 +771,7 @@ vdev_free(vdev_t *vd)
 	}
 	mutex_exit(&vd->vdev_dtl_lock);
 
+	mutex_destroy(&vd->vdev_queue_lock);
 	mutex_destroy(&vd->vdev_dtl_lock);
 	mutex_destroy(&vd->vdev_stat_lock);
 	mutex_destroy(&vd->vdev_probe_lock);
@@ -1086,7 +1088,8 @@ vdev_probe_done(zio_t *zio)
 		vd->vdev_probe_zio = NULL;
 		mutex_exit(&vd->vdev_probe_lock);
 
-		while ((pio = zio_walk_parents(zio)) != NULL)
+		zio_link_t *zl = NULL;
+		while ((pio = zio_walk_parents(zio, &zl)) != NULL)
 			if (!vdev_accessible(vd, pio))
 				pio->io_error = SET_ERROR(ENXIO);
 
@@ -2857,7 +2860,8 @@ vdev_allocatable(vdev_t *vd)
 	 * we're asking two separate questions about it.
 	 */
 	return (!(state < VDEV_STATE_DEGRADED && state != VDEV_STATE_CLOSED) &&
-	    !vd->vdev_cant_write && !vd->vdev_ishole);
+	    !vd->vdev_cant_write && !vd->vdev_ishole &&
+	    vd->vdev_mg->mg_initialized);
 }
 
 boolean_t
@@ -2885,6 +2889,7 @@ vdev_get_stats(vdev_t *vd, vdev_stat_t *vs)
 {
 	spa_t *spa = vd->vdev_spa;
 	vdev_t *rvd = spa->spa_root_vdev;
+	vdev_t *tvd = vd->vdev_top;
 
 	ASSERT(spa_config_held(spa, SCL_ALL, RW_READER) != 0);
 
@@ -2895,8 +2900,15 @@ vdev_get_stats(vdev_t *vd, vdev_stat_t *vs)
 	vs->vs_rsize = vdev_get_min_asize(vd);
 	if (vd->vdev_ops->vdev_op_leaf)
 		vs->vs_rsize += VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE;
-	if (vd->vdev_max_asize != 0)
-		vs->vs_esize = vd->vdev_max_asize - vd->vdev_asize;
+	/*
+	 * Report expandable space on top-level, non-auxillary devices only.
+	 * The expandable space is reported in terms of metaslab sized units
+	 * since that determines how much space the pool can expand.
+	 */
+	if (vd->vdev_aux == NULL && tvd != NULL && vd->vdev_max_asize != 0) {
+		vs->vs_esize = P2ALIGN(vd->vdev_max_asize - vd->vdev_asize,
+		    1ULL << tvd->vdev_ms_shift);
+	}
 	vs->vs_configured_ashift = vd->vdev_top != NULL
 	    ? vd->vdev_top->vdev_ashift : vd->vdev_ashift;
 	vs->vs_logical_ashift = vd->vdev_logical_ashift;
@@ -3366,19 +3378,6 @@ vdev_set_state(vdev_t *vd, boolean_t isopen, vdev_state_t state, vdev_aux_t aux)
 	    vd->vdev_ops->vdev_op_leaf)
 		vd->vdev_ops->vdev_op_close(vd);
 
-	/*
-	 * If we have brought this vdev back into service, we need
-	 * to notify fmd so that it can gracefully repair any outstanding
-	 * cases due to a missing device.  We do this in all cases, even those
-	 * that probably don't correlate to a repaired fault.  This is sure to
-	 * catch all cases, and we let the zfs-retire agent sort it out.  If
-	 * this is a transient state it's OK, as the retire agent will
-	 * double-check the state of the vdev before repairing it.
-	 */
-	if (state == VDEV_STATE_HEALTHY && vd->vdev_ops->vdev_op_leaf &&
-	    vd->vdev_prevstate != state)
-		zfs_post_state_change(spa, vd);
-
 	if (vd->vdev_removed &&
 	    state == VDEV_STATE_CANT_OPEN &&
 	    (aux == VDEV_AUX_OPEN_FAILED || vd->vdev_checkremove)) {
@@ -3458,6 +3457,16 @@ vdev_set_state(vdev_t *vd, boolean_t isopen, vdev_state_t state, vdev_aux_t aux)
 	} else {
 		vd->vdev_removed = B_FALSE;
 	}
+
+	/*
+	* Notify the fmd of the state change.  Be verbose and post
+	* notifications even for stuff that's not important; the fmd agent can
+	* sort it out.  Don't emit state change events for non-leaf vdevs since
+	* they can't change state on their own.  The FMD can check their state
+	* if it wants to when it sees that a leaf vdev had a state change.
+	*/
+	if (vd->vdev_ops->vdev_op_leaf)
+		zfs_post_state_change(spa, vd);
 
 	if (!isopen && vd->vdev_parent)
 		vdev_propagate_state(vd->vdev_parent);

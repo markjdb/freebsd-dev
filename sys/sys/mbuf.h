@@ -174,6 +174,7 @@ struct pkthdr {
 #define	PH_vt		PH_per
 #define	vt_nrecs	sixteen[0]
 #define	tso_segsz	PH_per.sixteen[1]
+#define	lro_nsegs	tso_segsz
 #define	csum_phsum	PH_per.sixteen[2]
 #define	csum_data	PH_per.thirtytwo[1]
 
@@ -318,30 +319,41 @@ struct mbuf {
  *
  * Most NICs support RSS, which provides ordering and explicit affinity, and
  * use the hash m_flag bits to indicate what header fields were covered by
- * the hash.  M_HASHTYPE_OPAQUE can be set by non-RSS cards or configurations
- * that provide an opaque flow identifier, allowing for ordering and
- * distribution without explicit affinity.
+ * the hash.  M_HASHTYPE_OPAQUE and M_HASHTYPE_OPAQUE_HASH can be set by non-
+ * RSS cards or configurations that provide an opaque flow identifier, allowing
+ * for ordering and distribution without explicit affinity.  Additionally,
+ * M_HASHTYPE_OPAQUE_HASH indicates that the flow identifier has hash
+ * properties.
  */
+#define	M_HASHTYPE_HASHPROP		0x80	/* has hash properties */
+#define	M_HASHTYPE_HASH(t)		(M_HASHTYPE_HASHPROP | (t))
 /* Microsoft RSS standard hash types */
 #define	M_HASHTYPE_NONE			0
-#define	M_HASHTYPE_RSS_IPV4		1	/* IPv4 2-tuple */
-#define	M_HASHTYPE_RSS_TCP_IPV4		2	/* TCPv4 4-tuple */
-#define	M_HASHTYPE_RSS_IPV6		3	/* IPv6 2-tuple */
-#define	M_HASHTYPE_RSS_TCP_IPV6		4	/* TCPv6 4-tuple */
-#define	M_HASHTYPE_RSS_IPV6_EX		5	/* IPv6 2-tuple + ext hdrs */
-#define	M_HASHTYPE_RSS_TCP_IPV6_EX	6	/* TCPv6 4-tiple + ext hdrs */
+#define	M_HASHTYPE_RSS_IPV4		M_HASHTYPE_HASH(1) /* IPv4 2-tuple */
+#define	M_HASHTYPE_RSS_TCP_IPV4		M_HASHTYPE_HASH(2) /* TCPv4 4-tuple */
+#define	M_HASHTYPE_RSS_IPV6		M_HASHTYPE_HASH(3) /* IPv6 2-tuple */
+#define	M_HASHTYPE_RSS_TCP_IPV6		M_HASHTYPE_HASH(4) /* TCPv6 4-tuple */
+#define	M_HASHTYPE_RSS_IPV6_EX		M_HASHTYPE_HASH(5) /* IPv6 2-tuple +
+							    * ext hdrs */
+#define	M_HASHTYPE_RSS_TCP_IPV6_EX	M_HASHTYPE_HASH(6) /* TCPv6 4-tiple +
+							    * ext hdrs */
 /* Non-standard RSS hash types */
-#define	M_HASHTYPE_RSS_UDP_IPV4		7	/* IPv4 UDP 4-tuple */
-#define	M_HASHTYPE_RSS_UDP_IPV4_EX	8	/* IPv4 UDP 4-tuple + ext hdrs */
-#define	M_HASHTYPE_RSS_UDP_IPV6		9	/* IPv6 UDP 4-tuple */
-#define	M_HASHTYPE_RSS_UDP_IPV6_EX	10	/* IPv6 UDP 4-tuple + ext hdrs */
+#define	M_HASHTYPE_RSS_UDP_IPV4		M_HASHTYPE_HASH(7) /* IPv4 UDP 4-tuple*/
+#define	M_HASHTYPE_RSS_UDP_IPV4_EX	M_HASHTYPE_HASH(8) /* IPv4 UDP 4-tuple +
+							    * ext hdrs */
+#define	M_HASHTYPE_RSS_UDP_IPV6		M_HASHTYPE_HASH(9) /* IPv6 UDP 4-tuple*/
+#define	M_HASHTYPE_RSS_UDP_IPV6_EX	M_HASHTYPE_HASH(10)/* IPv6 UDP 4-tuple +
+							    * ext hdrs */
 
-#define	M_HASHTYPE_OPAQUE		255	/* ordering, not affinity */
+#define	M_HASHTYPE_OPAQUE		63	/* ordering, not affinity */
+#define	M_HASHTYPE_OPAQUE_HASH		M_HASHTYPE_HASH(M_HASHTYPE_OPAQUE)
+						/* ordering+hash, not affinity*/
 
 #define	M_HASHTYPE_CLEAR(m)	((m)->m_pkthdr.rsstype = 0)
 #define	M_HASHTYPE_GET(m)	((m)->m_pkthdr.rsstype)
 #define	M_HASHTYPE_SET(m, v)	((m)->m_pkthdr.rsstype = (v))
 #define	M_HASHTYPE_TEST(m, v)	(M_HASHTYPE_GET(m) == (v))
+#define	M_HASHTYPE_ISHASH(m)	(M_HASHTYPE_GET(m) & M_HASHTYPE_HASHPROP)
 
 /*
  * COS/QOS class and quality of service tags.
@@ -379,7 +391,7 @@ struct mbuf {
 #define	EXT_JUMBO9	4	/* jumbo cluster 9216 bytes */
 #define	EXT_JUMBO16	5	/* jumbo cluster 16184 bytes */
 #define	EXT_PACKET	6	/* mbuf+cluster from packet zone */
-#define	EXT_MBUF	7	/* external mbuf reference (M_IOVEC) */
+#define	EXT_MBUF	7	/* external mbuf reference */
 #define	EXT_SFBUF_NOCACHE 8	/* sendfile(2)'s sf_buf not to be cached */
 
 #define	EXT_VENDOR1	224	/* for vendor-internal use */
@@ -966,9 +978,6 @@ m_align(struct mbuf *m, int len)
 
 /* Length to m_copy to copy all. */
 #define	M_COPYALL	1000000000
-
-/* Compatibility with 4.3. */
-#define	m_copy(m, o, l)	m_copym((m), (o), (l), M_NOWAIT)
 
 extern int		max_datalen;	/* MHLEN - max_hdr */
 extern int		max_hdr;	/* Largest link + protocol header */

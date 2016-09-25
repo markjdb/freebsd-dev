@@ -32,63 +32,21 @@
 #ifndef _BHND_CORES_CHIPC_CHIPCVAR_H_
 #define _BHND_CORES_CHIPC_CHIPCVAR_H_
 
+#include <sys/types.h>
+#include <sys/rman.h>
+
 #include <dev/bhnd/nvram/bhnd_spromvar.h>
 
 #include "chipc.h"
 
-DECLARE_CLASS(bhnd_chipc);
+DECLARE_CLASS(bhnd_chipc_driver);
 extern devclass_t bhnd_chipc_devclass;
 
 struct chipc_region;
 
-/**
- * Supported ChipCommon flash types.
- */
-typedef enum {
-	CHIPC_FLASH_NONE	= 0,	/**< No flash, or a type unrecognized
-					     by the ChipCommon driver */
-	CHIPC_PFLASH_CFI	= 1,	/**< CFI-compatible parallel flash */
-	CHIPC_SFLASH_ST		= 2,	/**< ST serial flash */
-	CHIPC_SFLASH_AT		= 3,	/**< Atmel serial flash */
-	CHIPC_QSFLASH_ST	= 4,	/**< ST quad-SPI flash */ 
-	CHIPC_QSFLASH_AT	= 5,	/**< Atmel quad-SPI flash */
-	CHIPC_NFLASH		= 6,	/**< NAND flash */
-	CHIPC_NFLASH_4706	= 7	/**< BCM4706 NAND flash */
-} chipc_flash;
-
-/**
- * ChipCommon capability flags;
- */
-struct chipc_caps {
-	uint8_t		num_uarts;	/**< Number of attached UARTS (1-3) */
-	bool		mipseb;		/**< MIPS is big-endian */
-	uint8_t		uart_clock;	/**< UART clock source (see CHIPC_CAP_UCLKSEL_*) */
-	uint8_t		uart_gpio;	/**< UARTs own GPIO pins 12-15 */
-
-	uint8_t		extbus_type;	/**< ExtBus type (CHIPC_CAP_EXTBUS_*) */
-	chipc_flash 	flash_type;	/**< Flash type */
-	uint8_t		otp_size;	/**< OTP (row?) size, 0 if not present */
-	uint8_t		cfi_width;	/**< CFI bus width, 0 if unknown or CFI not present */
-
-	uint8_t		pll_type;	/**< PLL type */
-	bool		power_control;	/**< Power control available */
-	bool		jtag_master;	/**< JTAG Master present */
-	bool		boot_rom;	/**< Internal boot ROM is active */
-	uint8_t		backplane_64;	/**< Backplane supports 64-bit addressing.
-					     Note that this does not gaurantee
-					     the CPU itself supports 64-bit
-					     addressing. */
-	bool		pmu;		/**< PMU is present. */
-	bool		eci;		/**< ECI (enhanced coexistence inteface) is present. */
-	bool		seci;		/**< SECI (serial ECI) is present */
-	bool		sprom;		/**< SPROM is present */
-	bool		gsio;		/**< GSIO (SPI/I2C) present */
-	bool		aob;		/**< AOB (always on bus) present.
-					     If set, PMU and GCI registers are
-					     not accessible via ChipCommon,
-					     and are instead accessible via
-					     dedicated cores on the bhnd bus */
-};
+const char	*chipc_flash_name(chipc_flash type);
+const char	*chipc_flash_bus_name(chipc_flash type);
+const char	*chipc_sflash_device_name(chipc_flash type);
 
 /* 
  * ChipCommon device quirks / features
@@ -158,9 +116,21 @@ enum {
 	/** Supports CHIPC_CAPABILITIES_EXT register */
 	CHIPC_QUIRK_SUPPORTS_CAP_EXT		= (1<<6),
 
+	/** Supports HND or IPX OTP registers (CHIPC_OTPST, CHIPC_OTPCTRL,
+	 *  CHIPC_OTPPROG) */
+	CHIPC_QUIRK_SUPPORTS_OTP		= (1<<7),
+
+	/** Supports HND OTP registers. */
+	CHIPC_QUIRK_OTP_HND			= (1<<8) |
+	    CHIPC_QUIRK_SUPPORTS_OTP,
+
+	/** Supports IPX OTP registers. */
+	CHIPC_QUIRK_OTP_IPX			= (1<<9) |
+	    CHIPC_QUIRK_SUPPORTS_OTP,
+
 	/** OTP size is defined via CHIPC_OTPLAYOUT register in later
 	 *  ChipCommon revisions using the 'IPX' OTP controller. */
-	CHIPC_QUIRK_IPX_OTPLAYOUT_SIZE		= (1<<7),
+	CHIPC_QUIRK_IPX_OTPL_SIZE		= (1<<10)
 };
 
 /**
@@ -179,11 +149,8 @@ struct chipc_softc {
 	struct bhnd_resource	*core;		/**< core registers. */
 	struct chipc_region	*core_region;	/**< region containing core registers */
 
-	struct bhnd_chipid	 ccid;		/**< chip identification */
 	uint32_t		 quirks;	/**< chipc quirk flags */
 	struct chipc_caps	 caps;		/**< chipc capabilities */
-
-	bhnd_nvram_src_t	 nvram_src;	/**< identified NVRAM source */
 
 	struct mtx		 mtx;		/**< state mutex. */
 	size_t			 sprom_refcnt;	/**< SPROM pin enable refcount */

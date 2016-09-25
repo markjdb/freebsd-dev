@@ -10,7 +10,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -196,11 +196,7 @@ void
 vnet_domain_uninit(void *arg)
 {
 	struct domain *dp = arg;
-	struct protosw *pr;
 
-	for (pr = dp->dom_protosw; pr < dp->dom_protoswNPROTOSW; pr++)
-		if (pr->pr_destroy)
-			(*pr->pr_destroy)();
 	if (dp->dom_destroy)
 		(*dp->dom_destroy)();
 }

@@ -283,7 +283,7 @@ static struct devmap_entry fdt_devmap[FDT_DEVMAP_MAX] = {
 static int
 platform_sram_devmap(struct devmap_entry *map)
 {
-#if !defined(SOC_MV_ARMADAXP)
+#if !defined(SOC_MV_ARMADAXP) && !defined(SOC_MV_ARMADA38X)
 	phandle_t child, root;
 	u_long base, size;
 	/*
@@ -432,6 +432,7 @@ platform_devmap_init(void)
 	return (0);
 }
 
+#if __ARM_ARCH < 6
 struct arm32_dma_range *
 bus_dma_get_range(void)
 {
@@ -445,6 +446,7 @@ bus_dma_get_range_nb(void)
 
 	return (0);
 }
+#endif
 
 #if defined(CPU_MV_PJ4B)
 #ifdef DDB

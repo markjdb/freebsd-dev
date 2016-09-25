@@ -53,6 +53,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/pioctl.h>
+#include <sys/ptrace.h>
 #include <sys/namei.h>
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
@@ -759,6 +760,8 @@ interpret:
 	if (p->p_flag & P_PPWAIT) {
 		p->p_flag &= ~(P_PPWAIT | P_PPTRACE);
 		cv_broadcast(&p->p_pwait);
+		/* STOPs are no longer ignored, arrange for AST */
+		signotify(td);
 	}
 
 	/*
@@ -806,8 +809,11 @@ interpret:
 	/*
 	 * Set the new credentials.
 	 */
-	if (imgp->newcred != NULL)
+	if (imgp->newcred != NULL) {
 		proc_set_cred(p, imgp->newcred);
+		crfree(oldcred);
+		oldcred = NULL;
+	}
 
 	/*
 	 * Store the vp for use in procfs.  This vnode was referenced by namei
@@ -829,7 +835,7 @@ interpret:
 	 * Notify others that we exec'd, and clear the P_INEXEC flag
 	 * as we're now a bona fide freshly-execed process.
 	 */
-	KNOTE_LOCKED(&p->p_klist, NOTE_EXEC);
+	KNOTE_LOCKED(p->p_klist, NOTE_EXEC);
 	p->p_flag &= ~P_INEXEC;
 
 	/* clear "fork but no exec" flag, as we _are_ execing */
@@ -900,7 +906,8 @@ exec_fail_dealloc:
 
 	if (error == 0) {
 		PROC_LOCK(p);
-		td->td_dbgflags |= TDB_EXEC;
+		if (p->p_ptevents & PTRACE_EXEC)
+			td->td_dbgflags |= TDB_EXEC;
 		PROC_UNLOCK(p);
 
 		/*
@@ -918,8 +925,9 @@ exec_fail:
 		SDT_PROBE1(proc, , , exec__failure, error);
 	}
 
-	if (imgp->newcred != NULL)
-		crfree(oldcred);
+	if (imgp->newcred != NULL && oldcred != NULL)
+		crfree(imgp->newcred);
+
 #ifdef MAC
 	mac_execve_exit(imgp);
 	mac_execve_interpreter_exit(interpvplabel);
@@ -976,13 +984,13 @@ exec_map_first_page(imgp)
 #if VM_NRESERVLEVEL > 0
 	vm_object_color(object, 0);
 #endif
-	ma[0] = vm_page_grab(object, 0, VM_ALLOC_NORMAL);
+	ma[0] = vm_page_grab(object, 0, VM_ALLOC_NORMAL | VM_ALLOC_NOBUSY);
 	if (ma[0]->valid != VM_PAGE_BITS_ALL) {
+		vm_page_xbusy(ma[0]);
 		if (!vm_pager_has_page(object, 0, NULL, &after)) {
 			vm_page_lock(ma[0]);
 			vm_page_free(ma[0]);
 			vm_page_unlock(ma[0]);
-			vm_page_xunbusy(ma[0]);
 			VM_OBJECT_WUNLOCK(object);
 			return (EIO);
 		}
@@ -1010,15 +1018,14 @@ exec_map_first_page(imgp)
 				vm_page_lock(ma[i]);
 				vm_page_free(ma[i]);
 				vm_page_unlock(ma[i]);
-				vm_page_xunbusy(ma[i]);
 			}
 			VM_OBJECT_WUNLOCK(object);
 			return (EIO);
 		}
+		vm_page_xunbusy(ma[0]);
 		for (i = 1; i < initial_pagein; i++)
 			vm_page_readahead_finish(ma[i]);
 	}
-	vm_page_xunbusy(ma[0]);
 	vm_page_lock(ma[0]);
 	vm_page_hold(ma[0]);
 	vm_page_activate(ma[0]);

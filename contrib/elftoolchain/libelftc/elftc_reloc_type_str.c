@@ -31,14 +31,6 @@
 #include <libelftc.h>
 #include <stdio.h>
 
-/* Backwards compatability for older FreeBSD releases. */
-#ifndef EM_IAMCU
-#define EM_IAMCU 6
-#endif
-#ifndef EM_RISCV
-#define EM_RISCV 243
-#endif
-
 const char *
 elftc_reloc_type_str(unsigned int mach, unsigned int type)
 {
@@ -553,6 +545,9 @@ elftc_reloc_type_str(unsigned int mach, unsigned int type)
 		case 43: return "R_RISCV_ALIGN";
 		case 44: return "R_RISCV_RVC_BRANCH";
 		case 45: return "R_RISCV_RVC_JUMP";
+		case 46: return "R_RISCV_RVC_LUI";
+		case 47: return "R_RISCV_GPREL_I";
+		case 48: return "R_RISCV_GPREL_S";
 		}
 		break;
 	case EM_SPARC:

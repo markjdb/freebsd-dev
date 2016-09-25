@@ -46,6 +46,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/errno.h>
+#include <sys/rmlock.h>
 #include <sys/rwlock.h>
 #include <sys/syslog.h>
 #include <sys/queue.h>
@@ -1052,7 +1053,7 @@ prelist_remove(struct nd_prefix *pr)
 		/* what should we do? */
 	}
 
-	if (pr->ndpr_refcnt > 0)
+	if (pr->ndpr_addrcnt > 0)
 		return;		/* notice here? */
 
 	/* unlink ndpr_entry from nd_prefix list */
@@ -1355,7 +1356,7 @@ prelist_update(struct nd_prefixctl *new, struct nd_defrouter *dr,
 			/*
 			 * note that we should use pr (not new) for reference.
 			 */
-			pr->ndpr_refcnt++;
+			pr->ndpr_addrcnt++;
 			ia6->ia6_ndpr = pr;
 
 			/*
@@ -1437,12 +1438,13 @@ find_pfxlist_reachable_router(struct nd_prefix *pr)
  * is no router around us.
  */
 void
-pfxlist_onlink_check()
+pfxlist_onlink_check(void)
 {
 	struct nd_prefix *pr;
 	struct in6_ifaddr *ifa;
 	struct nd_defrouter *dr;
 	struct nd_pfxrouter *pfxrtr = NULL;
+	struct rm_priotracker in6_ifa_tracker;
 
 	/*
 	 * Check if there is a prefix that has a reachable advertising
@@ -1573,9 +1575,8 @@ pfxlist_onlink_check()
 	 * detached.  Note, however, that a manually configured address should
 	 * always be attached.
 	 * The precise detection logic is same as the one for prefixes.
-	 *
-	 * XXXRW: in6_ifaddrhead locking.
 	 */
+	IN6_IFADDR_RLOCK(&in6_ifa_tracker);
 	TAILQ_FOREACH(ifa, &V_in6_ifaddrhead, ia_link) {
 		if (!(ifa->ia6_flags & IN6_IFF_AUTOCONF))
 			continue;
@@ -1610,8 +1611,7 @@ pfxlist_onlink_check()
 				ifa->ia6_flags |= IN6_IFF_DETACHED;
 			}
 		}
-	}
-	else {
+	} else {
 		TAILQ_FOREACH(ifa, &V_in6_ifaddrhead, ia_link) {
 			if ((ifa->ia6_flags & IN6_IFF_AUTOCONF) == 0)
 				continue;
@@ -1624,6 +1624,7 @@ pfxlist_onlink_check()
 			}
 		}
 	}
+	IN6_IFADDR_RUNLOCK(&in6_ifa_tracker);
 }
 
 static int
@@ -2113,7 +2114,7 @@ in6_tmpifadd(const struct in6_ifaddr *ia0, int forcegen, int delay)
 		return (EINVAL); /* XXX */
 	}
 	newia->ia6_ndpr = ia0->ia6_ndpr;
-	newia->ia6_ndpr->ndpr_refcnt++;
+	newia->ia6_ndpr->ndpr_addrcnt++;
 	ifa_free(&newia->ia_ifa);
 
 	/*

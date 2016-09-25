@@ -77,9 +77,9 @@ CTFFLAGS+= -g
 .include <bsd.libnames.mk>
 
 # prefer .s to a .c, add .po, remove stuff not used in the BSD libraries
-# .So used for PIC object files
+# .pico used for PIC object files
 .SUFFIXES:
-.SUFFIXES: .out .o .po .So .S .asm .s .c .cc .cpp .cxx .C .f .y .l .ln
+.SUFFIXES: .out .o .po .pico .S .asm .s .c .cc .cpp .cxx .C .f .y .l .ln
 
 .if !defined(PICFLAG)
 .if ${MACHINE_CPUARCH} == "sparc64"
@@ -99,7 +99,7 @@ PO_FLAG=-pg
 	${CC} ${PO_FLAG} ${STATIC_CFLAGS} ${PO_CFLAGS} -c ${.IMPSRC} -o ${.TARGET}
 	${CTFCONVERT_CMD}
 
-.c.So:
+.c.pico:
 	${CC} ${PICFLAG} -DPIC ${SHARED_CFLAGS} ${CFLAGS} -c ${.IMPSRC} -o ${.TARGET}
 	${CTFCONVERT_CMD}
 
@@ -109,18 +109,18 @@ PO_FLAG=-pg
 .cc.po .C.po .cpp.po .cxx.po:
 	${CXX} ${PO_FLAG} ${STATIC_CXXFLAGS} ${PO_CXXFLAGS} -c ${.IMPSRC} -o ${.TARGET}
 
-.cc.So .C.So .cpp.So .cxx.So:
+.cc.pico .C.pico .cpp.pico .cxx.pico:
 	${CXX} ${PICFLAG} -DPIC ${SHARED_CXXFLAGS} ${CXXFLAGS} -c ${.IMPSRC} -o ${.TARGET}
 
 .f.po:
 	${FC} -pg ${FFLAGS} -o ${.TARGET} -c ${.IMPSRC}
 	${CTFCONVERT_CMD}
 
-.f.So:
+.f.pico:
 	${FC} ${PICFLAG} -DPIC ${FFLAGS} -o ${.TARGET} -c ${.IMPSRC}
 	${CTFCONVERT_CMD}
 
-.s.po .s.So:
+.s.po .s.pico:
 	${AS} ${AFLAGS} -o ${.TARGET} ${.IMPSRC}
 	${CTFCONVERT_CMD}
 
@@ -129,7 +129,7 @@ PO_FLAG=-pg
 	    ${ACFLAGS} -c ${.IMPSRC} -o ${.TARGET}
 	${CTFCONVERT_CMD}
 
-.asm.So:
+.asm.pico:
 	${CC:N${CCACHE_BIN}} -x assembler-with-cpp ${PICFLAG} -DPIC \
 	    ${CFLAGS} ${ACFLAGS} -c ${.IMPSRC} -o ${.TARGET}
 	${CTFCONVERT_CMD}
@@ -139,7 +139,7 @@ PO_FLAG=-pg
 	    -o ${.TARGET}
 	${CTFCONVERT_CMD}
 
-.S.So:
+.S.pico:
 	${CC:N${CCACHE_BIN}} ${PICFLAG} -DPIC ${CFLAGS} ${ACFLAGS} \
 	    -c ${.IMPSRC} -o ${.TARGET}
 	${CTFCONVERT_CMD}
@@ -207,7 +207,7 @@ lib${LIB_PRIVATE}${LIB}_p.a: ${POBJS}
 
 .if defined(SHLIB_NAME) || \
     defined(INSTALL_PIC_ARCHIVE) && defined(LIB) && !empty(LIB)
-SOBJS+=		${OBJS:.o=.So}
+SOBJS+=		${OBJS:.o=.pico}
 DEPENDOBJS+=	${SOBJS}
 CLEANFILES+=	${SOBJS}
 .endif
@@ -244,7 +244,7 @@ CLEANFILES+=	${SHLIB_LINK}
 ${SHLIB_NAME_FULL}: ${SOBJS}
 	@${ECHO} building shared library ${SHLIB_NAME}
 	@rm -f ${SHLIB_NAME} ${SHLIB_LINK}
-.if defined(SHLIB_LINK) && !commands(${SHLIB_LINK:R}.ld)
+.if defined(SHLIB_LINK) && !commands(${SHLIB_LINK:R}.ld) && ${MK_DEBUG_FILES} == "no"
 	@${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},development} ${SHLIB_NAME} ${SHLIB_LINK}
 .endif
 	${_LD:N${CCACHE_BIN}} ${LDFLAGS} ${SSP_CFLAGS} ${SOLINKOPTS} \
@@ -259,6 +259,9 @@ CLEANFILES+=	${SHLIB_NAME_FULL} ${SHLIB_NAME}.debug
 ${SHLIB_NAME}: ${SHLIB_NAME_FULL} ${SHLIB_NAME}.debug
 	${OBJCOPY} --strip-debug --add-gnu-debuglink=${SHLIB_NAME}.debug \
 	    ${SHLIB_NAME_FULL} ${.TARGET}
+.if defined(SHLIB_LINK) && !commands(${SHLIB_LINK:R}.ld)
+	@${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},development} ${SHLIB_NAME} ${SHLIB_LINK}
+.endif
 
 ${SHLIB_NAME}.debug: ${SHLIB_NAME_FULL}
 	${OBJCOPY} --only-keep-debug ${SHLIB_NAME_FULL} ${.TARGET}
@@ -421,13 +424,13 @@ lint: ${SRCS:M*.c}
 .if defined(LIB) && !empty(LIB)
 OBJS_DEPEND_GUESS+= ${SRCS:M*.h}
 .for _S in ${SRCS:N*.[hly]}
-OBJS_DEPEND_GUESS.${_S:R}.po=	${_S}
+OBJS_DEPEND_GUESS.${_S:R}.po+=	${_S}
 .endfor
 .endif
 .if defined(SHLIB_NAME) || \
     defined(INSTALL_PIC_ARCHIVE) && defined(LIB) && !empty(LIB)
 .for _S in ${SRCS:N*.[hly]}
-OBJS_DEPEND_GUESS.${_S:R}.So=	${_S}
+OBJS_DEPEND_GUESS.${_S:R}.pico+=	${_S}
 .endfor
 .endif
 

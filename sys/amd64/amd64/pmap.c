@@ -386,6 +386,7 @@ static struct mtx pv_chunks_mutex;
 static struct rwlock pv_list_locks[NPV_LIST_LOCKS];
 static u_long pv_invl_gen[NPV_LIST_LOCKS];
 static struct md_page *pv_table;
+static struct md_page pv_dummy;
 
 /*
  * All those kernel PT submaps that BSD is so fond of
@@ -560,9 +561,9 @@ pmap_delayed_invl_wait(vm_page_t m)
  * block to complete before proceeding.
  *
  * The function works by setting the DI generation number for m's PV
- * list to at least * the number for the current thread.  This forces
- * a caller to pmap_delayed_invl_wait() to spin until current thread
- * calls pmap_delayed_invl_finished().
+ * list to at least the DI generation number of the current thread.
+ * This forces a caller of pmap_delayed_invl_wait() to block until
+ * current thread calls pmap_delayed_invl_finished().
  */
 static void
 pmap_delayed_invl_page(vm_page_t m)
@@ -671,35 +672,6 @@ pmap_pde_pindex(vm_offset_t va)
 	return (va >> PDRSHIFT);
 }
 
-
-/* Return various clipped indexes for a given VA */
-static __inline vm_pindex_t
-pmap_pte_index(vm_offset_t va)
-{
-
-	return ((va >> PAGE_SHIFT) & ((1ul << NPTEPGSHIFT) - 1));
-}
-
-static __inline vm_pindex_t
-pmap_pde_index(vm_offset_t va)
-{
-
-	return ((va >> PDRSHIFT) & ((1ul << NPDEPGSHIFT) - 1));
-}
-
-static __inline vm_pindex_t
-pmap_pdpe_index(vm_offset_t va)
-{
-
-	return ((va >> PDPSHIFT) & ((1ul << NPDPEPGSHIFT) - 1));
-}
-
-static __inline vm_pindex_t
-pmap_pml4e_index(vm_offset_t va)
-{
-
-	return ((va >> PML4SHIFT) & ((1ul << NPML4EPGSHIFT) - 1));
-}
 
 /* Return a pointer to the PML4 slot that corresponds to a VA */
 static __inline pml4_entry_t *
@@ -1223,7 +1195,7 @@ pmap_init(void)
 	 * include at least one feature that is only supported by older Intel
 	 * or newer AMD processors.
 	 */
-	if (vm_guest == VM_GUEST_VM && (cpu_feature & CPUID_SS) == 0 &&
+	if (vm_guest != VM_GUEST_NO && (cpu_feature & CPUID_SS) == 0 &&
 	    (cpu_feature2 & (CPUID2_SSSE3 | CPUID2_SSE41 | CPUID2_AESNI |
 	    CPUID2_AVX | CPUID2_XSAVE)) == 0 && (amd_feature2 & (AMDID2_XOP |
 	    AMDID2_FMA4)) == 0)
@@ -1264,6 +1236,7 @@ pmap_init(void)
 	    M_WAITOK | M_ZERO);
 	for (i = 0; i < pv_npg; i++)
 		TAILQ_INIT(&pv_table[i].pv_list);
+	TAILQ_INIT(&pv_dummy.pv_list);
 
 	pmap_initialized = 1;
 	for (i = 0; i < PMAP_PREINIT_MAPPING_COUNT; i++) {
@@ -1351,7 +1324,7 @@ pmap_swap_pat(pmap_t pmap, pt_entry_t entry)
  * Determine the appropriate bits to set in a PTE or PDE for a specified
  * caching mode.
  */
-static int
+int
 pmap_cache_bits(pmap_t pmap, int mode, boolean_t is_pde)
 {
 	int cache_bits, pat_flag, pat_idx;
@@ -2372,6 +2345,29 @@ pmap_pinit0(pmap_t pmap)
 	CPU_FILL(&kernel_pmap->pm_active);
 }
 
+void
+pmap_pinit_pml4(vm_page_t pml4pg)
+{
+	pml4_entry_t *pm_pml4;
+	int i;
+
+	pm_pml4 = (pml4_entry_t *)PHYS_TO_DMAP(VM_PAGE_TO_PHYS(pml4pg));
+
+	/* Wire in kernel global address entries. */
+	for (i = 0; i < NKPML4E; i++) {
+		pm_pml4[KPML4BASE + i] = (KPDPphys + ptoa(i)) | X86_PG_RW |
+		    X86_PG_V | PG_U;
+	}
+	for (i = 0; i < ndmpdpphys; i++) {
+		pm_pml4[DMPML4I + i] = (DMPDPphys + ptoa(i)) | X86_PG_RW |
+		    X86_PG_V | PG_U;
+	}
+
+	/* install self-referential address mapping entry(s) */
+	pm_pml4[PML4PML4I] = VM_PAGE_TO_PHYS(pml4pg) | X86_PG_V | X86_PG_RW |
+	    X86_PG_A | X86_PG_M;
+}
+
 /*
  * Initialize a preallocated and zeroed pmap structure,
  * such as one in a vmspace structure.
@@ -2408,20 +2404,7 @@ pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags)
 	 */
 	if ((pmap->pm_type = pm_type) == PT_X86) {
 		pmap->pm_cr3 = pml4phys;
-
-		/* Wire in kernel global address entries. */
-		for (i = 0; i < NKPML4E; i++) {
-			pmap->pm_pml4[KPML4BASE + i] = (KPDPphys + ptoa(i)) |
-			    X86_PG_RW | X86_PG_V | PG_U;
-		}
-		for (i = 0; i < ndmpdpphys; i++) {
-			pmap->pm_pml4[DMPML4I + i] = (DMPDPphys + ptoa(i)) |
-			    X86_PG_RW | X86_PG_V | PG_U;
-		}
-
-		/* install self-referential address mapping entry(s) */
-		pmap->pm_pml4[PML4PML4I] = VM_PAGE_TO_PHYS(pml4pg) |
-		    X86_PG_V | X86_PG_RW | X86_PG_A | X86_PG_M;
+		pmap_pinit_pml4(pml4pg);
 	}
 
 	pmap->pm_root.rt_root = 0;
@@ -3920,11 +3903,10 @@ pmap_remove_all(vm_page_t m)
 	    ("pmap_remove_all: page %p is not managed", m));
 	SLIST_INIT(&free);
 	lock = VM_PAGE_TO_PV_LIST_LOCK(m);
-	pvh = pa_to_pvh(VM_PAGE_TO_PHYS(m));
+	pvh = (m->flags & PG_FICTITIOUS) != 0 ? &pv_dummy :
+	    pa_to_pvh(VM_PAGE_TO_PHYS(m));
 retry:
 	rw_wlock(lock);
-	if ((m->flags & PG_FICTITIOUS) != 0)
-		goto small_mappings;
 	while ((pv = TAILQ_FIRST(&pvh->pv_list)) != NULL) {
 		pmap = PV_PMAP(pv);
 		if (!PMAP_TRYLOCK(pmap)) {
@@ -3943,7 +3925,6 @@ retry:
 		(void)pmap_demote_pde_locked(pmap, pde, va, &lock);
 		PMAP_UNLOCK(pmap);
 	}
-small_mappings:
 	while ((pv = TAILQ_FIRST(&m->md.pv_list)) != NULL) {
 		pmap = PV_PMAP(pv);
 		if (!PMAP_TRYLOCK(pmap)) {
@@ -5153,8 +5134,7 @@ out:
 }
 
 /*
- *	pmap_zero_page zeros the specified hardware page by mapping
- *	the page into KVM and using bzero to clear its contents.
+ * Zero the specified hardware page.
  */
 void
 pmap_zero_page(vm_page_t m)
@@ -5165,10 +5145,8 @@ pmap_zero_page(vm_page_t m)
 }
 
 /*
- *	pmap_zero_page_area zeros the specified hardware page by mapping 
- *	the page into KVM and using bzero to clear its contents.
- *
- *	off and size may not cover an area beyond a single hardware page.
+ * Zero an an area within a single hardware page.  off and size must not
+ * cover an area beyond a single hardware page.
  */
 void
 pmap_zero_page_area(vm_page_t m, int off, int size)
@@ -5182,24 +5160,7 @@ pmap_zero_page_area(vm_page_t m, int off, int size)
 }
 
 /*
- *	pmap_zero_page_idle zeros the specified hardware page by mapping 
- *	the page into KVM and using bzero to clear its contents.  This
- *	is intended to be called from the vm_pagezero process only and
- *	outside of Giant.
- */
-void
-pmap_zero_page_idle(vm_page_t m)
-{
-	vm_offset_t va = PHYS_TO_DMAP(VM_PAGE_TO_PHYS(m));
-
-	pagezero((void *)va);
-}
-
-/*
- *	pmap_copy_page copies the specified (machine independent)
- *	page by mapping the page into virtual memory and using
- *	bcopy to copy the page, one machine dependent page at a
- *	time.
+ * Copy 1 specified hardware page to another.
  */
 void
 pmap_copy_page(vm_page_t msrc, vm_page_t mdst)
@@ -5743,11 +5704,10 @@ pmap_remove_write(vm_page_t m)
 	if (!vm_page_xbusied(m) && (m->aflags & PGA_WRITEABLE) == 0)
 		return;
 	lock = VM_PAGE_TO_PV_LIST_LOCK(m);
-	pvh = pa_to_pvh(VM_PAGE_TO_PHYS(m));
+	pvh = (m->flags & PG_FICTITIOUS) != 0 ? &pv_dummy :
+	    pa_to_pvh(VM_PAGE_TO_PHYS(m));
 retry_pv_loop:
 	rw_wlock(lock);
-	if ((m->flags & PG_FICTITIOUS) != 0)
-		goto small_mappings;
 	TAILQ_FOREACH_SAFE(pv, &pvh->pv_list, pv_next, next_pv) {
 		pmap = PV_PMAP(pv);
 		if (!PMAP_TRYLOCK(pmap)) {
@@ -5771,7 +5731,6 @@ retry_pv_loop:
 		    lock, VM_PAGE_TO_PV_LIST_LOCK(m), m));
 		PMAP_UNLOCK(pmap);
 	}
-small_mappings:
 	TAILQ_FOREACH(pv, &m->md.pv_list, pv_next) {
 		pmap = PV_PMAP(pv);
 		if (!PMAP_TRYLOCK(pmap)) {
@@ -5838,8 +5797,6 @@ safe_to_clear_referenced(pmap_t pmap, pt_entry_t pte)
 		return (FALSE);
 }
 
-#define	PMAP_TS_REFERENCED_MAX	5
-
 /*
  *	pmap_ts_referenced:
  *
@@ -5848,9 +5805,13 @@ safe_to_clear_referenced(pmap_t pmap, pt_entry_t pte)
  *	is necessary that 0 only be returned when there are truly no
  *	reference bits set.
  *
- *	XXX: The exact number of bits to check and clear is a matter that
- *	should be tested and standardized at some point in the future for
- *	optimal aging of shared pages.
+ *	As an optimization, update the page's dirty field if a modified bit is
+ *	found while counting reference bits.  This opportunistic update can be
+ *	performed at low cost and can eliminate the need for some future calls
+ *	to pmap_is_modified().  However, since this function stops after
+ *	finding PMAP_TS_REFERENCED_MAX reference bits, it may not detect some
+ *	dirty pages.  Those dirty pages will only be detected by a future call
+ *	to pmap_is_modified().
  *
  *	A DI block is not needed within this function, because
  *	invalidations are performed before the PV list lock is
@@ -5864,7 +5825,7 @@ pmap_ts_referenced(vm_page_t m)
 	pmap_t pmap;
 	struct rwlock *lock;
 	pd_entry_t oldpde, *pde;
-	pt_entry_t *pte, PG_A;
+	pt_entry_t *pte, PG_A, PG_M, PG_RW;
 	vm_offset_t va;
 	vm_paddr_t pa;
 	int cleared, md_gen, not_cleared, pvh_gen;
@@ -5877,12 +5838,11 @@ pmap_ts_referenced(vm_page_t m)
 	cleared = 0;
 	pa = VM_PAGE_TO_PHYS(m);
 	lock = PHYS_TO_PV_LIST_LOCK(pa);
-	pvh = pa_to_pvh(pa);
+	pvh = (m->flags & PG_FICTITIOUS) != 0 ? &pv_dummy : pa_to_pvh(pa);
 	rw_wlock(lock);
 retry:
 	not_cleared = 0;
-	if ((m->flags & PG_FICTITIOUS) != 0 ||
-	    (pvf = TAILQ_FIRST(&pvh->pv_list)) == NULL)
+	if ((pvf = TAILQ_FIRST(&pvh->pv_list)) == NULL)
 		goto small_mappings;
 	pv = pvf;
 	do {
@@ -5900,10 +5860,20 @@ retry:
 			}
 		}
 		PG_A = pmap_accessed_bit(pmap);
+		PG_M = pmap_modified_bit(pmap);
+		PG_RW = pmap_rw_bit(pmap);
 		va = pv->pv_va;
 		pde = pmap_pde(pmap, pv->pv_va);
 		oldpde = *pde;
-		if ((*pde & PG_A) != 0) {
+		if ((oldpde & (PG_M | PG_RW)) == (PG_M | PG_RW)) {
+			/*
+			 * Although "oldpde" is mapping a 2MB page, because
+			 * this function is called at a 4KB page granularity,
+			 * we only update the 4KB page under test.
+			 */
+			vm_page_dirty(m);
+		}
+		if ((oldpde & PG_A) != 0) {
 			/*
 			 * Since this reference bit is shared by 512 4KB
 			 * pages, it should not be cleared every time it is
@@ -5924,7 +5894,7 @@ retry:
 			 */
 			if ((((pa >> PAGE_SHIFT) ^ (pv->pv_va >> PDRSHIFT) ^
 			    (uintptr_t)pmap) & (NPTEPG - 1)) == 0 &&
-			    (*pde & PG_W) == 0) {
+			    (oldpde & PG_W) == 0) {
 				if (safe_to_clear_referenced(pmap, oldpde)) {
 					atomic_clear_long(pde, PG_A);
 					pmap_invalidate_page(pmap, pv->pv_va);
@@ -5996,11 +5966,15 @@ small_mappings:
 			}
 		}
 		PG_A = pmap_accessed_bit(pmap);
+		PG_M = pmap_modified_bit(pmap);
+		PG_RW = pmap_rw_bit(pmap);
 		pde = pmap_pde(pmap, pv->pv_va);
 		KASSERT((*pde & PG_PS) == 0,
 		    ("pmap_ts_referenced: found a 2mpage in page %p's pv list",
 		    m));
 		pte = pmap_pde_to_pte(pde, pv->pv_va);
+		if ((*pte & (PG_M | PG_RW)) == (PG_M | PG_RW))
+			vm_page_dirty(m);
 		if ((*pte & PG_A) != 0) {
 			if (safe_to_clear_referenced(pmap, *pte)) {
 				atomic_clear_long(pte, PG_A);
@@ -6194,12 +6168,11 @@ pmap_clear_modify(vm_page_t m)
 	 */
 	if ((m->aflags & PGA_WRITEABLE) == 0)
 		return;
-	pvh = pa_to_pvh(VM_PAGE_TO_PHYS(m));
+	pvh = (m->flags & PG_FICTITIOUS) != 0 ? &pv_dummy :
+	    pa_to_pvh(VM_PAGE_TO_PHYS(m));
 	lock = VM_PAGE_TO_PV_LIST_LOCK(m);
 	rw_wlock(lock);
 restart:
-	if ((m->flags & PG_FICTITIOUS) != 0)
-		goto small_mappings;
 	TAILQ_FOREACH_SAFE(pv, &pvh->pv_list, pv_next, next_pv) {
 		pmap = PV_PMAP(pv);
 		if (!PMAP_TRYLOCK(pmap)) {
@@ -6243,7 +6216,6 @@ restart:
 		}
 		PMAP_UNLOCK(pmap);
 	}
-small_mappings:
 	TAILQ_FOREACH(pv, &m->md.pv_list, pv_next) {
 		pmap = PV_PMAP(pv);
 		if (!PMAP_TRYLOCK(pmap)) {
@@ -6533,7 +6505,7 @@ static int
 pmap_change_attr_locked(vm_offset_t va, vm_size_t size, int mode)
 {
 	vm_offset_t base, offset, tmpva;
-	vm_paddr_t pa_start, pa_end;
+	vm_paddr_t pa_start, pa_end, pa_end1;
 	pdp_entry_t *pdpe;
 	pd_entry_t *pde;
 	pt_entry_t *pte;
@@ -6716,9 +6688,12 @@ pmap_change_attr_locked(vm_offset_t va, vm_size_t size, int mode)
 			tmpva += PAGE_SIZE;
 		}
 	}
-	if (error == 0 && pa_start != pa_end)
-		error = pmap_change_attr_locked(PHYS_TO_DMAP(pa_start),
-		    pa_end - pa_start, mode);
+	if (error == 0 && pa_start != pa_end && pa_start < dmaplimit) {
+		pa_end1 = MIN(pa_end, dmaplimit);
+		if (pa_start != pa_end1)
+			error = pmap_change_attr_locked(PHYS_TO_DMAP(pa_start),
+			    pa_end1 - pa_start, mode);
+	}
 
 	/*
 	 * Flush CPU caches if required to make sure any data isn't cached that

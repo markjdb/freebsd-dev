@@ -1672,6 +1672,7 @@ adaregister(struct cam_periph *periph, void *arg)
 	if (cam_iosched_init(&softc->cam_iosched, periph) != 0) {
 		printf("adaregister: Unable to probe new device. "
 		       "Unable to allocate iosched memory\n");
+		free(softc, M_DEVBUF);
 		return(CAM_REQ_CMP_ERR);
 	}
 
@@ -1773,6 +1774,8 @@ adaregister(struct cam_periph *periph, void *arg)
 		softc->disk->d_flags |= DISKFLAG_UNMAPPED_BIO;
 		softc->unmappedio = 1;
 	}
+	if (cpi.hba_misc & PIM_ATA_EXT)
+		softc->flags |= ADA_FLAG_PIM_ATA_EXT;
 	strlcpy(softc->disk->d_descr, cgd->ident_data.model,
 	    MIN(sizeof(softc->disk->d_descr), sizeof(cgd->ident_data.model)));
 	strlcpy(softc->disk->d_ident, cgd->ident_data.serial,

@@ -1794,7 +1794,7 @@ make_device(device_t parent, const char *name, int unit)
 		dc = NULL;
 	}
 
-	dev = malloc(sizeof(struct device), M_BUS, M_NOWAIT|M_ZERO);
+	dev = malloc(sizeof(*dev), M_BUS, M_NOWAIT|M_ZERO);
 	if (!dev)
 		return (NULL);
 
@@ -2144,6 +2144,12 @@ device_probe_child(device_t dev, device_t child)
 				pri = 0;
 				break;
 			}
+
+			/*
+			 * Reset DF_QUIET in case this driver doesn't
+			 * end up as the best driver.
+			 */
+			device_verbose(child);
 
 			/*
 			 * Probes that return BUS_PROBE_NOWILDCARD or lower
@@ -2970,6 +2976,7 @@ device_detach(device_t dev)
 	if (!(dev->flags & DF_FIXEDCLASS))
 		devclass_delete_device(dev->devclass, dev);
 
+	device_verbose(dev);
 	dev->state = DS_NOTPRESENT;
 	(void)device_set_driver(dev, NULL);
 	device_sysctl_fini(dev);
@@ -4412,13 +4419,16 @@ bus_release_resources(device_t dev, const struct resource_spec *rs,
  * parent of @p dev.
  */
 struct resource *
-bus_alloc_resource(device_t dev, int type, int *rid, rman_res_t start, rman_res_t end,
-    rman_res_t count, u_int flags)
+bus_alloc_resource(device_t dev, int type, int *rid, rman_res_t start,
+    rman_res_t end, rman_res_t count, u_int flags)
 {
+	struct resource *res;
+
 	if (dev->parent == NULL)
 		return (NULL);
-	return (BUS_ALLOC_RESOURCE(dev->parent, dev, type, rid, start, end,
-	    count, flags));
+	res = BUS_ALLOC_RESOURCE(dev->parent, dev, type, rid, start, end,
+	    count, flags);
+	return (res);
 }
 
 /**
@@ -4503,9 +4513,12 @@ bus_unmap_resource(device_t dev, int type, struct resource *r,
 int
 bus_release_resource(device_t dev, int type, int rid, struct resource *r)
 {
+	int rv;
+
 	if (dev->parent == NULL)
 		return (EINVAL);
-	return (BUS_RELEASE_RESOURCE(dev->parent, dev, type, rid, r));
+	rv = BUS_RELEASE_RESOURCE(dev->parent, dev, type, rid, r);
+	return (rv);
 }
 
 /**
@@ -5194,7 +5207,7 @@ sysctl_devices(SYSCTL_HANDLER_ARGS)
 	int			*name = (int *)arg1;
 	u_int			namelen = arg2;
 	int			index;
-	struct device		*dev;
+	device_t		dev;
 	struct u_device		udev;	/* XXX this is a bit big */
 	int			error;
 
@@ -5343,6 +5356,7 @@ devctl2_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	case DEV_SUSPEND:
 	case DEV_RESUME:
 	case DEV_SET_DRIVER:
+	case DEV_CLEAR_DRIVER:
 	case DEV_RESCAN:
 	case DEV_DELETE:
 		error = priv_check(td, PRIV_DRIVER);
@@ -5508,6 +5522,25 @@ devctl2_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		error = device_probe_and_attach(dev);
 		break;
 	}
+	case DEV_CLEAR_DRIVER:
+		if (!(dev->flags & DF_FIXEDCLASS)) {
+			error = 0;
+			break;
+		}
+		if (device_is_attached(dev)) {
+			if (req->dr_flags & DEVF_CLEAR_DRIVER_DETACH)
+				error = device_detach(dev);
+			else
+				error = EBUSY;
+			if (error)
+				break;
+		}
+
+		dev->flags &= ~DF_FIXEDCLASS;
+		dev->flags |= DF_WILDCARD;
+		devclass_delete_device(dev->devclass, dev);
+		error = device_probe_and_attach(dev);
+		break;
 	case DEV_RESCAN:
 		if (!device_is_attached(dev)) {
 			error = ENXIO;

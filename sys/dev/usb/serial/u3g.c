@@ -312,6 +312,7 @@ static const STRUCT_USB_HOST_ID u3g_devs[] = {
 	U3G_DEV(HUAWEI, E220BIS, U3GINIT_HUAWEI),
 	U3G_DEV(HUAWEI, E392, U3GINIT_HUAWEISCSI),
 	U3G_DEV(HUAWEI, ME909U, U3GINIT_HUAWEISCSI2),
+	U3G_DEV(HUAWEI, ME909S, U3GINIT_HUAWEISCSI2),
 	U3G_DEV(HUAWEI, MOBILE, U3GINIT_HUAWEI),
 	U3G_DEV(HUAWEI, E1752, U3GINIT_HUAWEISCSI),
 	U3G_DEV(HUAWEI, E1820, U3GINIT_HUAWEISCSI),
@@ -1100,6 +1101,7 @@ u3g_cfg_get_status(struct ucom_softc *ucom, uint8_t *lsr, uint8_t *msr)
 {
 	struct u3g_softc *sc = ucom->sc_parent;
 
+	/* XXX Note: sc_lsr is always zero */
 	*lsr = sc->sc_lsr[ucom->sc_subunit];
 	*msr = sc->sc_msr[ucom->sc_subunit];
 }

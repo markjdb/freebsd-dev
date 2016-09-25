@@ -15,7 +15,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -556,7 +556,7 @@ shutdown_reset(void *junk, int howto)
 	/* NOTREACHED */ /* assuming reset worked */
 }
 
-#if defined(WITNESS) || defined(INVARIANTS)
+#if defined(WITNESS) || defined(INVARIANT_SUPPORT)
 static int kassert_warn_only = 0;
 #ifdef KDB
 static int kassert_do_kdb = 0;
@@ -804,7 +804,7 @@ kproc_shutdown(void *arg, int howto)
 		return;
 
 	p = (struct proc *)arg;
-	printf("Waiting (max %d seconds) for system process `%s' to stop...",
+	printf("Waiting (max %d seconds) for system process `%s' to stop... ",
 	    kproc_shutdown_wait, p->p_comm);
 	error = kproc_suspend(p, kproc_shutdown_wait * hz);
 
@@ -824,7 +824,7 @@ kthread_shutdown(void *arg, int howto)
 		return;
 
 	td = (struct thread *)arg;
-	printf("Waiting (max %d seconds) for system thread `%s' to stop...",
+	printf("Waiting (max %d seconds) for system thread `%s' to stop... ",
 	    kproc_shutdown_wait, td->td_name);
 	error = kthread_suspend(td, kproc_shutdown_wait * hz);
 
@@ -929,3 +929,14 @@ mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
 		strlcpy(kdh->panicstring, panicstr, sizeof(kdh->panicstring));
 	kdh->parity = kerneldump_parity(kdh);
 }
+
+#ifdef DDB
+DB_SHOW_COMMAND(panic, db_show_panic)
+{
+
+	if (panicstr == NULL)
+		db_printf("panicstr not set\n");
+	else
+		db_printf("panic: %s\n", panicstr);
+}
+#endif

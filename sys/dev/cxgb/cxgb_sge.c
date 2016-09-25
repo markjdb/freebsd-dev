@@ -2870,7 +2870,7 @@ process_responses(adapter_t *adap, struct sge_qset *qs, int budget)
 
                         memcpy(mtod(m, char *), r, AN_PKT_SIZE);
 			m->m_len = m->m_pkthdr.len = AN_PKT_SIZE;
-                        *mtod(m, char *) = CPL_ASYNC_NOTIF;
+                        *mtod(m, uint8_t *) = CPL_ASYNC_NOTIF;
 			opcode = CPL_ASYNC_NOTIF;
 			eop = 1;
                         rspq->async_notif++;
@@ -2900,7 +2900,8 @@ process_responses(adapter_t *adap, struct sge_qset *qs, int budget)
 			eop = get_packet(adap, drop_thresh, qs, mh, r);
 			if (eop) {
 				if (r->rss_hdr.hash_type && !adap->timestamp) {
-					M_HASHTYPE_SET(mh->mh_head, M_HASHTYPE_OPAQUE);
+					M_HASHTYPE_SET(mh->mh_head,
+					    M_HASHTYPE_OPAQUE_HASH);
 					mh->mh_head->m_pkthdr.flowid = rss_hash;
 				}
 			}

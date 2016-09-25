@@ -218,12 +218,13 @@ rip_init(void)
 }
 
 #ifdef VIMAGE
-void
-rip_destroy(void)
+static void
+rip_destroy(void *unused __unused)
 {
 
 	in_pcbinfo_destroy(&V_ripcbinfo);
 }
+VNET_SYSUNINIT(raw_ip, SI_SUB_PROTO_DOMAIN, SI_ORDER_FOURTH, rip_destroy, NULL);
 #endif
 
 #ifdef INET
@@ -321,7 +322,7 @@ rip_input(struct mbuf **mp, int *offp, int proto)
 		if (last != NULL) {
 			struct mbuf *n;
 
-			n = m_copy(m, 0, (int)M_COPYALL);
+			n = m_copym(m, 0, M_COPYALL, M_NOWAIT);
 			if (n != NULL)
 		    	    (void) rip_append(last, ip, n, &ripsrc);
 			/* XXX count dropped packet */
@@ -399,7 +400,7 @@ rip_input(struct mbuf **mp, int *offp, int proto)
 		if (last != NULL) {
 			struct mbuf *n;
 
-			n = m_copy(m, 0, (int)M_COPYALL);
+			n = m_copym(m, 0, M_COPYALL, M_NOWAIT);
 			if (n != NULL)
 				(void) rip_append(last, ip, n, &ripsrc);
 			/* XXX count dropped packet */

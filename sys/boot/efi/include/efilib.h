@@ -27,6 +27,9 @@
  * $FreeBSD$
  */
 
+#ifndef _LOADER_EFILIB_H
+#define	_LOADER_EFILIB_H
+
 #include <stand.h>
 
 extern EFI_HANDLE		IH;
@@ -55,6 +58,11 @@ void efi_free_devpath_name(CHAR16 *);
 
 int efi_status_to_errno(EFI_STATUS);
 
+void efi_time_init(void);
+void efi_time_fini(void);
+
 EFI_STATUS main(int argc, CHAR16 *argv[]);
 void exit(EFI_STATUS status);
 void delay(int usecs);
+
+#endif	/* _LOADER_EFILIB_H */

@@ -126,7 +126,7 @@ fddi_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 	switch (dst->sa_family) {
 #ifdef INET
 	case AF_INET: {
-		error = arpresolve(ifp, is_gw, m, dst, edst, NULL);
+		error = arpresolve(ifp, is_gw, m, dst, edst, NULL, NULL);
 		if (error)
 			return (error == EWOULDBLOCK ? 0 : error);
 		type = htons(ETHERTYPE_IP);
@@ -162,7 +162,7 @@ fddi_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 #endif /* INET */
 #ifdef INET6
 	case AF_INET6:
-		error = nd6_resolve(ifp, is_gw, m, dst, edst, NULL);
+		error = nd6_resolve(ifp, is_gw, m, dst, edst, NULL, NULL);
 		if (error)
 			return (error == EWOULDBLOCK ? 0 : error);
 		type = htons(ETHERTYPE_IPV6);
@@ -275,7 +275,7 @@ fddi_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 	if ((ifp->if_flags & IFF_SIMPLEX) && (loop_copy != -1)) {
 		if ((m->m_flags & M_BCAST) || (loop_copy > 0)) {
 			struct mbuf *n;
-			n = m_copy(m, 0, (int)M_COPYALL);
+			n = m_copym(m, 0, M_COPYALL, M_NOWAIT);
 			(void) if_simloop(ifp, n, dst->sa_family,
 					  FDDI_HDR_LEN);
 	     	} else if (bcmp(fh->fddi_dhost, fh->fddi_shost,

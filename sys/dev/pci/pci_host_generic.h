@@ -34,6 +34,8 @@
 #ifndef __PCI_HOST_GENERIC_H_
 #define	__PCI_HOST_GENERIC_H_
 
+#include "pci_if.h"
+
 #define	MAX_RANGES_TUPLES	16
 #define	MIN_RANGES_TUPLES	2
 
@@ -49,6 +51,7 @@ struct pcie_range {
 struct generic_pcie_softc {
 	struct pcie_range	ranges[MAX_RANGES_TUPLES];
 	int			nranges;
+	int			coherent;
 	struct rman		mem_rman;
 	struct rman		io_rman;
 	struct resource		*res;
@@ -58,6 +61,7 @@ struct generic_pcie_softc {
 	bus_space_handle_t	bsh;
 	device_t		dev;
 	bus_space_handle_t	ioh;
+	bus_dma_tag_t		dmat;
 #ifdef FDT
 	struct ofw_bus_iinfo	pci_iinfo;
 #endif

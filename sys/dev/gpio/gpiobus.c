@@ -31,7 +31,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/systm.h>
 #include <sys/bus.h>
 #include <sys/gpio.h>
+#ifdef INTRNG
 #include <sys/intr.h>
+#endif
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
@@ -79,22 +81,30 @@ static int gpiobus_pin_toggle(device_t, device_t, uint32_t);
  * data will be moved into struct resource.
  */
 #ifdef INTRNG
+
 struct resource *
 gpio_alloc_intr_resource(device_t consumer_dev, int *rid, u_int alloc_flags,
     gpio_pin_t pin, uint32_t intr_mode)
 {
-	u_int irqnum;
+	u_int irq;
+	struct intr_map_data_gpio *gpio_data;
+	struct resource *res;
 
-	/*
-	 * Allocate new fictitious interrupt number and store configuration
-	 * into it.
-	 */
-	irqnum = intr_gpio_map_irq(pin->dev, pin->pin, pin->flags, intr_mode);
-	if (irqnum == INTR_IRQ_INVALID)
+	gpio_data = (struct intr_map_data_gpio *)intr_alloc_map_data(
+	    INTR_MAP_DATA_GPIO, sizeof(*gpio_data), M_WAITOK | M_ZERO);
+	gpio_data->gpio_pin_num = pin->pin;
+	gpio_data->gpio_pin_flags = pin->flags;
+	gpio_data->gpio_intr_mode = intr_mode;
+
+	irq = intr_map_irq(pin->dev, 0, (struct intr_map_data *)gpio_data);
+	res = bus_alloc_resource(consumer_dev, SYS_RES_IRQ, rid, irq, irq, 1,
+	    alloc_flags);
+	if (res == NULL) {
+		intr_free_intr_map_data((struct intr_map_data *)gpio_data);
 		return (NULL);
-
-	return (bus_alloc_resource(consumer_dev, SYS_RES_IRQ, rid,
-	    irqnum, irqnum, 1, alloc_flags));
+	}
+	rman_set_virtual(res, gpio_data);
+	return (res);
 }
 #else
 struct resource *
