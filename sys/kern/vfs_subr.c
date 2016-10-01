@@ -72,6 +72,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/refcount.h>
 #include <sys/rwlock.h>
 #include <sys/sched.h>
+#include <sys/sdt.h>
 #include <sys/sleepqueue.h>
 #include <sys/smp.h>
 #include <sys/stat.h>
@@ -97,6 +98,11 @@ __FBSDID("$FreeBSD$");
 #ifdef DDB
 #include <ddb/ddb.h>
 #endif
+
+SDT_PROVIDER_DECLARE(vfs);
+SDT_PROBE_DEFINE3(vfs, msync, , finish, "struct mount *", "int", "int");
+SDT_PROBE_DEFINE1(vfs, vnode, ref, fastpath, "struct vnode *");
+SDT_PROBE_DEFINE1(vfs, vnode, ref, hardpath, "struct vnode *");
 
 static void	delmntque(struct vnode *vp);
 static int	flushbuflist(struct bufv *bufv, int flags, struct bufobj *bo,
@@ -2599,17 +2605,31 @@ vget(struct vnode *vp, int flags, struct thread *td)
 
 	CTR3(KTR_VFS, "%s: vp %p with flags %d", __func__, vp, flags);
 
-	if ((flags & LK_VNHELD) == 0)
+	if ((flags & (LK_VNHELD|LK_VNREFED)) == 0)
 		_vhold(vp, (flags & LK_INTERLOCK) != 0);
 
 	if ((error = vn_lock(vp, flags)) != 0) {
-		vdrop(vp);
+		if ((flags & LK_VNREFED) != 0)
+			vrele(vp);
+		else
+			vdrop(vp);
 		CTR2(KTR_VFS, "%s: impossible to lock vnode %p", __func__,
 		    vp);
 		return (error);
 	}
 	if (vp->v_iflag & VI_DOOMED && (flags & LK_RETRY) == 0)
 		panic("vget: vn_lock failed to return ENOENT\n");
+
+	if ((flags & LK_VNREFED) != 0) {
+		VNASSERT(vp->v_usecount > 0, vp,
+		    ("vnode without usecount when LK_VNREFED was set"));
+		VNASSERT(vp->v_holdcnt > 0, vp,
+		    ("vnode with usecount but without holdcnt"));
+		VNASSERT((vp->v_iflag & VI_OWEINACT) == 0, vp,
+		    ("vnode with usecount and VI_OWEINACT set"));
+		return (0);
+	}
+
 	/*
 	 * We don't guarantee that any particular close will
 	 * trigger inactive processing so just make a best effort
@@ -2683,6 +2703,56 @@ vrefact(struct vnode *vp)
 }
 
 /*
+ * Increase the reference count, but if it is 0, increase by 2 and set a flag
+ * indicating this fact.
+ *
+ * XXXMJG right now laughably unoptimized
+ */
+
+void
+vref_cache(struct vnode *vp)
+{
+
+	CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
+	/*
+	 * First, a racy check.
+	 */
+	if ((vp->v_iflag & VI_CACHEREF) != 0) {
+		if (!vfs_refcount_acquire_if_not_zero(&vp->v_holdcnt)) {
+			goto hardpath;
+
+		}
+		if (!vfs_refcount_acquire_if_not_zero(&vp->v_usecount)) {
+			/*
+			 * Something went wrong. Drop the hold count and
+			 * fallback to the hard way.
+			 */
+			vdrop(vp);
+			goto hardpath;
+		}
+		/*
+		 * It worked.
+		 */
+		SDT_PROBE1(vfs, vnode, ref, fastpath, vp);
+		return;
+	}
+hardpath:
+	SDT_PROBE1(vfs, vnode, ref, hardpath, vp);
+	VI_LOCK(vp);
+	if ((vp->v_iflag & VI_CACHEREF) != 0) {
+		VNASSERT(vp->v_holdcnt > 0 && vp->v_usecount > 0, vp,
+		    ("vref_cache: VI_CACHEREF vnode with invalid counts"));
+		vrefl(vp);
+		VI_UNLOCK(vp);
+		return;
+	}
+	vrefl(vp);
+	vrefl(vp);
+	vp->v_iflag |= VI_CACHEREF;
+	VI_UNLOCK(vp);
+}
+
+/*
  * Return reference count of a vnode.
  *
  * The results of this call are only guaranteed when some mechanism is used to
@@ -2701,6 +2771,8 @@ vrefcnt(struct vnode *vp)
 #define	VPUTX_VRELE	1
 #define	VPUTX_VPUT	2
 #define	VPUTX_VUNREF	3
+#define	VPUTX_CACHEVRELE	4
+#define	VPUTX_CACHEVUNREF	5
 
 /*
  * Decrement the use and hold counts for a vnode.
@@ -2713,24 +2785,40 @@ vputx(struct vnode *vp, int func)
 	int error;
 
 	KASSERT(vp != NULL, ("vputx: null vp"));
-	if (func == VPUTX_VUNREF)
-		ASSERT_VOP_LOCKED(vp, "vunref");
-	else if (func == VPUTX_VPUT)
-		ASSERT_VOP_LOCKED(vp, "vput");
-	else
-		KASSERT(func == VPUTX_VRELE, ("vputx: wrong func"));
-	ASSERT_VI_UNLOCKED(vp, __func__);
-	CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
 
-	if (vp->v_type != VCHR &&
-	    vfs_refcount_release_if_not_last(&vp->v_usecount)) {
-		if (func == VPUTX_VPUT)
-			VOP_UNLOCK(vp, 0);
-		vdrop(vp);
-		return;
+	if (func == VPUTX_CACHEVRELE) {
+		ASSERT_VI_LOCKED(vp, "cachevrele");
+		VNASSERT(vp->v_holdcnt > 0 && vp->v_usecount > 0, vp,
+		    ("vref_cache: VI_CACHEREF vnode with invalid counts"));
+		vp->v_iflag &= ~VI_CACHEREF;
+		func = VPUTX_VRELE;
+	} else if (func == VPUTX_CACHEVUNREF) {
+		ASSERT_VI_LOCKED(vp, "cacheunref");
+		VNASSERT(vp->v_holdcnt > 0 && vp->v_usecount > 0, vp,
+		    ("vref_cache: VI_CACHEREF vnode with invalid counts"));
+		vp->v_iflag &= ~VI_CACHEREF;
+		func = VPUTX_VUNREF;
+
+	} else {
+		ASSERT_VI_UNLOCKED(vp, __func__);
+		if (func == VPUTX_VUNREF)
+			ASSERT_VOP_LOCKED(vp, "vunref");
+		else if (func == VPUTX_VPUT)
+			ASSERT_VOP_LOCKED(vp, "vput");
+		else
+			KASSERT(func == VPUTX_VRELE, ("vputx: wrong func"));
+		CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
+
+		if (vp->v_type != VCHR &&
+		    vfs_refcount_release_if_not_last(&vp->v_usecount)) {
+			if (func == VPUTX_VPUT)
+				VOP_UNLOCK(vp, 0);
+			vdrop(vp);
+			return;
+		}
+
+		VI_LOCK(vp);
 	}
-
-	VI_LOCK(vp);
 
 	/*
 	 * We want to hold the vnode until the inactive finishes to
@@ -2812,6 +2900,13 @@ vrele(struct vnode *vp)
 	vputx(vp, VPUTX_VRELE);
 }
 
+void
+vrele_cache(struct vnode *vp)
+{
+
+	vputx(vp, VPUTX_CACHEVRELE);
+}
+
 /*
  * Release an already locked vnode.  This give the same effects as
  * unlock+vrele(), but takes less time and avoids releasing and
@@ -2832,6 +2927,13 @@ vunref(struct vnode *vp)
 {
 
 	vputx(vp, VPUTX_VUNREF);
+}
+
+void
+vunref_cache(struct vnode *vp)
+{
+
+	vputx(vp, VPUTX_CACHEVUNREF);
 }
 
 /*
@@ -2928,6 +3030,10 @@ _vdrop(struct vnode *vp, bool locked)
 		VI_UNLOCK(vp);
 		return;
 	}
+
+	VNASSERT((vp->v_iflag & VI_CACHEREF) == 0, vp,
+	    ("vref_cache: VI_CACHEREF vnode with 0 holdcnt"));
+
 	if ((vp->v_iflag & VI_DOOMED) == 0) {
 		/*
 		 * Mark a vnode as free: remove it from its active list
@@ -3359,6 +3465,9 @@ vgonel(struct vnode *vp)
 	VI_UNLOCK(vp);
 	vfs_notify_upper(vp, VFS_NOTIFY_UPPER_RECLAIM);
 
+	/* XXXMJG */
+	cache_purge(vp);
+
 	/*
 	 * If purging an active vnode, it must be closed and
 	 * deactivated before being reclaimed.
@@ -3419,7 +3528,6 @@ vgonel(struct vnode *vp)
 	 * Delete from old mount point vnode list.
 	 */
 	delmntque(vp);
-	cache_purge(vp);
 	/*
 	 * Done with purge, reset to the standard lock and invalidate
 	 * the vnode.
@@ -4085,13 +4193,17 @@ vfs_msync(struct mount *mp, int flags)
 {
 	struct vnode *vp, *mvp;
 	struct vm_object *obj;
+	int total, crefed;
 
 	CTR2(KTR_VFS, "%s: mp %p", __func__, mp);
 
 	vnlru_return_batch(mp);
 
+	total = crefed = 0;
+
 	MNT_VNODE_FOREACH_ACTIVE(vp, mp, mvp) {
 		obj = vp->v_object;
+		total++;
 		if (obj != NULL && (obj->flags & OBJ_MIGHTBEDIRTY) != 0 &&
 		    (flags == MNT_WAIT || VOP_ISLOCKED(vp) == 0)) {
 			if (!vget(vp,
@@ -4112,9 +4224,17 @@ vfs_msync(struct mount *mp, int flags)
 				}
 				vput(vp);
 			}
-		} else
-			VI_UNLOCK(vp);
+			continue;
+		}
+		if (vp->v_usecount == 1 && (vp->v_iflag & VI_CACHEREF) != 0) {
+			crefed++;
+			vrele_cache(vp);
+			continue;
+		}
+		VI_UNLOCK(vp);
 	}
+
+	SDT_PROBE3(vfs, msync, , finish, mp, total, crefed);
 }
 
 static void

@@ -340,6 +340,10 @@ cache_out_ts(struct namecache *ncp, struct timespec *tsp, int *ticksp)
 		*ticksp = ((struct namecache_ts *)ncp)->nc_ticks;
 }
 
+static int __read_mostly	vref_mode = 0;
+SYSCTL_INT(_debug, OID_AUTO, vfscache_vref_mode, CTLFLAG_RW, &vref_mode, 0,
+    "VFS namecache vref mode");
+
 static int __read_mostly	doingcache = 1;	/* 1 => enable the cache */
 SYSCTL_INT(_debug, OID_AUTO, vfscache, CTLFLAG_RW, &doingcache, 0,
     "VFS namecache enabled");
@@ -1102,6 +1106,7 @@ cache_lookup(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp,
 	struct mtx *dvlp, *dvlp2;
 	uint32_t hash;
 	int error, ltype;
+	int vget_flags;
 
 	if (__predict_false(!doingcache)) {
 		cnp->cn_flags &= ~MAKEENTRY;
@@ -1268,9 +1273,26 @@ success:
 		ltype = VOP_ISLOCKED(dvp);
 		VOP_UNLOCK(dvp, 0);
 	}
-	vhold(*vpp);
+	switch (vref_mode) {
+	case 0:
+		vhold(*vpp);
+		vget_flags = cnp->cn_lkflags | LK_VNHELD;
+		break;
+	case 1:
+		vref_cache(*vpp);
+		vget_flags = cnp->cn_lkflags | LK_VNREFED;
+		break;
+	default:
+		if ((*vpp)->v_type == VREG) {
+			vref_cache(*vpp);
+			vget_flags = cnp->cn_lkflags | LK_VNREFED;
+		} else {
+			vhold(*vpp);
+			vget_flags = cnp->cn_lkflags | LK_VNHELD;
+		}
+	}
 	cache_lookup_unlock(blp, dvlp);
-	error = vget(*vpp, cnp->cn_lkflags | LK_VNHELD, cnp->cn_thread);
+	error = vget(*vpp, vget_flags, cnp->cn_thread);
 	if (cnp->cn_flags & ISDOTDOT) {
 		vn_lock(dvp, ltype | LK_RETRY);
 		if (dvp->v_iflag & VI_DOOMED) {
@@ -1874,10 +1896,10 @@ cache_purge(struct vnode *vp)
 
 	CTR1(KTR_VFS, "cache_purge(%p)", vp);
 	SDT_PROBE1(vfs, namecache, purge, done, vp);
+	TAILQ_INIT(&ncps);
 	if (LIST_EMPTY(&vp->v_cache_src) && TAILQ_EMPTY(&vp->v_cache_dst) &&
 	    vp->v_cache_dd == NULL)
-		return;
-	TAILQ_INIT(&ncps);
+		goto cache_ref;
 	vlp = VP2VNODELOCK(vp);
 	vlp2 = NULL;
 	mtx_lock(vlp);
@@ -1906,6 +1928,18 @@ retry:
 	mtx_unlock(vlp);
 	if (vlp2 != NULL)
 		mtx_unlock(vlp2);
+cache_ref:
+	if ((vp->v_iflag & VI_CACHEREF) != 0) {
+		VI_LOCK(vp);
+		if ((vp->v_iflag & VI_CACHEREF) == 0) {
+			VI_UNLOCK(vp);
+		} else {
+			if (VOP_ISLOCKED(vp))
+				vunref_cache(vp);
+			else
+				vrele_cache(vp);
+		}
+	}
 	TAILQ_FOREACH_SAFE(ncp, &ncps, nc_dst, nnp) {
 		cache_free(ncp);
 	}

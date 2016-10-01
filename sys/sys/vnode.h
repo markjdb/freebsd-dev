@@ -243,6 +243,7 @@ struct xvnode {
 #define	VI_ACTIVE	0x0200	/* This vnode is on the active list */
 #define	VI_DOINGINACT	0x0800	/* VOP_INACTIVE is in progress */
 #define	VI_OWEINACT	0x1000	/* Need to call inactive */
+#define	VI_CACHEREF	0x2000	/* The namecache holds a droppable reference */
 
 #define	VV_ROOT		0x0001	/* root of its filesystem */
 #define	VV_ISTTY	0x0002	/* vnode represents a tty */
@@ -826,10 +827,13 @@ void	vop_rename_fail(struct vop_rename_args *ap);
 
 
 void	vput(struct vnode *vp);
+void	vrele_cache(struct vnode *vp);
 void	vrele(struct vnode *vp);
+void	vunref_cache(struct vnode *vp);
 void	vref(struct vnode *vp);
 void	vrefl(struct vnode *vp);
 void	vrefact(struct vnode *vp);
+void	vref_cache(struct vnode *vp);
 int	vrefcnt(struct vnode *vp);
 void 	v_addpollinfo(struct vnode *vp);
 
