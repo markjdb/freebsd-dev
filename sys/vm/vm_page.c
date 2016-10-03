@@ -2009,10 +2009,10 @@ vm_page_import(void *arg, void **store, int cnt, int flags)
 		m = vm_phys_alloc_pages(pind, 0);
 		if (m == NULL)
 			break;
-		vm_phys_freecnt_adj(m, -1);
 		store[i] = m;
 	}
 	mtx_unlock(&vm_page_queue_free_mtx);
+	vm_phys_freecnt_adj(m, -i);
 	return (i);
 }
 
@@ -2025,7 +2025,6 @@ vm_page_release(void *arg __unused, void **store, int cnt)
 	mtx_lock(&vm_page_queue_free_mtx);
 	for (i = 0; i < cnt; i++) {
 		m = (vm_page_t)store[i];
-		vm_phys_freecnt_adj(m, 1);
 #if VM_NRESERVLEVEL > 0
 		if (!vm_reserv_free_page(m))
 			vm_phys_free_pages(m, 0);
@@ -2033,6 +2032,7 @@ vm_page_release(void *arg __unused, void **store, int cnt)
 		vm_phys_free_pages(m, 0);
 #endif
 	}
+	vm_phys_freecnt_adj(m, cnt);
 	vm_page_free_wakeup();
 	mtx_unlock(&vm_page_queue_free_mtx);
 }
