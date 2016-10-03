@@ -883,10 +883,10 @@ vm_reserv_alloc_page(vm_object_t object, vm_pindex_t pindex, vm_page_t mpred)
 	    ("vm_reserv_alloc_page: reserv %p's pages is corrupted", rv));
 	KASSERT(rv->object == NULL,
 	    ("vm_reserv_alloc_page: reserv %p isn't free", rv));
+	vm_reserv_set_object(rv, object, first);
 	mtx_lock(&vm_page_queue_free_mtx);
 	LIST_INSERT_HEAD(&object->rvq, rv, objq);
 	mtx_unlock(&vm_page_queue_free_mtx);
-	vm_reserv_set_object(rv, object, first);
 	KASSERT(rv->popcnt == 0,
 	    ("vm_reserv_alloc_page: reserv %p's popcnt is corrupted", rv));
 	KASSERT((rv->flags & VM_RESERV_F_PARTPOP) == 0,
