@@ -512,7 +512,7 @@ RetryFault:;
 	fs.map = map;
 	result = vm_map_lookup(&fs.map, vaddr, fault_type, &fs.entry,
 	    &fs.first_object, &fs.first_pindex, &prot, &wired);
-	if (result != KERN_SUCCESS) {
+	if (__predict_false(result != KERN_SUCCESS)) {
 		if (growstack && result == KERN_INVALID_ADDRESS &&
 		    map != kernel_map) {
 			result = vm_map_growstack(curproc, vaddr);
@@ -614,7 +614,7 @@ RetryFault:;
 		 * with us.  Otherwise, if we see terminally dead
 		 * object, return fail.
 		 */
-		if ((fs.object->flags & OBJ_DEAD) != 0) {
+		if (__predict_false((fs.object->flags & OBJ_DEAD) != 0)) {
 			dead = fs.object->type == OBJT_DEAD;
 			unlock_and_deallocate(&fs);
 			if (dead)
@@ -921,16 +921,18 @@ readrest:
 				hardfault = true;
 				break; /* break to PAGE HAS BEEN FOUND */
 			}
-			if (rv == VM_PAGER_ERROR)
-				printf("vm_fault: pager read error, pid %d (%s)\n",
-				    curproc->p_pid, curproc->p_comm);
 
 			/*
 			 * If an I/O error occurred or the requested page was
 			 * outside the range of the pager, clean up and return
 			 * an error.
 			 */
-			if (rv == VM_PAGER_ERROR || rv == VM_PAGER_BAD) {
+			if (__predict_false(rv == VM_PAGER_ERROR ||
+			    rv == VM_PAGER_BAD)) {
+				if (rv == VM_PAGER_ERROR)
+					printf(
+				    "vm_fault: pager read error, pid %d (%s)\n",
+					    curproc->p_pid, curproc->p_comm);
 				vm_page_lock(fs.m);
 				if (fs.m->wire_count == 0)
 					vm_page_free(fs.m);
