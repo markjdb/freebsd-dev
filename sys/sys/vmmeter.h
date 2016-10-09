@@ -91,7 +91,7 @@ struct vmmeter {
 	u_int v_free_reserved;	/* (c) pages reserved for deadlock */
 	u_int v_free_target;	/* (c) pages desired free */
 	u_int v_free_min;	/* (c) pages desired free */
-	u_int v_free_count;	/* (f) pages free */
+	u_int v_free_count;	/* (a) pages free */
 	u_int v_wire_count;	/* (a) pages wired down */
 	u_int v_active_count;	/* (q) pages active */
 	u_int v_inactive_target; /* (c) pages desired inactive */
