@@ -431,6 +431,10 @@ vm_page_domain_init(struct vm_domain *vmd)
 	    "vm inactive pagequeue";
 	*__DECONST(u_int **, &vmd->vmd_pagequeues[PQ_INACTIVE].pq_vcnt) =
 	    &vm_cnt.v_inactive_count;
+	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_INACTIVE_NOLRU].pq_name) =
+	    "vm inactive noLRU pagequeue";
+	*__DECONST(u_int **, &vmd->vmd_pagequeues[PQ_INACTIVE_NOLRU].pq_vcnt) =
+	    &vm_cnt.v_inactive_count;
 	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_ACTIVE].pq_name) =
 	    "vm active pagequeue";
 	*__DECONST(u_int **, &vmd->vmd_pagequeues[PQ_ACTIVE].pq_vcnt) =
@@ -3062,7 +3066,6 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 static inline void
 _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 {
-	struct vm_pagequeue *pq;
 	int queue;
 
 	vm_page_assert_locked(m);
@@ -3071,31 +3074,17 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 	 * Ignore if the page is already inactive, unless it is unlikely to be
 	 * reactivated.
 	 */
-	if ((queue = m->queue) == PQ_INACTIVE && !noreuse)
+	if (vm_page_inactive(m) && !noreuse)
 		return;
 	if (m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0) {
-		pq = &vm_phys_domain(m)->vmd_pagequeues[PQ_INACTIVE];
-		/* Avoid multiple acquisitions of the inactive queue lock. */
-		if (queue == PQ_INACTIVE) {
-			vm_pagequeue_lock(pq);
-			vm_page_dequeue_locked(m);
+		if ((queue = m->queue) == PQ_INACTIVE_NOLRU) {
+			vm_page_requeue(m);
 		} else {
 			if (queue != PQ_NONE)
 				vm_page_dequeue(m);
-			if (!noreuse) {
-				vm_page_enqueue(PQ_INACTIVE, m);
-				return;
-			}
-			vm_pagequeue_lock(pq);
+			vm_page_enqueue(noreuse ? PQ_INACTIVE_NOLRU :
+			    PQ_INACTIVE, m);
 		}
-		m->queue = PQ_INACTIVE;
-		if (noreuse)
-			TAILQ_INSERT_BEFORE(&vm_phys_domain(m)->vmd_inacthead,
-			    m, plinks.q);
-		else
-			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-		vm_pagequeue_cnt_inc(pq);
-		vm_pagequeue_unlock(pq);
 	}
 }
 

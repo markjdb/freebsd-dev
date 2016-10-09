@@ -1321,6 +1321,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	long min_scan;
 	int act_delta, addl_page_shortage, deficit, inactq_shortage, maxscan;
 	int page_shortage, scan_tick, scanned, starting_page_shortage;
+	uint8_t queue;
 	boolean_t queue_locked;
 
 	/*
@@ -1368,7 +1369,9 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	 * entire queue.  (Note that m->act_count is not used to make
 	 * decisions for the inactive queue, only for the active queue.)
 	 */
-	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
+	queue = PQ_INACTIVE_NOLRU;
+inactq_scan:
+	pq = &vmd->vmd_pagequeues[queue];
 	maxscan = pq->pq_cnt;
 	vm_pagequeue_lock(pq);
 	queue_locked = TRUE;
@@ -1492,7 +1495,8 @@ unlock_page:
 			} else if ((object->flags & OBJ_DEAD) == 0) {
 				vm_pagequeue_lock(pq);
 				queue_locked = TRUE;
-				m->queue = PQ_INACTIVE;
+				/* XXX should we always queue into PQ_INACT? */
+				m->queue = queue;
 				TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 				vm_pagequeue_cnt_inc(pq);
 				goto drop_page;
@@ -1537,6 +1541,11 @@ drop_page:
 		TAILQ_REMOVE(&pq->pq_pl, &pq->pq_marker, plinks.q);
 	}
 	vm_pagequeue_unlock(pq);
+
+	if (queue == PQ_INACTIVE_NOLRU && page_shortage > 0) {
+		queue = PQ_INACTIVE;
+		goto inactq_scan;
+	}
 
 	/*
 	 * Wake up the laundry thread so that it can perform any needed
@@ -1987,12 +1996,10 @@ vm_pageout_worker(void *arg)
 	KASSERT(domain->vmd_segs != 0, ("domain without segments"));
 	vm_pageout_init_marker(&domain->vmd_pagequeues[PQ_INACTIVE].pq_marker,
 	    PQ_INACTIVE);
+	vm_pageout_init_marker(&domain->vmd_pagequeues[PQ_INACTIVE_NOLRU].pq_marker,
+	    PQ_INACTIVE_NOLRU);
 	vm_pageout_init_marker(&domain->vmd_pagequeues[PQ_ACTIVE].pq_marker,
 	    PQ_ACTIVE);
-	vm_pageout_init_marker(&domain->vmd_inacthead, PQ_INACTIVE);
-
-	TAILQ_INSERT_HEAD(&domain->vmd_pagequeues[PQ_INACTIVE].pq_pl,
-	    &domain->vmd_inacthead, plinks.q);
 
 	domain->vmd_last_active_scan = ticks;
 	TAILQ_INSERT_HEAD(&domain->vmd_pagequeues[PQ_ACTIVE].pq_pl,
