@@ -838,6 +838,36 @@ struct {								\
 	QMD_TRACE_ELEM(&(elm)->field);					\
 } while (0)
 
+#define	TAILQ_SPLICE_AFTER(head1, head2, listelm, headname, field) do {	\
+	if (!TAILQ_EMPTY(head2)) {					\
+		if ((TAILQ_LAST(head2, headname)->field.tqe_next =	\
+		    TAILQ_NEXT(listelm, field)) == NULL) {		\
+			TAILQ_CONCAT(head1, head2, field);		\
+		} else {						\
+			TAILQ_NEXT(listelm, field)->field.tqe_prev =	\
+			    &TAILQ_NEXT(TAILQ_LAST(head2, headname), field); \
+			TAILQ_NEXT(listelm, field) = TAILQ_FIRST(head2); \
+			TAILQ_INIT(head2);				\
+		}							\
+	}								\
+} while (0)
+
+#define	TAILQ_SPLICE_BEFORE(head1, head2, listelm, headname, field) do { \
+	if (!TAILQ_EMPTY(head2)) {					\
+		TAILQ_NEXT(TAILQ_LAST(head2, headname), field) = (listelm); \
+		if (TAILQ_FIRST(head1) == listelm)			\
+			(head1)->tqh_first = (head2)->tqh_first;	\
+		else							\
+			TAILQ_PREV(listelm, headname, field)->field.tqe_next = \
+			    TAILQ_FIRST(head2);				\
+		TAILQ_FIRST(head2)->field.tqe_prev =			\
+		    (listelm)->field.tqe_prev;				\
+		(listelm)->field.tqe_prev =				\
+		    &TAILQ_NEXT(TAILQ_LAST(head2, headname), field);	\
+		TAILQ_INIT(head2);					\
+	}								\
+} while (0)
+
 #define TAILQ_SWAP(head1, head2, type, field) do {			\
 	QUEUE_TYPEOF(type) *swap_first = (head1)->tqh_first;		\
 	QUEUE_TYPEOF(type) **swap_last = (head1)->tqh_last;		\
