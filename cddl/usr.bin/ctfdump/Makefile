@@ -19,6 +19,8 @@ LIBADD=		ctf z
 
 MAN=		ctfdump.1
 
+WARNS?=		2
+
 .include <bsd.prog.mk>
 
 CFLAGS+=	-Wno-unused-parameter
