@@ -174,7 +174,7 @@ ctfdump_objects_cb(const char *name, ctf_id_t id, ulong_t symidx, void *arg)
 {
 	int len;
 
-	len = snprintf(NULL, 0, "  [%u] %u", g_stats.cs_ndata, id);
+	len = snprintf(NULL, 0, "  [%lu] %ld", g_stats.cs_ndata, id);
 	ctfdump_printf(CTFDUMP_OBJECTS, "  [%u] %u %*s%s (%u)\n",
 	    g_stats.cs_ndata, id, MAX(15 - len, 0), "", name, symidx);
 	g_stats.cs_ndata++;
