@@ -788,9 +788,9 @@ ctf_phase_dump(ctf_file_t *fp, const char *phase)
 	if (base == NULL && (base = getenv("LIBCTF_WRITE_PHASES")) == NULL)
 		return;
 
-	(void) snprintf(path, sizeof (path), "%s/libctf.%s.%d.ctf", base,
+	(void) snprintf(path, sizeof (path), "%s/libctf.%s.%ju.ctf", base,
 	    phase != NULL ? phase : "",
-	    ctf_phase);
+	    (uintmax_t)ctf_phase);
 	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0777)) < 0)
 		return;
 	(void) ctf_write(fp, fd);

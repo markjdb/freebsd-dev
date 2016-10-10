@@ -90,7 +90,7 @@ ctf_file_t *
 ctf_fdcreate(int fd, int *errp)
 {
 	ctf_file_t *fp;
-	static const ctf_header_t hdr = { { CTF_MAGIC, CTF_VERSION, 0 } };
+	static ctf_header_t hdr = { { CTF_MAGIC, CTF_VERSION, 0 } };
 
 	const ulong_t hashlen = 128;
 	ctf_dtdef_t **hash;
@@ -2001,7 +2001,7 @@ ctf_add_function(ctf_file_t *fp, ulong_t idx, const ctf_funcinfo_t *fip,
 	if (ctf_dsd_lookup(fp, idx) != NULL)
 		return (ctf_set_errno(fp, ECTF_CONFLICT));
 
-	if (symbase == NULL)
+	if (symbase == 0)
 		return (ctf_set_errno(fp, ECTF_STRTAB));
 
 	if (idx > fp->ctf_nsyms)
@@ -2068,7 +2068,7 @@ ctf_add_object(ctf_file_t *fp, ulong_t idx, ctf_id_t type)
 	if (ctf_dsd_lookup(fp, idx) != NULL)
 		return (ctf_set_errno(fp, ECTF_CONFLICT));
 
-	if (symbase == NULL)
+	if (symbase == 0)
 		return (ctf_set_errno(fp, ECTF_STRTAB));
 
 	if (idx > fp->ctf_nsyms)

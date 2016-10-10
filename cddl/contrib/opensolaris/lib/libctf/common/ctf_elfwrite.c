@@ -266,7 +266,7 @@ ctf_write_elf(ctf_file_t *fp, Elf *src, Elf *dst, int flags)
 			}
 		}
 
-		if (gelf_update_shdr(dscn, &shdr) == NULL) {
+		if (gelf_update_shdr(dscn, &shdr) == 0) {
 			ret = ctf_set_errno(fp, ECTF_ELF);
 			goto out;
 		}
@@ -351,7 +351,7 @@ ctf_write_elf(ctf_file_t *fp, Elf *src, Elf *dst, int flags)
 		dehdr.e_shstrndx = SHN_XINDEX;
 	else
 		dehdr.e_shstrndx = secxlate[sehdr.e_shstrndx];
-	if (gelf_update_ehdr(dst, &dehdr) == NULL) {
+	if (gelf_update_ehdr(dst, &dehdr) == 0) {
 		ret = ctf_set_errno(fp, ECTF_ELF);
 		goto out;
 	}
