@@ -475,7 +475,7 @@ ctf_dwarf_refdie(ctf_die_t *cdp, Dwarf_Die die, Dwarf_Half name,
 	if ((ret = dwarf_offdie(cdp->cd_dwarf, off, diep, &derr)) !=
 	    DW_DLV_OK) {
 		(void) snprintf(cdp->cd_errbuf, cdp->cd_errlen,
-		    "failed to get die from offset %llu: %s\n",
+		    "failed to get die from offset %lu: %s\n",
 		    off, dwarf_errmsg(derr));
 		return (ECTF_CONVBKERR);
 	}
@@ -812,8 +812,7 @@ ctf_dwarf_float_base(ctf_die_t *cdp, Dwarf_Signed type, ctf_encoding_t *enc)
 	if (type == DW_ATE_complex_float) {
 		mult = 2;
 		col = 1;
-	} else if (type == DW_ATE_imaginary_float ||
-	    type == DW_ATE_SUN_imaginary_float) {
+	} else if (type == DW_ATE_imaginary_float) {
 		col = 2;
 	}
 
@@ -826,7 +825,7 @@ ctf_dwarf_float_base(ctf_die_t *cdp, Dwarf_Signed type, ctf_encoding_t *enc)
 	}
 
 	(void) snprintf(cdp->cd_errbuf, cdp->cd_errlen,
-	    "failed to find valid fp mapping for encoding %d, size %d bits\n",
+	    "failed to find valid fp mapping for encoding %ld, size %d bits\n",
 	    type, enc->cte_bits);
 	return (EINVAL);
 }
@@ -866,15 +865,13 @@ ctf_dwarf_dwarf_base(ctf_die_t *cdp, Dwarf_Die die, int *kindp,
 	case DW_ATE_float:
 	case DW_ATE_complex_float:
 	case DW_ATE_imaginary_float:
-	case DW_ATE_SUN_imaginary_float:
-	case DW_ATE_SUN_interval_float:
 		*kindp = CTF_K_FLOAT;
 		if ((ret = ctf_dwarf_float_base(cdp, type, enc)) != 0)
 			return (ret);
 		break;
 	default:
 		(void) snprintf(cdp->cd_errbuf, cdp->cd_errlen,
-		    "encountered unkown DWARF encoding: %d", type);
+		    "encountered unkown DWARF encoding: %ld", type);
 		return (ECTF_CONVBKERR);
 	}
 
@@ -1298,7 +1295,7 @@ next:
 	if ((ctf_set_size(cdp->cd_ctfp, base, nsz)) == CTF_ERR) {
 		int e = ctf_errno(cdp->cd_ctfp);
 		(void) snprintf(cdp->cd_errbuf, cdp->cd_errlen,
-		    "failed to set type size for %d to 0x%x: %s", base,
+		    "failed to set type size for %ld to 0x%x: %s", base,
 		    (uint32_t)size, ctf_errmsg(e));
 		return (ECTF_CONVBKERR);
 	}
@@ -1599,7 +1596,7 @@ ctf_dwarf_create_enum(ctf_die_t *cdp, Dwarf_Die die, ctf_id_t *idp, int isroot)
 		ret = ctf_add_enumerator(cdp->cd_ctfp, id, name, eval);
 		if (ret == CTF_ERR) {
 			(void) snprintf(cdp->cd_errbuf, cdp->cd_errlen,
-			    "failed to add enumarator %s (%d) to %d\n",
+			    "failed to add enumarator %s (%d) to %ld\n",
 			    name, eval, id);
 			ctf_free(name, strlen(name) + 1);
 			return (ctf_errno(cdp->cd_ctfp));
@@ -1690,7 +1687,7 @@ ctf_dwarf_convert_type(ctf_die_t *cdp, Dwarf_Die die, ctf_id_t *idp,
 
 	if (offset > cdp->cd_maxoff) {
 		(void) snprintf(cdp->cd_errbuf, cdp->cd_errlen,
-		    "die offset %llu beyond maximum for header %llu\n",
+		    "die offset %lu beyond maximum for header %lu\n",
 		    offset, cdp->cd_maxoff);
 		return (ECTF_CONVBKERR);
 	}
@@ -2051,7 +2048,7 @@ ctf_dwarf_walk_toplevel(ctf_die_t *cdp, Dwarf_Die die)
 
 	if (offset > cdp->cd_maxoff) {
 		(void) snprintf(cdp->cd_errbuf, cdp->cd_errlen,
-		    "die offset %llu beyond maximum for header %llu\n",
+		    "die offset %lu beyond maximum for header %lu\n",
 		    offset, cdp->cd_maxoff);
 		return (ECTF_CONVBKERR);
 	}

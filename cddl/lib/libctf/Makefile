@@ -7,9 +7,11 @@
 .PATH:		${.CURDIR}/../../../sys/cddl/contrib/opensolaris/uts/common/os
 
 LIB=		ctf
-SRCS=		ctf_create.c \
+SRCS=		ctf_convert.c \
+		ctf_create.c \
 		ctf_decl.c \
 		ctf_diff.c \
+		ctf_dwarf.c \
 		ctf_elfwrite.c \
 		ctf_error.c \
 		ctf_hash.c \
@@ -37,6 +39,6 @@ CFLAGS+=	-I${.CURDIR}/../../../sys/cddl/compat/opensolaris \
 		-I${OPENSOLARIS_USR_DISTDIR}/lib/mergeq \
 		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common
 
-LIBADD+=	elf pthread z
+LIBADD+=	dwarf elf pthread uutil z
 
 .include <bsd.lib.mk>

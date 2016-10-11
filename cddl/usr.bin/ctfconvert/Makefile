@@ -6,27 +6,7 @@
 .PATH: ${.CURDIR}/../../../sys/cddl/contrib/opensolaris/uts/common/os
 
 PROG=		ctfconvert
-SRCS=		ctfconvert.c \
-		alist.c \
-		altexec.c \
-		ctf.c \
-		dwarf.c \
-		fixup_tdescs.c \
-		hash.c \
-		iidesc.c \
-		input.c \
-		list.c \
-		memory.c \
-		merge.c \
-		output.c \
-		stabs.c \
-		stack.c \
-		strtab.c \
-		st_parse.c \
-		symbol.c \
-		tdata.c \
-		traverse.c \
-		util.c
+SRCS=		ctfconvert.c
 
 CFLAGS+=	-I${OPENSOLARIS_USR_DISTDIR} \
 		-I${OPENSOLARIS_SYS_DISTDIR} \
@@ -39,7 +19,7 @@ CFLAGS+=	-I${OPENSOLARIS_USR_DISTDIR} \
 		-I${OPENSOLARIS_USR_DISTDIR}/tools/ctf/common \
 		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common
 
-LIBADD=		ctf dwarf elf z
+LIBADD=		ctf elf
 
 MAN=		ctfconvert.1
 

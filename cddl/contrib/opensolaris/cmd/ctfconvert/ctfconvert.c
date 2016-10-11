@@ -173,7 +173,7 @@ ctfconvert_fixup_genunix(ctf_file_t *fp)
 		return;
 	}
 
-	if (cf.cf_padoff + ptrsz * NBBY != sz * NBBY) {
+	if (cf.cf_padoff + ptrsz * NBBY != (size_t)(sz * NBBY)) {
 		return;
 	}
 

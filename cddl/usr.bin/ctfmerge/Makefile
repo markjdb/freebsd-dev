@@ -16,7 +16,7 @@ CFLAGS+=	-I${OPENSOLARIS_USR_DISTDIR} \
 		-I${OPENSOLARIS_USR_DISTDIR}/tools/ctf/common \
 		-I${OPENSOLARIS_SYS_DISTDIR}/uts/common
 
-LIBADD=		ctf elf z
+LIBADD=		ctf elf
 
 MAN=		ctfmerge.1
 
