@@ -1121,7 +1121,7 @@ relocked:
 				goto dropwithreset;
 			}
 #ifdef TCP_RFC7413
-new_tfo_socket:
+tfo_socket_result:
 #endif
 			if (so == NULL) {
 				/*
@@ -1387,7 +1387,7 @@ new_tfo_socket:
 		tcp_dooptions(&to, optp, optlen, TO_SYN);
 #ifdef TCP_RFC7413
 		if (syncache_add(&inc, &to, th, inp, &so, m, NULL, NULL))
-			goto new_tfo_socket;
+			goto tfo_socket_result;
 #else
 		syncache_add(&inc, &to, th, inp, &so, m, NULL, NULL);
 #endif
@@ -1565,8 +1565,6 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * validation to ignore broken/spoofed segs.
 	 */
 	tp->t_rcvtime = ticks;
-	if (TCPS_HAVEESTABLISHED(tp->t_state))
-		tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp));
 
 	/*
 	 * Scale up the window into a 32-bit value.
