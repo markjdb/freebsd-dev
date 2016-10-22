@@ -422,26 +422,32 @@ sysctl_vm_page_blacklist(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
+static char buf[4 * MAXMEMDOM][64]; /* XXXMJG */
+
 static void
-vm_page_domain_init(struct vm_domain *vmd)
+vm_page_domain_init(struct vm_domain *vmd, int instance)
 {
 	struct vm_pagequeue *pq;
 	int i, j;
 
+	sprintf((char *)&buf[instance + 0], "vm inactive pagequeue %d", instance);
 	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_INACTIVE].pq_name) =
-	    "vm inactive pagequeue";
+	    (char *)&buf[instance + 0];
 	*__DECONST(u_int **, &vmd->vmd_pagequeues[PQ_INACTIVE].pq_vcnt) =
 	    &global_v_inactive_count;
+	sprintf((char *)&buf[instance + 1], "vm inactive noLRU pagequeue %d", instance);
 	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_INACTIVE_NOLRU].pq_name) =
-	    "vm inactive noLRU pagequeue";
+	    (char *)&buf[instance + 1];
 	*__DECONST(u_int **, &vmd->vmd_pagequeues[PQ_INACTIVE_NOLRU].pq_vcnt) =
 	    &global_v_inactive_count;
+	sprintf((char *)&buf[instance + 2], "vm active pagequeue %d", instance);
 	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_ACTIVE].pq_name) =
-	    "vm active pagequeue";
+	    (char *)&buf[instance + 2];
 	*__DECONST(u_int **, &vmd->vmd_pagequeues[PQ_ACTIVE].pq_vcnt) =
 	    &global_v_active_count;
+	sprintf((char *)&buf[instance + 3], "vm laundry pagequeue %d", instance);
 	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_name) =
-	    "vm laundry pagequeue";
+	    (char *)&buf[instance + 3];
 	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_vcnt) =
 	    &global_v_laundry_count;
 	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_UNSWAPPABLE].pq_name) =
@@ -515,7 +521,7 @@ vm_page_startup(vm_offset_t vaddr)
 	for (i = 0; i < PA_LOCK_COUNT; i++)
 		mtx_init(&pa_lock[i], "vm page", NULL, MTX_DEF);
 	for (i = 0; i < vm_ndomains; i++)
-		vm_page_domain_init(&vm_dom[i]);
+		vm_page_domain_init(&vm_dom[i], i);
 
 	/*
 	 * Almost all of the pages needed for bootstrapping UMA are used
