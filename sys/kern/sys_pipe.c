@@ -249,6 +249,56 @@ static dev_t pipedev_ino;
 
 SYSINIT(vfs, SI_SUB_VFS, SI_ORDER_ANY, pipeinit, NULL);
 
+struct pipemap_cache_entry {
+	caddr_t	buffer;
+	TAILQ_ENTRY(pipemap_cache_entry) pc_list;
+};
+
+static struct mtx pipemap_cache_lock;
+static TAILQ_HEAD(, pipemap_cache_entry) pipemap_cache_list;
+static u_long pipemap_cached;
+static uma_zone_t pipemap_cache_zone;
+
+SYSCTL_ULONG(_kern_ipc, OID_AUTO, pipemapcached, CTLFLAG_RD,
+	  &pipemap_cached, 0, "");
+
+static int pipemap_cache_buffers;
+SYSCTL_INT(_kern_ipc, OID_AUTO, pipemapcachebuffers, CTLFLAG_RW,
+	  &pipemap_cache_buffers, 0, "");
+
+static int
+sysctl_pipe_purge_cache(SYSCTL_HANDLER_ARGS)
+{
+	TAILQ_HEAD(, pipemap_cache_entry) total;
+	struct pipemap_cache_entry *pc_entry, *npc_entry;
+	int error, i;
+
+	error = sysctl_wire_old_buffer(req, sizeof(int));
+	if (error == 0) {
+		i = 0;
+		error = sysctl_handle_int(oidp, &i, 0, req);
+	}
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+
+	TAILQ_INIT(&total);
+	mtx_lock(&pipemap_cache_lock);
+	TAILQ_CONCAT(&total, &pipemap_cache_list, pc_list);
+	pipemap_cached = 0;
+	mtx_unlock(&pipemap_cache_lock);
+
+	TAILQ_FOREACH_SAFE(pc_entry, &total, pc_list, npc_entry) {
+		atomic_subtract_long(&amountpipekva, 16384);
+		vm_map_remove(pipe_map, (vm_offset_t)pc_entry->buffer,
+		    (vm_offset_t)pc_entry->buffer + 16384);
+		uma_zfree(pipemap_cache_zone, pc_entry);
+	}
+	return (0);
+}
+SYSCTL_PROC(_kern_ipc, OID_AUTO, purgepipemapcache, CTLTYPE_INT | CTLFLAG_RW |
+    CTLFLAG_MPSAFE | CTLFLAG_SECURE, NULL, 0, sysctl_pipe_purge_cache,
+    "I", "");
+
 static void
 pipeinit(void *dummy __unused)
 {
@@ -261,6 +311,12 @@ pipeinit(void *dummy __unused)
 	KASSERT(pipeino_unr != NULL, ("pipe fake inodes not initialized"));
 	pipedev_ino = devfs_alloc_cdp_inode();
 	KASSERT(pipedev_ino > 0, ("pipe dev inode not initialized"));
+
+	TAILQ_INIT(&pipemap_cache_list);
+	mtx_init(&pipemap_cache_lock, "pipemap cache lock", NULL, MTX_DEF);
+	pipemap_cache_zone = uma_zcreate("pipemap zone",
+		sizeof(struct pipemap_cache_entry),
+		NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_ZINIT);
 }
 
 static int
@@ -499,6 +555,7 @@ pipespace_new(cpipe, size)
 	int error, cnt, firstseg;
 	static int curfail = 0;
 	static struct timeval lastfail;
+	struct pipemap_cache_entry *pc_entry;
 
 	KASSERT(!mtx_owned(PIPE_MTX(cpipe)), ("pipespace: pipe mutex locked"));
 	KASSERT(!(cpipe->pipe_state & PIPE_DIRECTW),
@@ -510,6 +567,20 @@ retry:
 
 	size = round_page(size);
 	buffer = (caddr_t) vm_map_min(pipe_map);
+
+	if (pipemap_cache_buffers && size == 16384) {
+		mtx_lock(&pipemap_cache_lock);
+		pc_entry = TAILQ_FIRST(&pipemap_cache_list);
+		if (pc_entry != NULL) {
+			TAILQ_REMOVE(&pipemap_cache_list, pc_entry, pc_list);
+			pipemap_cached -= size;
+			buffer = pc_entry->buffer;
+			mtx_unlock(&pipemap_cache_lock);
+			uma_zfree(pipemap_cache_zone, pc_entry);
+			goto got_one;
+		}
+		mtx_unlock(&pipemap_cache_lock);
+	}
 
 	error = vm_map_find(pipe_map, NULL, 0,
 		(vm_offset_t *) &buffer, size, 0, VMFS_ANY_SPACE,
@@ -531,6 +602,9 @@ retry:
 		return (ENOMEM);
 	}
 
+	atomic_add_long(&amountpipekva, size);
+
+got_one:
 	/* copy data, then free old resources if we're resizing */
 	if (cnt > 0) {
 		if (cpipe->pipe_buffer.in <= cpipe->pipe_buffer.out) {
@@ -551,7 +625,6 @@ retry:
 	cpipe->pipe_buffer.in = cnt;
 	cpipe->pipe_buffer.out = 0;
 	cpipe->pipe_buffer.cnt = cnt;
-	atomic_add_long(&amountpipekva, cpipe->pipe_buffer.size);
 	return (0);
 }
 
@@ -1627,15 +1700,28 @@ static void
 pipe_free_kmem(cpipe)
 	struct pipe *cpipe;
 {
+	struct pipemap_cache_entry *pc_entry;
 
 	KASSERT(!mtx_owned(PIPE_MTX(cpipe)),
 	    ("pipe_free_kmem: pipe mutex locked"));
 
 	if (cpipe->pipe_buffer.buffer != NULL) {
-		atomic_subtract_long(&amountpipekva, cpipe->pipe_buffer.size);
-		vm_map_remove(pipe_map,
-		    (vm_offset_t)cpipe->pipe_buffer.buffer,
-		    (vm_offset_t)cpipe->pipe_buffer.buffer + cpipe->pipe_buffer.size);
+		if (pipemap_cache_buffers && cpipe->pipe_buffer.size == 16384) {
+			pc_entry = uma_zalloc(pipemap_cache_zone, M_NOWAIT);
+			if (pc_entry == NULL)
+				goto free;
+			pc_entry->buffer = cpipe->pipe_buffer.buffer;
+			mtx_lock(&pipemap_cache_lock);
+			TAILQ_INSERT_HEAD(&pipemap_cache_list, pc_entry, pc_list);
+			pipemap_cached += cpipe->pipe_buffer.size;
+			mtx_unlock(&pipemap_cache_lock);
+		} else {
+free:
+			atomic_subtract_long(&amountpipekva, cpipe->pipe_buffer.size);
+			vm_map_remove(pipe_map,
+			    (vm_offset_t)cpipe->pipe_buffer.buffer,
+			    (vm_offset_t)cpipe->pipe_buffer.buffer + cpipe->pipe_buffer.size);
+		}
 		cpipe->pipe_buffer.buffer = NULL;
 	}
 #ifndef PIPE_NODIRECT
