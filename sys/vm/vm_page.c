@@ -72,6 +72,13 @@
  *		* The page daemon can acquire and hold any pair of page queue
  *		  locks in any order.
  *
+ *		* Batch queues are used to defer insertions of pages into the
+ *		  main paging queues.  The aim is to reduce contention at the
+ *		  entry point of the queue by inserting multiple pages in an
+ *		  O(1) operation.  This comes at the expense of strict LRU.
+ *		  Only a page lock is required to insert a page into a batch
+ *		  queue.
+ *
  *	- The object lock is required when inserting or removing
  *	  pages from an object (vm_page_insert() or vm_page_remove()).
  *
@@ -164,6 +171,7 @@ static void vm_page_alloc_check(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
 static void vm_page_enqueue(uint8_t queue, vm_page_t m);
 static void vm_page_free_phys(vm_page_t m);
+static void vm_page_enqueue_batch(struct vm_pagequeue *pq, u_int idx);
 static void vm_page_free_wakeup(void);
 static void vm_page_init(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
@@ -388,7 +396,7 @@ static void
 vm_page_domain_init(struct vm_domain *vmd)
 {
 	struct vm_pagequeue *pq;
-	int i;
+	int i, j;
 
 	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_INACTIVE].pq_name) =
 	    "vm inactive pagequeue";
@@ -420,6 +428,15 @@ vm_page_domain_init(struct vm_domain *vmd)
 		TAILQ_INIT(&pq->pq_pl);
 		mtx_init(&pq->pq_mutex, pq->pq_name, "vm pagequeue",
 		    MTX_DEF | MTX_DUPOK);
+
+		/*
+		 * The batch queue limits are set in vm_pageout_init() once
+		 * we've set the paging targets.
+		 */
+		for (j = 0; j < BPQ_COUNT; j++) {
+			TAILQ_INIT(&pq->pq_bpqs[j].bpq_pl);
+			pq->pq_bpqs[j].bpq_lim = 1;
+		}
 	}
 }
 
@@ -2610,6 +2627,7 @@ vm_page_dequeue(vm_page_t m)
 	pq = vm_page_pagequeue(m);
 	vm_pagequeue_lock(pq);
 	m->queue = PQ_NONE;
+	vm_page_enqueue_batch(pq, BPQ_IDX(m));
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	vm_pagequeue_cnt_dec(pq);
 	vm_pagequeue_unlock(pq);
@@ -2630,6 +2648,7 @@ vm_page_dequeue_locked(vm_page_t m)
 	vm_page_lock_assert(m, MA_OWNED);
 	pq = vm_page_pagequeue(m);
 	vm_pagequeue_assert_locked(pq);
+	vm_page_enqueue_batch(pq, BPQ_IDX(m));
 	m->queue = PQ_NONE;
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	vm_pagequeue_cnt_dec(pq);
@@ -2645,21 +2664,47 @@ vm_page_dequeue_locked(vm_page_t m)
 static void
 vm_page_enqueue(uint8_t queue, vm_page_t m)
 {
+	struct vm_batchqueue *bpq;
 	struct vm_pagequeue *pq;
 
 	vm_page_lock_assert(m, MA_OWNED);
 	KASSERT(queue < PQ_COUNT,
 	    ("vm_page_enqueue: invalid queue %u request for page %p",
 	    queue, m));
-	if (queue == PQ_LAUNDRY || queue == PQ_UNSWAPPABLE)
-		pq = &vm_dom[0].vmd_pagequeues[queue];
-	else
-		pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
-	vm_pagequeue_lock(pq);
+
 	m->queue = queue;
-	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-	vm_pagequeue_cnt_inc(pq);
-	vm_pagequeue_unlock(pq);
+	pq = vm_page_pagequeue(m);
+	bpq = &pq->pq_bpqs[BPQ_IDX(m)];
+	TAILQ_INSERT_TAIL(&bpq->bpq_pl, m, plinks.q);
+	if (bpq->bpq_cnt++ >= bpq->bpq_lim) {
+		vm_pagequeue_lock(pq);
+		vm_page_enqueue_batch(pq, BPQ_IDX(m));
+		vm_pagequeue_unlock(pq);
+	}
+}
+
+/*
+ *	vm_page_enqueue_batch:
+ *
+ *	Concatenate the pages in a batch queue to their corresponding paging
+ *	queue.
+ *
+ *	The pagequeue must be locked.
+ */
+static void
+vm_page_enqueue_batch(struct vm_pagequeue *pq, u_int idx)
+{
+	struct vm_batchqueue *bpq;
+
+	KASSERT(idx < BPQ_COUNT, ("invalid batch queue index %u", idx));
+	vm_pagequeue_assert_locked(pq);
+
+	bpq = &pq->pq_bpqs[idx];
+	if (bpq->bpq_cnt != 0) {
+		TAILQ_CONCAT(&pq->pq_pl, &bpq->bpq_pl, plinks.q);
+		vm_pagequeue_cnt_add(pq, bpq->bpq_cnt);
+		bpq->bpq_cnt = 0;
+	}
 }
 
 /*
@@ -2679,6 +2724,7 @@ vm_page_requeue(vm_page_t m)
 	    ("vm_page_requeue: page %p is not queued", m));
 	pq = vm_page_pagequeue(m);
 	vm_pagequeue_lock(pq);
+	vm_page_enqueue_batch(pq, BPQ_IDX(m));
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 	vm_pagequeue_unlock(pq);
@@ -2700,6 +2746,7 @@ vm_page_requeue_locked(vm_page_t m)
 	    ("vm_page_requeue_locked: page %p is not queued", m));
 	pq = vm_page_pagequeue(m);
 	vm_pagequeue_assert_locked(pq);
+	vm_page_enqueue_batch(pq, BPQ_IDX(m));
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 }

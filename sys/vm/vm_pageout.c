@@ -2070,6 +2070,8 @@ vm_pageout_worker(void *arg)
 static void
 vm_pageout_init(void)
 {
+	int i, j, k, lim;
+
 	/*
 	 * Initialize some paging parameters.
 	 */
@@ -2123,6 +2125,24 @@ vm_pageout_init(void)
 	 */
 	vm_background_launder_target = (vm_cnt.v_free_target -
 	    vm_cnt.v_free_min) / 10;
+
+	/*
+	 * Set batch queue limits for paging queues.
+	 *
+	 * We want these to be small relative to the amount of system memory.
+	 * Roughly v_page_count / PA_LOCK_COUNT pages are mapped to a given
+	 * batch queue; ensure that no more than 0.1% of them may be queued in
+	 * the batch queue for a particular page queue.  Then no more than
+	 * 0.1% * PQ_COUNT can be queued across all page queues.  This gives a
+	 * per-page queue batch limit of 1 page per GB of memory on amd64.
+	 */
+	for (i = 0; i < MAXMEMDOM; i++) {
+		lim = vm_dom[i].vmd_page_count / 1000 / BPQ_COUNT;
+		for (j = 0; j < PQ_COUNT; j++)
+			for (k = 0; k < BPQ_COUNT; k++)
+				vm_dom[i].vmd_pagequeues[j].pq_bpqs[k].bpq_lim =
+				    lim;
+	}
 }
 
 /*

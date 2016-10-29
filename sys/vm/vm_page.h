@@ -67,6 +67,7 @@
 #ifndef	_VM_PAGE_
 #define	_VM_PAGE_
 
+#include <vm/vm_param.h>
 #include <vm/pmap.h>
 
 /*
@@ -211,11 +212,20 @@ struct vm_page {
 #define	PQ_UNSWAPPABLE		4
 #define	PQ_COUNT		5
 
+#define	BPQ_COUNT		PA_LOCK_COUNT
+#define	BPQ_IDX(m)		(pa_index(VM_PAGE_TO_PHYS(m)) % BPQ_COUNT)
+
 #ifndef VM_PAGE_HAVE_PGLIST
 TAILQ_HEAD(pglist, vm_page);
 #define VM_PAGE_HAVE_PGLIST
 #endif
 SLIST_HEAD(spglist, vm_page);
+
+struct vm_batchqueue {
+	struct pglist	bpq_pl;
+	int		bpq_cnt;
+	int		bpq_lim;
+} __aligned(CACHE_LINE_SIZE);
 
 struct vm_pagequeue {
 	struct mtx	pq_mutex;
@@ -223,8 +233,10 @@ struct vm_pagequeue {
 	int		pq_cnt;
 	u_int		* const pq_vcnt;
 	const char	* const pq_name;
-} __aligned(CACHE_LINE_SIZE);
 
+	char		_pq_pad[0] __aligned(CACHE_LINE_SIZE);
+	struct vm_batchqueue pq_bpqs[BPQ_COUNT];
+} __aligned(CACHE_LINE_SIZE);
 
 struct vm_domain {
 	struct vm_pagequeue vmd_pagequeues[PQ_COUNT];
