@@ -203,12 +203,13 @@ struct vm_page {
 
 #define	VPB_UNBUSIED		VPB_SHARERS_WORD(0)
 
-#define	PQ_NONE		255
-#define	PQ_INACTIVE	0
-#define	PQ_ACTIVE	1
-#define	PQ_LAUNDRY	2
-#define	PQ_UNSWAPPABLE	3
-#define	PQ_COUNT	4
+#define	PQ_NONE			255
+#define	PQ_INACTIVE		0
+#define	PQ_INACTIVE_NOLRU	1
+#define	PQ_ACTIVE		2
+#define	PQ_LAUNDRY		3
+#define	PQ_UNSWAPPABLE		4
+#define	PQ_COUNT		5
 
 #ifndef VM_PAGE_HAVE_PGLIST
 TAILQ_HEAD(pglist, vm_page);
@@ -235,7 +236,6 @@ struct vm_domain {
 	int vmd_last_active_scan;
 	struct vm_page vmd_laundry_marker;
 	struct vm_page vmd_marker; /* marker for pagedaemon private use */
-	struct vm_page vmd_inacthead; /* marker for LRU-defeating insertions */
 };
 
 extern struct vm_domain vm_dom[MAXMEMDOM];
@@ -733,7 +733,7 @@ static inline bool
 vm_page_inactive(vm_page_t m)
 {
 
-	return (m->queue == PQ_INACTIVE);
+	return (m->queue == PQ_INACTIVE || m->queue == PQ_INACTIVE_NOLRU);
 }
 
 static inline bool
