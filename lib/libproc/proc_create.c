@@ -32,6 +32,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/user.h>
 #include <sys/wait.h>
 
+#include <assert.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -90,6 +91,7 @@ proc_init(pid_t pid, int flags, int status, struct proc_handle **pphdl)
 	if ((kp = procstat_getprocs(phdl->procstat, KERN_PROC_PID, pid,
 	    &count)) == NULL)
 		goto out;
+	assert(count == 1); /* Lookup by PID ought to be unique. */
 	error = procstat_getpathname(phdl->procstat, kp, phdl->execpath,
 	    sizeof(phdl->execpath));
 	procstat_freeprocs(phdl->procstat, kp);
@@ -254,8 +256,10 @@ proc_free(struct proc_handle *phdl)
 	}
 	if (phdl->maparrsz > 0)
 		free(phdl->mappings);
-	if (phdl->procstat != NULL)
+	if (phdl->procstat != NULL) {
+		procstat_freeenvv(phdl->procstat);
 		procstat_close(phdl->procstat);
+	}
 	if (phdl->rdap != NULL)
 		rd_delete(phdl->rdap);
 	free(phdl);

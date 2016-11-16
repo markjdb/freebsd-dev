@@ -37,6 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/ctf.h>
 #include <sys/ctf_api.h>
 #endif
+#include <sys/sysctl.h>
 #include <sys/user.h>
 
 #include <assert.h>
@@ -50,6 +51,7 @@ __FBSDID("$FreeBSD$");
 #ifndef NO_CTF
 #include <libctf.h>
 #endif
+#include <libprocstat.h>
 #include <libutil.h>
 
 #include "crc32.h"
@@ -346,6 +348,35 @@ proc_objname(struct proc_handle *p, uintptr_t addr, char *objname,
 		}
 	}
 	return (NULL);
+}
+
+int
+proc_iter_envv(struct proc_handle *p, proc_env_f func, void *cd)
+{
+	struct kinfo_proc *kp;
+	char **envv;
+	int count, ret;
+
+	if ((kp = procstat_getprocs(p->procstat, KERN_PROC_PID, proc_getpid(p),
+	    &count)) == NULL)
+		return (-1);
+
+	envv = procstat_getenvv(p->procstat, kp, 0 /* no limit */);
+	if (envv == NULL) {
+		procstat_freeprocs(p->procstat, kp);
+		return (-1);
+	}
+
+	ret = 0;
+	for (int i = 0; envv[i] != NULL; i++) {
+		if ((ret = func(cd, p, (uintptr_t)envv[i],
+		    0 /* XXX addr in proc */)) != 0)
+			break;
+	}
+
+	procstat_freeprocs(p->procstat, kp);
+
+	return (ret);
 }
 
 int
