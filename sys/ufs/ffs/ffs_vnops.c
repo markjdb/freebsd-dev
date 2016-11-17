@@ -462,9 +462,9 @@ ffs_rbufdone(struct buf *bp, int ioflag)
 {
 
 	if ((ioflag & (IO_VMIO | IO_DIRECT)) != 0 && LIST_EMPTY(&bp->b_dep)) {
-		bp->b_flag |= B_RELBUF;
+		bp->b_flags |= B_RELBUF;
 		if ((ioflag & IO_NOREUSE) != 0)
-			bp->b_flag |= B_NOREUSE;
+			bp->b_flags |= B_NOREUSE;
 		brelse(bp);
 	} else
 		bqrelse(bp);
@@ -993,7 +993,7 @@ ffs_extread(struct vnode *vp, struct uio *uio, int ioflag)
 					(int)xfersize, uio);
 		if (error)
 			break;
-		ffs_rbufdone(bp);
+		ffs_rbufdone(bp, ioflag);
 	}
 
 	/*
@@ -1003,7 +1003,7 @@ ffs_extread(struct vnode *vp, struct uio *uio, int ioflag)
 	 * so it must have come from a 'break' statement
 	 */
 	if (bp != NULL)
-		ffs_rbufdone(bp);
+		ffs_rbufdone(bp, ioflag);
 	return (error);
 }
 
