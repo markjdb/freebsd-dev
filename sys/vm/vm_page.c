@@ -1235,7 +1235,7 @@ vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
 	 * update the object's OBJ_MIGHTBEDIRTY flag.
 	 */
 	if (pmap_page_is_write_mapped(m))
-		vm_object_set_writeable_dirty(object);
+		vm_object_set_writeable_dirty(object, m);
 }
 
 /*
@@ -1390,7 +1390,7 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 	 * swapped one page for another, but OBJ_MIGHTBEDIRTY.
 	 */
 	if (pmap_page_is_write_mapped(mnew))
-		vm_object_set_writeable_dirty(object);
+		vm_object_set_writeable_dirty(object, mnew);
 	return (mold);
 }
 

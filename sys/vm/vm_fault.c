@@ -199,9 +199,7 @@ vm_fault_dirty(vm_map_entry_t entry, vm_page_t m, vm_prot_t prot,
 	    (fault_flags & VM_FAULT_WIRE) == 0) ||
 	    (fault_flags & VM_FAULT_DIRTY) != 0;
 
-	if (set_wd)
-		vm_object_set_writeable_dirty(m->object);
-	else
+	if (!set_wd)
 		/*
 		 * If two callers of vm_fault_dirty() with set_wd ==
 		 * FALSE, one for the map entry with MAP_ENTRY_NOSYNC
@@ -229,6 +227,9 @@ vm_fault_dirty(vm_map_entry_t entry, vm_page_t m, vm_prot_t prot,
 	} else {
 		m->oflags &= ~VPO_NOSYNC;
 	}
+
+	if (set_wd)
+		vm_object_set_writeable_dirty(m->object, m);
 
 	/*
 	 * If the fault is a write, we know that this page is being

@@ -104,10 +104,10 @@ SYSCTL_INT(_vm, OID_AUTO, old_msync, CTLFLAG_RW, &old_msync, 0,
     "Use old (insecure) msync behavior");
 
 static int	vm_object_page_collect_flush(vm_object_t object, vm_page_t p,
-		    int pagerflags, int flags, boolean_t *clearobjflags,
+		    int pagerflags, int flags, u_short *clearobjflags,
 		    boolean_t *eio);
 static boolean_t vm_object_page_remove_write(vm_page_t p, int flags,
-		    boolean_t *clearobjflags);
+		    u_short *clearobjflags);
 static void	vm_object_qcollapse(vm_object_t object);
 static void	vm_object_vndeallocate(vm_object_t object);
 
@@ -808,7 +808,7 @@ vm_object_terminate(vm_object_t object)
  * page should be flushed, and FALSE otherwise.
  */
 static boolean_t
-vm_object_page_remove_write(vm_page_t p, int flags, boolean_t *clearobjflags)
+vm_object_page_remove_write(vm_page_t p, int flags, u_short *clearobjflags)
 {
 
 	/*
@@ -817,7 +817,7 @@ vm_object_page_remove_write(vm_page_t p, int flags, boolean_t *clearobjflags)
 	 * cleared in this case so we do not have to set them.
 	 */
 	if ((flags & OBJPC_NOSYNC) != 0 && (p->oflags & VPO_NOSYNC) != 0) {
-		*clearobjflags = FALSE;
+		*clearobjflags &= ~OBJ_MIGHTBEDIRTY;
 		return (FALSE);
 	} else {
 		pmap_remove_write(p);
@@ -850,9 +850,13 @@ vm_object_page_clean(vm_object_t object, vm_ooffset_t start, vm_ooffset_t end,
 	vm_page_t np, p;
 	vm_pindex_t pi, tend, tstart;
 	int curgeneration, n, pagerflags;
-	boolean_t clearobjflags, eio, res;
+	boolean_t eio, res;
+	u_short clearobjflags;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
+	KASSERT((object->flags & OBJ_NEEDSYNC) == 0 ||
+	    (object->flags & OBJ_MIGHTBEDIRTY) != 0,
+	    ("object %p needs sync but isn't dirty", object));
 
 	/*
 	 * The OBJ_MIGHTBEDIRTY flag is only set for OBJT_VNODE
@@ -860,6 +864,8 @@ vm_object_page_clean(vm_object_t object, vm_ooffset_t start, vm_ooffset_t end,
 	 * operating on non-vnode objects.
 	 */
 	if ((object->flags & OBJ_MIGHTBEDIRTY) == 0 ||
+	    ((flags & OBJPC_NOSYNC) != 0 &&
+	     (object->flags & OBJ_NEEDSYNC) == 0) ||
 	    object->resident_page_count == 0)
 		return (TRUE);
 
@@ -869,7 +875,9 @@ vm_object_page_clean(vm_object_t object, vm_ooffset_t start, vm_ooffset_t end,
 
 	tstart = OFF_TO_IDX(start);
 	tend = (end == 0) ? object->size : OFF_TO_IDX(end + PAGE_MASK);
-	clearobjflags = tstart == 0 && tend >= object->size;
+	clearobjflags = OBJ_NEEDSYNC;
+	if (tstart == 0 && tend >= object->size)
+		clearobjflags |= OBJ_MIGHTBEDIRTY;
 	res = TRUE;
 
 rescan:
@@ -887,7 +895,7 @@ rescan:
 				if ((flags & OBJPC_SYNC) != 0)
 					goto rescan;
 				else
-					clearobjflags = FALSE;
+					clearobjflags = 0;
 			}
 			np = vm_page_find_least(object, pi);
 			continue;
@@ -899,13 +907,13 @@ rescan:
 		    flags, &clearobjflags, &eio);
 		if (eio) {
 			res = FALSE;
-			clearobjflags = FALSE;
+			clearobjflags = 0;
 		}
 		if (object->generation != curgeneration) {
 			if ((flags & OBJPC_SYNC) != 0)
 				goto rescan;
 			else
-				clearobjflags = FALSE;
+				clearobjflags = 0;
 		}
 
 		/*
@@ -930,14 +938,13 @@ rescan:
 	VOP_FSYNC(vp, (pagerflags & VM_PAGER_PUT_SYNC) ? MNT_WAIT : 0);
 #endif
 
-	if (clearobjflags)
-		vm_object_clear_flag(object, OBJ_MIGHTBEDIRTY);
+	vm_object_clear_flag(object, clearobjflags);
 	return (res);
 }
 
 static int
 vm_object_page_collect_flush(vm_object_t object, vm_page_t p, int pagerflags,
-    int flags, boolean_t *clearobjflags, boolean_t *eio)
+    int flags, u_short *clearobjflags, boolean_t *eio)
 {
 	vm_page_t ma[vm_pageout_page_count], p_first, tp;
 	int count, i, mreq, runlen;
@@ -2129,7 +2136,7 @@ vm_object_coalesce(vm_object_t prev_object, vm_ooffset_t prev_offset,
 }
 
 void
-vm_object_set_writeable_dirty(vm_object_t object)
+vm_object_set_writeable_dirty(vm_object_t object, vm_page_t m)
 {
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
@@ -2141,6 +2148,8 @@ vm_object_set_writeable_dirty(vm_object_t object)
 		return;
 	}
 	object->generation++;
+	if ((m->oflags & VPO_NOSYNC) == 0)
+		vm_object_set_flag(object, OBJ_NEEDSYNC);
 	if ((object->flags & OBJ_MIGHTBEDIRTY) != 0)
 		return;
 	vm_object_set_flag(object, OBJ_MIGHTBEDIRTY);

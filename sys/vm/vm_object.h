@@ -181,6 +181,7 @@ struct vm_object {
  */
 #define	OBJ_FICTITIOUS	0x0001		/* (c) contains fictitious pages */
 #define	OBJ_UNMANAGED	0x0002		/* (c) contains unmanaged pages */
+#define	OBJ_NEEDSYNC	0x0004		/* may contain non-NOSYNC dirty pages */
 #define OBJ_DEAD	0x0008		/* dead objects (during rundown) */
 #define	OBJ_NOSPLIT	0x0010		/* dont split this object */
 #define	OBJ_UMTXDEAD	0x0020		/* umtx pshared was terminated */
@@ -300,7 +301,7 @@ void vm_object_collapse (vm_object_t);
 void vm_object_deallocate (vm_object_t);
 void vm_object_destroy (vm_object_t);
 void vm_object_terminate (vm_object_t);
-void vm_object_set_writeable_dirty (vm_object_t);
+void vm_object_set_writeable_dirty(vm_object_t, vm_page_t);
 void vm_object_init (void);
 void vm_object_madvise(vm_object_t, vm_pindex_t, vm_pindex_t, int);
 boolean_t vm_object_page_clean(vm_object_t object, vm_ooffset_t start,
