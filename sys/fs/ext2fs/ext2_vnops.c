@@ -1602,6 +1602,19 @@ bad:
 	return (error);
 }
 
+static void
+ext2_rbufdone(struct buf *bp, int ioflag)
+{
+
+	if ((ioflag & (IO_VMIO | IO_DIRECT)) != 0) {
+		bp->b_flags |= B_RELBUF;
+		if ((ioflag & IO_NOREUSE) != 0)
+			bp->b_flags |= B_NOREUSE;
+		brelse(bp);
+	} else
+		bqrelse(bp);
+}
+
 /*
  * Vnode op for reading.
  */
@@ -1726,25 +1739,7 @@ ext2_ind_read(struct vop_read_args *ap)
 			(int)xfersize, uio);
 		if (error)
 			break;
-
-		if (ioflag & (IO_VMIO|IO_DIRECT)) {
-			/*
-			 * If it's VMIO or direct I/O, then we don't
-			 * need the buf, mark it available for
-			 * freeing. If it's non-direct VMIO, the VM has
-			 * the data.
-			 */
-			bp->b_flags |= B_RELBUF;
-			brelse(bp);
-		} else {
-			/*
-			 * Otherwise let whoever
-			 * made the request take care of
-			 * freeing it. We just queue
-			 * it onto another list.
-			 */
-			bqrelse(bp);
-		}
+		ext2_rbufdone(bp, ioflag);
 	}
 
 	/* 
@@ -1753,14 +1748,8 @@ ext2_ind_read(struct vop_read_args *ap)
 	 * and on normal completion has not set a new value into it.
 	 * so it must have come from a 'break' statement
 	 */
-	if (bp != NULL) {
-		if (ioflag & (IO_VMIO|IO_DIRECT)) {
-			bp->b_flags |= B_RELBUF;
-			brelse(bp);
-		} else {
-			bqrelse(bp);
-		}
-	}
+	if (bp != NULL)
+		ext2_rbufdone(bp, ioflag);
 
 	if ((error == 0 || uio->uio_resid != orig_resid) &&
 	    (vp->v_mount->mnt_flag & (MNT_NOATIME | MNT_RDONLY)) == 0)
@@ -2018,8 +2007,10 @@ ext2_write(struct vop_write_args *ap)
 		if (error != 0 && (bp->b_flags & B_CACHE) == 0 &&
 		    fs->e2fs_bsize == xfersize)
 			vfs_bio_clrbuf(bp);
-		if (ioflag & (IO_VMIO|IO_DIRECT)) {
+		if ((ioflag & (IO_VMIO | IO_DIRECT)) != 0) {
 			bp->b_flags |= B_RELBUF;
+			if ((ioflag & IO_NOREUSE) != 0)
+				bp->b_flags |= B_NOREUSE;
 		}
 
 		/*
