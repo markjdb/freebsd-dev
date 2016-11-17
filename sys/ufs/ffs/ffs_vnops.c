@@ -457,6 +457,19 @@ ffs_lock(ap)
 #endif
 }
 
+static void
+ffs_rbufdone(struct buf *bp, int ioflag)
+{
+
+	if ((ioflag & (IO_VMIO | IO_DIRECT)) != 0 && LIST_EMPTY(&bp->b_dep)) {
+		bp->b_flags |= B_RELBUF;
+		if ((ioflag & IO_NOREUSE) != 0)
+			bp->b_flags |= B_NOREUSE;
+		brelse(bp);
+	} else
+		bqrelse(bp);
+}
+
 /*
  * Vnode op for reading.
  */
@@ -632,26 +645,7 @@ ffs_read(ap)
 		}
 		if (error)
 			break;
-
-		if ((ioflag & (IO_VMIO|IO_DIRECT)) &&
-		   (LIST_EMPTY(&bp->b_dep))) {
-			/*
-			 * If there are no dependencies, and it's VMIO,
-			 * then we don't need the buf, mark it available
-			 * for freeing.  For non-direct VMIO reads, the VM
-			 * has the data.
-			 */
-			bp->b_flags |= B_RELBUF;
-			brelse(bp);
-		} else {
-			/*
-			 * Otherwise let whoever
-			 * made the request take care of
-			 * freeing it. We just queue
-			 * it onto another list.
-			 */
-			bqrelse(bp);
-		}
+		ffs_rbufdone(bp, ioflag);
 	}
 
 	/*
@@ -660,15 +654,8 @@ ffs_read(ap)
 	 * and on normal completion has not set a new value into it.
 	 * so it must have come from a 'break' statement
 	 */
-	if (bp != NULL) {
-		if ((ioflag & (IO_VMIO|IO_DIRECT)) &&
-		   (LIST_EMPTY(&bp->b_dep))) {
-			bp->b_flags |= B_RELBUF;
-			brelse(bp);
-		} else {
-			bqrelse(bp);
-		}
-	}
+	if (bp != NULL)
+		ffs_rbufdone(bp, ioflag);
 
 	if ((error == 0 || uio->uio_resid != orig_resid) &&
 	    (vp->v_mount->mnt_flag & (MNT_NOATIME | MNT_RDONLY)) == 0 &&
@@ -827,9 +814,11 @@ ffs_write(ap)
 		if (error != 0 && (bp->b_flags & B_CACHE) == 0 &&
 		    fs->fs_bsize == xfersize)
 			vfs_bio_clrbuf(bp);
-		if ((ioflag & (IO_VMIO|IO_DIRECT)) &&
-		   (LIST_EMPTY(&bp->b_dep))) {
+		if ((ioflag & (IO_VMIO | IO_DIRECT)) != 0 &&
+		    LIST_EMPTY(&bp->b_dep)) {
 			bp->b_flags |= B_RELBUF;
+			if ((ioflag & IO_NOREUSE) != 0)
+				bp->b_flags |= B_NOREUSE;
 		}
 
 		/*
@@ -1004,26 +993,7 @@ ffs_extread(struct vnode *vp, struct uio *uio, int ioflag)
 					(int)xfersize, uio);
 		if (error)
 			break;
-
-		if ((ioflag & (IO_VMIO|IO_DIRECT)) &&
-		   (LIST_EMPTY(&bp->b_dep))) {
-			/*
-			 * If there are no dependencies, and it's VMIO,
-			 * then we don't need the buf, mark it available
-			 * for freeing.  For non-direct VMIO reads, the VM
-			 * has the data.
-			 */
-			bp->b_flags |= B_RELBUF;
-			brelse(bp);
-		} else {
-			/*
-			 * Otherwise let whoever
-			 * made the request take care of
-			 * freeing it. We just queue
-			 * it onto another list.
-			 */
-			bqrelse(bp);
-		}
+		ffs_rbufdone(bp, ioflag);
 	}
 
 	/*
@@ -1032,15 +1002,8 @@ ffs_extread(struct vnode *vp, struct uio *uio, int ioflag)
 	 * and on normal completion has not set a new value into it.
 	 * so it must have come from a 'break' statement
 	 */
-	if (bp != NULL) {
-		if ((ioflag & (IO_VMIO|IO_DIRECT)) &&
-		   (LIST_EMPTY(&bp->b_dep))) {
-			bp->b_flags |= B_RELBUF;
-			brelse(bp);
-		} else {
-			bqrelse(bp);
-		}
-	}
+	if (bp != NULL)
+		ffs_rbufdone(bp, ioflag);
 	return (error);
 }
 
@@ -1121,9 +1084,11 @@ ffs_extwrite(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *ucred)
 
 		error =
 		    uiomove((char *)bp->b_data + blkoffset, (int)xfersize, uio);
-		if ((ioflag & (IO_VMIO|IO_DIRECT)) &&
-		   (LIST_EMPTY(&bp->b_dep))) {
+		if ((ioflag & (IO_VMIO | IO_DIRECT)) != 0 &&
+		    LIST_EMPTY(&bp->b_dep)) {
 			bp->b_flags |= B_RELBUF;
+			if ((ioflag & IO_NOREUSE) != 0)
+				bp->b_flags |= B_NOREUSE;
 		}
 
 		/*
