@@ -457,19 +457,6 @@ ffs_lock(ap)
 #endif
 }
 
-static void
-ffs_rbufdone(struct buf *bp, int ioflag)
-{
-
-	if ((ioflag & (IO_VMIO | IO_DIRECT)) != 0 && LIST_EMPTY(&bp->b_dep)) {
-		bp->b_flags |= B_RELBUF;
-		if ((ioflag & IO_NOREUSE) != 0)
-			bp->b_flags |= B_NOREUSE;
-		brelse(bp);
-	} else
-		bqrelse(bp);
-}
-
 /*
  * Vnode op for reading.
  */
@@ -645,7 +632,7 @@ ffs_read(ap)
 		}
 		if (error)
 			break;
-		ffs_rbufdone(bp, ioflag);
+		vfs_bio_rbrelse(bp, ioflag);
 	}
 
 	/*
@@ -655,7 +642,7 @@ ffs_read(ap)
 	 * so it must have come from a 'break' statement
 	 */
 	if (bp != NULL)
-		ffs_rbufdone(bp, ioflag);
+		vfs_bio_rbrelse(bp, ioflag);
 
 	if ((error == 0 || uio->uio_resid != orig_resid) &&
 	    (vp->v_mount->mnt_flag & (MNT_NOATIME | MNT_RDONLY)) == 0 &&
@@ -993,7 +980,7 @@ ffs_extread(struct vnode *vp, struct uio *uio, int ioflag)
 					(int)xfersize, uio);
 		if (error)
 			break;
-		ffs_rbufdone(bp, ioflag);
+		vfs_bio_rbrelse(bp, ioflag);
 	}
 
 	/*
@@ -1003,7 +990,7 @@ ffs_extread(struct vnode *vp, struct uio *uio, int ioflag)
 	 * so it must have come from a 'break' statement
 	 */
 	if (bp != NULL)
-		ffs_rbufdone(bp, ioflag);
+		vfs_bio_rbrelse(bp, ioflag);
 	return (error);
 }
 

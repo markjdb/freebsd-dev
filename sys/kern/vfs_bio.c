@@ -4414,6 +4414,28 @@ vfs_bio_bzero_buf(struct buf *bp, int base, int size)
 }
 
 /*
+ * Release a buffer that was used for reading.  If it's VMIO or direct I/O,
+ * release the buffer pages to the VM, where they may be placed on a page queue
+ * (VMIO) or freed immediately (direct I/O).  Otherwise the buffer is released
+ * to the cache.
+ */
+void
+vfs_bio_rbrelse(struct buf *bp, int ioflag)
+{
+
+	KASSERT((ioflag & IO_NOREUSE) == 0 || (ioflag & IO_VMIO) != 0,
+	    ("buf %p non-VMIO noreuse", bp));
+
+	if ((ioflag & (IO_VMIO | IO_DIRECT)) != 0 && LIST_EMPTY(&bp->b_dep)) {
+		bp->b_flags |= B_RELBUF;
+		if ((ioflag & IO_NOREUSE) != 0)
+			bp->b_flags |= B_NOREUSE;
+		brelse(bp);
+	} else
+		bqrelse(bp);
+}
+
+/*
  * vm_hold_load_pages and vm_hold_free_pages get pages into
  * a buffers address space.  The pages are anonymous and are
  * not associated with a file object.
