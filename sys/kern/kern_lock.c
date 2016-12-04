@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/lockmgr.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/sdt.h>
 #include <sys/sleepqueue.h>
 #ifdef DEBUG_LOCKS
 #include <sys/stack.h>
@@ -243,6 +244,21 @@ lockmgr_xholder(const struct lock *lk)
 	return ((x & LK_SHARE) ? NULL : (struct thread *)LK_HOLDER(x));
 }
 
+static uint64_t
+lockmgr_nsecs(void)
+{
+	struct bintime bt;
+	uint64_t ns;
+
+	binuptime(&bt);
+	ns = bt.sec * (uint64_t)1000000000;
+	ns += ((uint64_t)1000000000 * (uint32_t)(bt.frac >> 32)) >> 32;
+	return (ns);
+}
+
+SDT_PROVIDER_DECLARE(vfs);
+SDT_PROBE_DEFINE2(vfs, , lockmgr, sleep, "struct lock *", "int64_t");
+
 /*
  * It assumes sleepq_lock held and returns with this one unheld.
  * It also assumes the generic interlock is sane and previously checked.
@@ -256,11 +272,13 @@ sleeplk(struct lock *lk, u_int flags, struct lock_object *ilk,
 	GIANT_DECLARE;
 	struct lock_class *class;
 	int catch, error;
+	int64_t sleeptime;
 
 	class = (flags & LK_INTERLOCK) ? LOCK_CLASS(ilk) : NULL;
 	catch = pri & PCATCH;
 	pri &= PRIMASK;
 	error = 0;
+	sleeptime = 0;
 
 	LOCK_LOG3(lk, "%s: %p blocking on the %s sleepqueue", __func__, lk,
 	    (queue == SQ_EXCLUSIVE_QUEUE) ? "exclusive" : "shared");
@@ -275,6 +293,8 @@ sleeplk(struct lock *lk, u_int flags, struct lock_object *ilk,
 	if ((flags & LK_TIMELOCK) && timo)
 		sleepq_set_timeout(&lk->lock_object, timo);
 
+	sleeptime -= lockmgr_nsecs();
+
 	/*
 	 * Decisional switch for real sleeping.
 	 */
@@ -286,6 +306,8 @@ sleeplk(struct lock *lk, u_int flags, struct lock_object *ilk,
 		error = sleepq_wait_sig(&lk->lock_object, pri);
 	else
 		sleepq_wait(&lk->lock_object, pri);
+	sleeptime += lockmgr_nsecs();
+	SDT_PROBE2(vfs, , lockmgr, sleep, lk, sleeptime);
 	GIANT_RESTORE();
 	if ((flags & LK_SLEEPFAIL) && error == 0)
 		error = ENOLCK;
