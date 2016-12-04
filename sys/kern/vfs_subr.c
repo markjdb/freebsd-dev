@@ -115,6 +115,7 @@ static void	vfs_knl_assert_locked(void *arg);
 static void	vfs_knl_assert_unlocked(void *arg);
 static void	vnlru_return_batches(struct vfsops *mnt_op);
 static void	destroy_vpollinfo(struct vpollinfo *vi);
+static int	want_inactive(struct vnode *vp, struct thread *td);
 
 /*
  * Number of vnodes in existence.  Increased whenever getnewvnode()
@@ -132,6 +133,10 @@ SYSCTL_COUNTER_U64(_vfs, OID_AUTO, vnodes_created, CTLFLAG_RD, &vnodes_created,
 static u_long mnt_free_list_batch = 128;
 SYSCTL_ULONG(_vfs, OID_AUTO, mnt_free_list_batch, CTLFLAG_RW,
     &mnt_free_list_batch, 0, "Limit of vnodes held on mnt's free list");
+
+static u_int __read_mostly	 vfs_optional_inactive;
+SYSCTL_UINT(_vfs, OID_AUTO, vfs_optional_inactive, CTLFLAG_RW, &vfs_optional_inactive,
+    0, "is inactive optional?");
 
 /*
  * Conversion tables for conversion from vnode types to inode formats
@@ -2752,6 +2757,15 @@ vputx(struct vnode *vp, int func)
 
 	CTR2(KTR_VFS, "%s: return vnode %p to the freelist", __func__, vp);
 
+	if (vfs_optional_inactive) {
+		if (!want_inactive(vp, curthread)) {
+			if (func == VPUTX_VPUT)
+				VOP_UNLOCK(vp, 0);
+			vdropl(vp);
+			return;
+		}
+	}
+
 	/*
 	 * We must call VOP_INACTIVE with the node locked. Mark
 	 * as VI_DOINGINACT to avoid recursion.
@@ -2998,6 +3012,26 @@ _vdrop(struct vnode *vp, bool locked)
 	vp->v_vflag = 0;
 	bo->bo_flag = 0;
 	uma_zfree(vnode_zone, vp);
+}
+
+static int
+want_inactive(struct vnode *vp, struct thread *td)
+{
+	struct vm_object *obj;
+	int want = 0;
+
+	obj = vp->v_object;
+	if (obj != NULL && (obj->flags & OBJ_MIGHTBEDIRTY) != 0) {
+		want = 1;
+		goto exit;
+	}
+
+	want = 1;
+	if (vp->v_op->vop_want != NULL)
+		want = VOP_WANT(vp, td, VFS_WANT_INACTIVE);
+
+exit:
+	return (want);
 }
 
 /*

@@ -5342,6 +5342,52 @@ zfs_freebsd_link(ap)
 	return (zfs_link(tdvp, vp, cnp->cn_nameptr, cnp->cn_cred, NULL, 0));
 }
 
+static inline int
+_zfs_want_inactive(struct vnode *vp)
+{
+	znode_t	*zp = VTOZ(vp);
+	int want = 0;
+
+	if (zp->z_sa_hdl == NULL || zp->z_unlinked ||  zp->z_atime_dirty)
+		want = 1;
+
+	return (want);
+}
+
+static inline int
+_zfs_want_close(struct vnode *vp)
+{
+	int want = 0;
+
+	if (_zfs_want_inactive(vp))
+		want = 1;
+
+	return (want);
+}
+
+static int
+zfs_freebsd_want(ap)
+	struct vop_want_args /* {
+		struct vnode *a_vp;
+		struct thread *a_td;
+		int a_op;
+	} */ *ap;
+{
+	vnode_t *vp = ap->a_vp;
+	int want = 0;
+
+	switch (ap->a_op) {
+	case VFS_WANT_INACTIVE:
+		want = _zfs_want_inactive(vp);
+		break;
+	case VFS_WANT_CLOSE:
+		want = _zfs_want_close(vp);
+		break;
+	}
+
+	return (want);
+}
+
 static int
 zfs_freebsd_inactive(ap)
 	struct vop_inactive_args /* {
@@ -6000,6 +6046,7 @@ struct vop_vector zfs_shareops;
 
 struct vop_vector zfs_vnodeops = {
 	.vop_default =		&default_vnodeops,
+	.vop_want =		zfs_freebsd_want,
 	.vop_inactive =		zfs_freebsd_inactive,
 	.vop_reclaim =		zfs_freebsd_reclaim,
 	.vop_access =		zfs_freebsd_access,

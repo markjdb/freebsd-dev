@@ -56,6 +56,7 @@
 enum vtype	{ VNON, VREG, VDIR, VBLK, VCHR, VLNK, VSOCK, VFIFO, VBAD,
 		  VMARKER };
 
+enum v_want_op	{ VFS_WANT_INACTIVE, VFS_WANT_CLOSE };
 /*
  * Each underlying filesystem allocates its own private area and hangs
  * it from v_data.  If non-null, this area is freed in getnewvnode().

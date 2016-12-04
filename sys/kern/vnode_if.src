@@ -350,6 +350,13 @@ vop_readlink {
 	IN struct ucred *cred;
 };
 
+%% vop_want	vp	- - -
+
+vop_want {
+	IN struct vnode *vp;
+	IN struct thread *td;
+	IN int op;
+};
 
 %% inactive	vp	E E E
 

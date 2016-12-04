@@ -304,6 +304,55 @@ tmpfs_open(struct vop_open_args *v)
 }
 
 static int
+_tmpfs_want_inactive(struct vnode *vp)
+{
+	struct tmpfs_node *node;
+	struct vm_object *obj;
+
+	node = VP_TO_TMPFS_NODE(vp);
+	if (node->tn_links == 0)
+		return (1);
+	if (vp->v_type != VREG)
+		return (0);
+	obj = vp->v_object;
+	return ((obj->flags & OBJ_TMPFS_DIRTY) != 0);
+}
+
+static int
+_tmpfs_want_close(struct vnode *vp)
+{
+	struct tmpfs_node *node;
+
+	if (_tmpfs_want_inactive(vp))
+		return (1);
+
+	node = VP_TO_TMPFS_NODE(vp);
+	if ((node->tn_status & (TMPFS_NODE_ACCESSED | TMPFS_NODE_MODIFIED |
+	    TMPFS_NODE_CHANGED)) == 0)
+		return (0);
+
+	return (1);
+}
+
+static int
+tmpfs_want(struct vop_want_args *v)
+{
+	struct vnode *vp = v->a_vp;
+	int want = 0;
+
+	switch (v->a_op) {
+	case VFS_WANT_INACTIVE:
+		want = _tmpfs_want_inactive(vp);
+		break;
+	case VFS_WANT_CLOSE:
+		want = _tmpfs_want_close(vp);
+		break;
+	}
+
+	return (want);
+}
+
+static int
 tmpfs_close(struct vop_close_args *v)
 {
 	struct vnode *vp = v->a_vp;
@@ -1553,6 +1602,7 @@ restart:
  */
 struct vop_vector tmpfs_vnodeop_entries = {
 	.vop_default =			&default_vnodeops,
+	.vop_want =			tmpfs_want,
 	.vop_lookup =			vfs_cache_lookup,
 	.vop_cachedlookup =		tmpfs_cached_lookup,
 	.vop_create =			tmpfs_create,
