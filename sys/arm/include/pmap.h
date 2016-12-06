@@ -30,6 +30,7 @@
 #ifndef _MACHINE_PMAP_H_
 #define _MACHINE_PMAP_H_
 
+#include <sys/systm.h>
 #if __ARM_ARCH >= 6
 #include <machine/pmap-v6.h>
 #else
@@ -52,6 +53,12 @@ void pmap_page_set_memattr(vm_page_t, vm_memattr_t);
 
 void *pmap_mapdev(vm_paddr_t, vm_size_t);
 void pmap_unmapdev(vm_offset_t, vm_size_t);
+
+static inline void *
+pmap_mapdev_attr(vm_paddr_t addr, vm_size_t size, int attr)
+{
+	panic("%s is not implemented yet!\n", __func__);
+}
 
 struct pcb;
 void pmap_set_pcb_pagedir(pmap_t, struct pcb *);
