@@ -1,8 +1,10 @@
-/*
- * Copyright (c) 2013 EMC Corp.
- * Copyright (c) 2011 Jeffrey Roberson <jeff@freebsd.org>
- * Copyright (c) 2008 Mayur Shardul <mayur.shardul@gmail.com>
+/*-
+ * Copyright (c) 2016 Ruslan Bukin <br@bsdpad.com>
  * All rights reserved.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory under DARPA/AFRL contract FA8750-10-C-0237
+ * ("CTSRD"), as part of the DARPA CRASH research programme.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,22 +30,7 @@
  * $FreeBSD$
  */
 
-#ifndef _VM_RADIX_H_
-#define _VM_RADIX_H_
-
-#include <vm/_vm_radix.h>
-
-#ifdef _KERNEL
-
-void		vm_radix_init(void);
-int		vm_radix_insert(struct vm_radix *rtree, vm_page_t page);
-boolean_t	vm_radix_is_singleton(struct vm_radix *rtree);
-vm_page_t	vm_radix_lookup(struct vm_radix *rtree, vm_pindex_t index);
-vm_page_t	vm_radix_lookup_ge(struct vm_radix *rtree, vm_pindex_t index);
-vm_page_t	vm_radix_lookup_le(struct vm_radix *rtree, vm_pindex_t index);
-void		vm_radix_reclaim_allnodes(struct vm_radix *rtree);
-vm_page_t	vm_radix_remove(struct vm_radix *rtree, vm_pindex_t index);
-vm_page_t	vm_radix_replace(struct vm_radix *rtree, vm_page_t newpage);
-
-#endif /* _KERNEL */
-#endif /* !_VM_RADIX_H_ */
+#define	READ4(_sc, _reg)	\
+	bus_space_read_4(_sc->bst, _sc->bsh, _reg)
+#define	WRITE4(_sc, _reg, _val)	\
+	bus_space_write_4(_sc->bst, _sc->bsh, _reg, _val)
