@@ -69,6 +69,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/queue.h>
 #include <sys/malloc.h>
 #include <sys/ktr.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/sysctl.h>
 #include <sys/mutex.h>
@@ -239,6 +240,8 @@ static void zone_dtor(void *, int, void *);
 static int zero_init(void *, int, int);
 static void keg_small_init(uma_keg_t keg);
 static void keg_large_init(uma_keg_t keg);
+static void zone_cache_bucket(uma_zone_t zone, uma_bucket_t bucket);
+static void zone_remove_bucket(uma_zone_t zone, uma_bucket_t bucket);
 static void zone_foreach(void (*zfunc)(uma_zone_t));
 static void zone_timeout(uma_zone_t zone);
 static int hash_alloc(struct uma_hash *);
@@ -407,6 +410,29 @@ bucket_free(uma_zone_t zone, uma_bucket_t bucket, void *udata)
 		udata = (void *)(uintptr_t)zone->uz_flags;
 	ubz = bucket_zone_lookup(bucket->ub_entries);
 	uma_zfree_arg(ubz->ubz_zone, bucket, udata);
+}
+
+/*
+ * Add a full bucket of items to the zone's bucket cache.
+ */
+static inline void
+zone_cache_bucket(uma_zone_t zone, uma_bucket_t bucket)
+{
+
+	ZONE_LOCK_ASSERT(zone);
+	zone->uz_bktcount += bucket->ub_cnt;
+	LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+}
+
+/*
+ * Remove a bucket from the zone's bucket cache.
+ */
+static inline void
+zone_remove_bucket(uma_zone_t zone, uma_bucket_t bucket)
+{
+
+	zone->uz_bktcount -= bucket->ub_cnt;
+	LIST_REMOVE(bucket, ub_link);
 }
 
 static void
@@ -726,16 +752,14 @@ cache_drain_safe_cpu(uma_zone_t zone)
 	cache = &zone->uz_cpu[curcpu];
 	if (cache->uc_allocbucket) {
 		if (cache->uc_allocbucket->ub_cnt != 0)
-			LIST_INSERT_HEAD(&zone->uz_buckets,
-			    cache->uc_allocbucket, ub_link);
+			zone_cache_bucket(zone, cache->uc_allocbucket);
 		else
 			b1 = cache->uc_allocbucket;
 		cache->uc_allocbucket = NULL;
 	}
 	if (cache->uc_freebucket) {
 		if (cache->uc_freebucket->ub_cnt != 0)
-			LIST_INSERT_HEAD(&zone->uz_buckets,
-			    cache->uc_freebucket, ub_link);
+			zone_cache_bucket(zone, cache->uc_freebucket);
 		else
 			b2 = cache->uc_freebucket;
 		cache->uc_freebucket = NULL;
@@ -796,7 +820,7 @@ bucket_cache_drain(uma_zone_t zone)
 	 * cpu (alloc/free).
 	 */
 	while ((bucket = LIST_FIRST(&zone->uz_buckets)) != NULL) {
-		LIST_REMOVE(bucket, ub_link);
+		zone_remove_bucket(zone, bucket);
 		ZONE_UNLOCK(zone);
 		bucket_drain(zone, bucket);
 		bucket_free(zone, bucket, NULL);
@@ -1550,6 +1574,9 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 
 	ZONE_LOCK_INIT(zone, (arg->flags & UMA_ZONE_MTXCLASS));
 
+	LIST_INIT(&zone->uz_buckets);
+	zone->uz_bktmax = ULONG_MAX;
+
 	/*
 	 * This is a pure cache zone, no kegs.
 	 */
@@ -2226,7 +2253,7 @@ zalloc_start:
 		KASSERT(bucket->ub_cnt != 0,
 		    ("uma_zalloc_arg: Returning an empty bucket."));
 
-		LIST_REMOVE(bucket, ub_link);
+		zone_remove_bucket(zone, bucket);
 		cache->uc_allocbucket = bucket;
 		ZONE_UNLOCK(zone);
 		goto zalloc_start;
@@ -2262,8 +2289,8 @@ zalloc_start:
 			cache->uc_allocbucket = bucket;
 			ZONE_UNLOCK(zone);
 			goto zalloc_start;
-		} else if ((zone->uz_flags & UMA_ZONE_NOBUCKETCACHE) == 0) {
-			LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+		} else if (zone->uz_bktcount < zone->uz_bktmax) {
+			zone_cache_bucket(zone, bucket);
 			ZONE_UNLOCK(zone);
 			goto zalloc_start;
 		} else {
@@ -2764,8 +2791,8 @@ zfree_start:
 		/* ub_cnt is pointing to the last free item */
 		KASSERT(bucket->ub_cnt != 0,
 		    ("uma_zfree: Attempting to insert an empty bucket onto the full list.\n"));
-		if ((zone->uz_flags & UMA_ZONE_NOBUCKETCACHE) == 0) {
-			LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+		if (zone->uz_bktcount < zone->uz_bktmax) {
+			zone_cache_bucket(zone, bucket);
 			ZONE_UNLOCK(zone);
 		} else {
 			/*
@@ -3083,6 +3110,15 @@ uma_zone_set_allocf(uma_zone_t zone, uma_alloc allocf)
 	KEG_LOCK(keg);
 	keg->uk_allocf = allocf;
 	KEG_UNLOCK(keg);
+}
+
+void
+uma_zone_set_maxcache(uma_zone_t zone, int maxcache)
+{
+
+	ZONE_LOCK(zone);
+	zone->uz_bktmax = maxcache;
+	ZONE_UNLOCK(zone);
 }
 
 /* See uma.h */

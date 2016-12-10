@@ -274,6 +274,8 @@ struct uma_zone {
 
 	LIST_ENTRY(uma_zone)	uz_link;	/* List of all zones in keg */
 	LIST_HEAD(,uma_bucket)	uz_buckets;	/* full buckets */
+	u_long			uz_bktcount;	/* Items in bucket cache */
+	u_long			uz_bktmax;	/* Maximum bucket cache size */
 
 	LIST_HEAD(,uma_klink)	uz_kegs;	/* List of kegs. */
 	struct uma_klink	uz_klink;	/* klink for first keg. */
@@ -369,6 +371,7 @@ void uma_large_free(uma_slab_t slab);
 #define	ZONE_LOCK(z)	mtx_lock((z)->uz_lockptr)
 #define	ZONE_TRYLOCK(z)	mtx_trylock((z)->uz_lockptr)
 #define	ZONE_UNLOCK(z)	mtx_unlock((z)->uz_lockptr)
+#define	ZONE_LOCK_ASSERT(z)	mtx_assert((z)->uz_lockptr, MA_OWNED)
 #define	ZONE_LOCK_FINI(z)	mtx_destroy(&(z)->uz_lock)
 
 /*

@@ -190,9 +190,14 @@ SYSINIT(vm_page, SI_SUB_VM, SI_ORDER_SECOND, vm_page_init_fakepg, NULL);
 static void
 vm_page_init_cache_zones(void *dummy __unused)
 {
-	int pind;
+	int maxcache, pind;
 
-	for (pind = 0; pind < VM_NFREEPOOL; pind++)
+	maxcache = 0;
+	TUNABLE_INT_FETCH("vm.cache_zone_max", &maxcache);
+	maxcache *= mp_ncpus;
+	printf("%s: setting cache limit of %d\n", __func__, maxcache);
+
+	for (pind = 0; pind < VM_NFREEPOOL; pind++) {
 		/*
 		 * XXX it's rather silly that cache zones use the item size to
 		 * size buckets..
@@ -200,7 +205,9 @@ vm_page_init_cache_zones(void *dummy __unused)
 		cachepg_zones[pind] = uma_zcache_create("cachepg",
 		    sizeof(struct vm_page), NULL, NULL, NULL, NULL,
 		    vm_page_import, vm_page_release, (void *)(uintptr_t)pind,
-		    UMA_ZONE_NOBUCKETCACHE | UMA_ZONE_VM);
+		    UMA_ZONE_VM);
+		uma_zone_set_maxcache(cachepg_zones[pind], maxcache);
+	}
 }
 SYSINIT(vm_page2, SI_SUB_VM_CONF, SI_ORDER_ANY, vm_page_init_cache_zones, NULL);
 
