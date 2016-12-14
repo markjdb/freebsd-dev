@@ -52,13 +52,13 @@ country_set()
 	# Regdomain/country cannot be applied while interface is running
 	iface_up=$( ifconfig -lu | grep -w "$WLAN_IFACE" )
 	[ "$iface_up" ] && ifconfig "$WLAN_IFACE" down
-	error_str=$( ifconfig "$WLAN_IFACE" $ifconfig_args 2>&1 |
-		sed -e 's/ifconfig: //' )
-	if [ "$iface_up" ]; then
-		# Restart wpa_supplicant(8) (should not fail).
-		wpa_supplicant -B -i "$WLAN_IFACE" -c \
-			"$BSDINSTALL_TMPETC/wpa_supplicant.conf"
-	fi
+	f_eval_catch -dk error_str wlanconfig ifconfig "ifconfig %s %s" \
+		"$WLAN_IFACE" "$ifconfig_args"
+	error_str="${error_str#ifconfig: }"
+	# Restart wpa_supplicant(8) (should not fail).
+	[ "$iface_up" ] && f_eval_catch -d wlanconfig wpa_supplicant \
+		'wpa_supplicant -B -i "%s" -c "%s/wpa_supplicant.conf"' \
+		"$WLAN_IFACE" "$BSDINSTALL_TMPETC"
 	if [ "$error_str" ]; then
 		$DIALOG \
 			--title "$msg_error" \
@@ -67,12 +67,8 @@ country_set()
 			--no-label Ignore \
 			--yesno \
 			"Error while applying chosen settings ($error_str)" \
-			0 0
-		if [ $? -eq $DIALOG_OK ]; then
-			return $FAILURE # Restart
-		else
-			return $SUCCESS # Skip
-		fi
+			0 0 || return $SUCCESS # Skip
+		return $FAILURE # Restart
 	else
 		awk 'sub(/^\t\t/,"")||1' \
 			> "$BSDINSTALL_TMPETC/rc.conf.net.wlan" <<-EOF
@@ -85,7 +81,7 @@ country_set()
 
 dialog_country_select()
 {
-	local input regdomains countries regdomain country
+	local input regdomains countries regdomain country prompt
 	local no_default="<not selected>"
 	local default_regdomain="${1:-$no_default}"
 	local default_country="${2:-$no_default}"
@@ -94,46 +90,60 @@ dialog_country_select()
 	# Parse available countries/regdomains
 	#
 	input=$( ifconfig "$WLAN_IFACE" list countries | sed -e 's/DEBUG//gi' )
-	regdomains=$( echo $input | sed -e 's/.*domains://' | tr ' ' '\n' |
-		sort | tr '\n' ' ' )
-	countries=$( echo $input | awk '{
-		sub(/Country codes:/, "")
-		sub(/Regulatory.*/, "")
-		for (i = 1; i <= NF; i++) {
-			printf "%s", $i
-			if ($i ~ /[[:lower:]]/)
-				printf $(i+1) ~ /[[:lower:]]/ ? "\\\\\\ " : "\n"
-			else
-				printf " "
+	regdomains=$( echo "$input" | awk '
+		sub(/.*domains:/, ""), /[^[:alnum:][[:space:]]/ {
+			n = split($0, domains)
+			for (i = 1; i <= n; i++)
+				printf "'\''%s'\'' '\'\''", domains[i]
 		}
-	}' | sort -k 2 | tr '\n' ' ' )
+	' | sort )
+	countries=$( echo "$input" | awk '
+		sub(/Country codes:/, ""), sub(/Regulatory.*/, "") {
+			while (match($0, /[[:upper:]][[:upper:][:digit:]] /)) {
+				country = substr($0, RSTART)
+				sub(/ [[:upper:]][[:upper:][:digit:]].*/, "", country)
+				code = substr(country, 1, 2)
+				desc = substr(country, 4)
+				sub(/[[:space:]]*$/, "", desc)
+				printf "'\''%s'\'' '\''%s'\''\n", code, desc
+				$0 = substr($0, RSTART + RLENGTH)
+			}
+		}
+	' | sort )
 
 	f_dialog_title "Regdomain selection"
-	f_dialog_menu_size height width rows "$DIALOG_TITLE" \
-		"$DIALOG_BACKTITLE" "Select your regdomain." "" $regdomains
-	regdomain=$( sh -c "$DIALOG \
-		--title \"$DIALOG_TITLE\" \
-		--backtitle \"$DIALOG_BACKTITLE\" \
-		--cancel-label \"$msg_skip\" \
-		--default-item \"$default_regdomain\" \
-		--no-items \
-		--stdout \
-		--menu \"Select your regdomain.\" \
-		$height $width $rows $regdomains"
+	prompt="Select your regdomain."
+	eval f_dialog_menu_size height width rows \
+		\"\$DIALOG_TITLE\" \"\$DIALOG_BACKTITLE\" \
+		\"\$prompt\" \"\" $regdomains
+	regdomain=$( eval $DIALOG \
+		--title \"\$DIALOG_TITLE\"             \
+		--backtitle \"\$DIALOG_BACKTITLE\"     \
+		--cancel-label \"\$msg_skip\"          \
+		--default-item \"\$default_regdomain\" \
+		--menu \"\$prompt\"                    \
+		$height $width $rows                   \
+		$regdomains                            \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 	)
+	f_dialog_data_sanitize regdomain
 
 	f_dialog_title "Country selection"
-	f_dialog_menu_size height width rows "$DIALOG_TITLE" \
-		"$DIALOG_BACKTITLE" "Select your country." "" $countries
-	country=$( sh -c "$DIALOG \
-		--title \"$DIALOG_TITLE\" \
-		--backtitle \"$DIALOG_BACKTITLE\" \
-		--cancel-label \"$msg_skip\" \
-		--default-item \"$default_country\" \
-		--stdout \
-		--menu \"Select your country.\" \
-		$height $width $rows $countries"
+	prompt="Select your country."
+	eval f_dialog_menu_size height width rows \
+		\"\$DIALOG_TITLE\" \"\$DIALOG_BACKTITLE\" \
+		\"\$prompt\" \"\" $countries
+	country=$( eval $DIALOG \
+		--title \"\$DIALOG_TITLE\"           \
+		--backtitle \"\$DIALOG_BACKTITLE\"   \
+		--cancel-label \"\$msg_skip\"        \
+		--default-item \"\$default_country\" \
+		--menu \"\$prompt\"                  \
+		$height $width $rows                 \
+		$countries                           \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 	)
+	f_dialog_data_sanitize country
 
 	country_set "$regdomain" "$country"
 }
@@ -155,20 +165,18 @@ EOF
 # Try to reach wpa_supplicant. If it isn't running and we can modify the
 # existing system, start it. Otherwise, fail.
 #
-(wpa_cli ping >/dev/null 2>/dev/null || ([ "$BSDINSTALL_CONFIGCURRENT" ] &&
-	wpa_supplicant -B -i $1 -c "$BSDINSTALL_TMPETC/wpa_supplicant.conf")) ||
-	($DIALOG --backtitle "$DIALOG_BACKTITLE" --title "$msg_error" --msgbox \
-	"Could not start wpa_supplicant!" 0 0; exit 1) || exit 1
+if ! f_eval_catch -d wlanconfig wpa_cli "wpa_cli ping"; then
+	if [ ! "$BSDINSTALL_CONFIGCURRENT" ]; then
+		f_show_err "Wireless cannot be configured without %s" \
+		           "making changes to the local system!"
+		exit 1
+	fi
+	f_eval_catch wlanconfig wpa_supplicant \
+		'wpa_supplicant -B -i "%s" -c "%s/wpa_supplicant.conf"' \
+		"$1" "$BSDINSTALL_TMPETC" || exit 1
 
-# See if we succeeded
-wpa_cli ping >/dev/null 2>/dev/null
-if [ $? -ne 0 -a ! "$BSDINSTALL_CONFIGCURRENT" ]; then
-	$DIALOG \
-		--title "$msg_error" \
-		--backtitle "$DIALOG_BACKTITLE" \
-		--msgbox "Wireless cannot be configured without making changes to the local system!" \
-		0 0
-	exit 1
+	# See if we succeeded
+	f_eval_catch wlanconfig wpa_cli "wpa_cli ping" || exit 1
 fi
 
 #
@@ -177,82 +185,76 @@ fi
 #
 if [ "$BSDINSTALL_CONFIGCURRENT" ]; then
 	# Get current country/regdomain for selected interface
-	WLAN_IFACE=$( wpa_cli ifname | tail -1 )
-	INPUT=$( ifconfig "$WLAN_IFACE" list regdomain | head -1 )
-	DEF_REGDOMAIN=$( echo $INPUT | cut -w -f 2 )
-	DEF_COUNTRY=$( echo $INPUT | cut -w -f 4 )
+	WLAN_IFACE=$( wpa_cli ifname | tail -n 1 )
+	INPUT=$( ifconfig "$WLAN_IFACE" list regdomain | head -n 1 )
+	DEF_REGDOMAIN=$( echo "$INPUT" | cut -w -f 2 )
+	DEF_COUNTRY=$( echo "$INPUT" | cut -w -f 4 )
 	[ "$DEF_REGDOMAIN" = 0 ] && DEF_REGDOMAIN="<not selected>"
 	[ "$DEF_COUNTRY" = 0 ] && DEF_COUNTRY="<not selected>"
 	f_dialog_title "Regdomain/country"
-	$DIALOG \
-		--title "$DIALOG_TITLE" \
-		--backtitle "$DIALOG_BACKTITLE" \
-		--yesno "Change regdomain/country (now $DEF_REGDOMAIN/$DEF_COUNTRY)?" \
-		0 0
-	if [ $? -eq 0 ]; then
-		while :; do
-			dialog_country_select "$DEF_REGDOMAIN" "$DEF_COUNTRY"
-			if [ $? -eq $SUCCESS ]; then
-				break
-			fi
-		done
+	if f_yesno "Change regdomain/country ($DEF_REGDOMAIN/$DEF_COUNTRY)?"
+	then
+		while ! dialog_country_select "$DEF_REGDOMAIN" "$DEF_COUNTRY"
+		do :; done
 	fi
 fi
 
 while :; do
 	SCANSSID=0
-	output=$( wpa_cli scan 2>&1 )
-	f_dprintf "%s" "$output"
+	f_eval_catch -d wlanconfig wpa_cli "wpa_cli scan"
 	f_dialog_title "Scanning"
-	$DIALOG \
-		--title "$DIALOG_TITLE" \
-		--backtitle "$DIALOG_BACKTITLE" \
-		--ok-label "$msg_skip" \
-		--pause "Waiting 5 seconds to scan for wireless networks..." \
-		9 40 5 || exit 1
+	f_dialog_pause "Waiting 5 seconds to scan for wireless networks..." 5 ||
+		exit 1
 
-	SCAN_RESULTS=$( wpa_cli scan_results )
+	f_eval_catch -dk SCAN_RESULTS wlanconfig wpa_cli "wpa_cli scan_results"
 	NETWORKS=$( echo "$SCAN_RESULTS" | awk -F '\t' '
-		/..:..:..:..:..:../ && $5 { printf("\"%s\"\t%s\n", $5, $4) }
+		/..:..:..:..:..:../ && $5 { printf "\"%s\"\t\"%s\"\n", $5, $4 }
 	' | sort | uniq )
 
 	if [ ! "$NETWORKS" ]; then
 		f_dialog_title "$msg_error"
-		$DIALOG \
-			--title "$DIALOG_TITLE" \
-			--backtitle "$DIALOG_BACKTITLE" \
-			--yesno "No wireless networks were found. Rescan?" \
-			0 0 && continue
+		f_yesno "No wireless networks were found. Rescan?" && continue
 		exit 1
 	fi
 
 	f_dialog_title "Network Selection"
-	NETWORK=$( sh -c "$DIALOG \
-		--title \"$DIALOG_TITLE\" \
-		--backtitle \"$DIALOG_BACKTITLE\" \
-		--extra-button \
-		--extra-label \"Rescan\" \
-		--menu \"Select a wireless network to connect to.\" \
-		0 0 0 \
-		$( echo $NETWORKS | tr '\n' ' ' )" \
+	prompt="Select a wireless network to connect to."
+	f_dialog_menu_size height width rows "$DIALOG_TITLE" \
+		"$DIALOG_BACKTITLE" "$prompt" "" $menu_list
+	NETWORK=$( eval $DIALOG \
+		--title \"\$DIALOG_TITLE\"         \
+		--backtitle \"\$DIALOG_BACKTITLE\" \
+		--extra-button                     \
+		--extra-label \"Rescan\"           \
+		--menu \"\$prompt\"                \
+		$height $width $rows               \
+		$NETWORKS                          \
 		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 	)
-	case $? in
+	retval=$?
+	f_dialog_data_sanitize NETWORK
+	case $retval in
 	$DIALOG_OK) break ;;
 	$DIALOG_CANCEL)
-		# here we ask if the user wants to select the network manually
+		# Ask if the user wants to select network manually
 		f_dialog_title "Network Selection"
-		f_dialog_yesno "Do you want to select the network manually?" || exit 1
+		f_yesno "Do you want to select the network manually?" || exit 1
 		f_dialog_input NETWORK "Enter SSID" || exit 1
-		ENCRYPTION=$( $DIALOG \
-			--title "$DIALOG_TITLE" \
-			--backtitle "$DIALOG_BACKTITLE" \
-			--menu "Select encryption type" \
-			0 0 0 \
-			"1 WPA/WPA2 PSK" "" \
-			"2 WPA/WPA2 EAP" "" \
-			"3 WEP" "" \
-			"0 None" "" \
+		prompt="Select encryption type"
+		menu_list="
+			'1 WPA/WPA2 PSK' ''
+			'2 WPA/WPA2 EAP' ''
+			'3 WEP' ''
+			'0 None' ''
+		" # END-QUOTE
+		eval f_dialog_menu_size height width rows \"\$DIALOG_TITLE\" \
+			\"\$DIALOG_BACKTITLE\" \"\$prompt\" \"\" $menu_list
+		ENCRYPTION=$( eval $DIALOG \
+			--title \"\$DIALOG_TITLE\"         \
+			--backtitle \"\$DIALOG_BACKTITLE\" \
+			--menu \"\$prompt\"                \
+			$height $width $rows               \
+			$menu_list                         \
 			2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 		) || exit 1
 		SCANSSID=1
@@ -264,17 +266,17 @@ while :; do
 done
 
 [ "$ENCRYPTION" ] || ENCRYPTION=$( echo "$NETWORKS" |
-	awk -F '\t' "/^\"$NETWORK\"\t/ { printf(\"%s\n\", \\\$2 ) }" )
+	awk -F '\t' "/^\"$NETWORK\"\t/ { print \$2 }" )
 
-if echo $ENCRYPTION | grep -q 'PSK'; then
+if echo "$ENCRYPTION" | grep -q PSK; then
 	PASS=$( $DIALOG \
-		--title "WPA Setup" \
-		--backtitle "$DIALOG_BACKTITLE" \
-		--insecure \
-		--mixedform "" \
-		0 0 0 \
+		--title "WPA Setup"              \
+		--backtitle "$DIALOG_BACKTITLE"  \
+		--insecure                       \
+		--mixedform ""                   \
+		0 0 0                            \
 		"SSID" 1 0 "$NETWORK" 1 12 0 0 2 \
-		"Password" 2 0 "" 2 12 15 63 1 \
+		"Password" 2 0 "" 2 12 15 63 1   \
 		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 	) || exec "$0" "$@"
 	awk 'sub(/^\t/,"")||1' \
@@ -286,16 +288,16 @@ if echo $ENCRYPTION | grep -q 'PSK'; then
 		priority=5
 	}
 	EOF
-elif echo $ENCRYPTION | grep -q EAP; then
+elif echo "$ENCRYPTION" | grep -q EAP; then
 	USERPASS=$( $DIALOG \
-		--title "WPA-Enterprise Setup" \
-		--backtitle "$DIALOG_BACKTITLE" \
-		--insecure \
-		--mixedform "" \
-		0 0 0 \
+		--title "WPA-Enterprise Setup"   \
+		--backtitle "$DIALOG_BACKTITLE"  \
+		--insecure                       \
+		--mixedform ""                   \
+		0 0 0                            \
 		"SSID" 1 0 "$NETWORK" 1 12 0 0 2 \
-		"Username" 2 0 "" 2 12 25 63 0 \
-		"Password" 3 0 "" 3 12 25 63 1 \
+		"Username" 2 0 "" 2 12 25 63 0   \
+		"Password" 3 0 "" 3 12 25 63 1   \
 		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 	) || exec "$0" "$@"
 	awk 'sub(/^\t/,"")||1' \
@@ -311,15 +313,15 @@ elif echo $ENCRYPTION | grep -q EAP; then
 		priority=5
 	}
 	EOF
-elif echo $ENCRYPTION | grep -q WEP; then
+elif echo "$ENCRYPTION" | grep -q WEP; then
 	WEPKEY=$( $DIALOG \
-		--title "WEP Setup" \
-		--backtitle "$DIALOG_BACKTITLE" \
-		--insecure \
-		--mixedform "" \
-		0 0 0 \
+		--title "WEP Setup"              \
+		--backtitle "$DIALOG_BACKTITLE"  \
+		--insecure                       \
+		--mixedform ""                   \
+		0 0 0                            \
 		"SSID" 1 0 "$NETWORK" 1 12 0 0 2 \
-		"WEP Key 0" 2 0 "" 2 12 15 0 1 \
+		"WEP Key 0" 2 0 "" 2 12 15 0 1   \
 		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 	) || exec "$0" "$@"
 	awk 'sub(/^\t/,"")||1' \
@@ -354,10 +356,8 @@ network={
 EOF
 
 # Bring up new network
-if [ "$BSDINSTALL_CONFIGCURRENT" ]; then
-	output=$( wpa_cli reconfigure 2>&1 )
-	f_dprintf "%s" "$output"
-fi
+[ "$BSDINSTALL_CONFIGCURRENT" ] &&
+	f_eval_catch -d wlanconfig wpa_cli "wpa_cli reconfigure"
 
 exit $SUCCESS
 
