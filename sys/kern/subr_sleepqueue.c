@@ -134,7 +134,7 @@ struct sleepqueue_chain {
 	u_int	sc_depth;			/* Length of sc_queues. */
 	u_int	sc_max_depth;			/* Max length of sc_queues. */
 #endif
-};
+} __aligned(CACHE_LINE_SIZE);
 
 #ifdef SLEEPQUEUE_PROFILING
 u_int sleepq_max_depth;
