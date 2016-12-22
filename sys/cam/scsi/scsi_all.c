@@ -4020,11 +4020,17 @@ scsi_set_sense_data_va(struct scsi_sense_data *sense_data,
 					data_dest = &sense->info[0];
 					len_to_copy = MIN(sense_len,
 					    sizeof(sense->info));
-					/*
-					 * We're setting the info field, so
-					 * set the valid bit.
-					 */
-					sense->error_code |= SSD_ERRCODE_VALID;
+
+					/* Set VALID bit only if no overflow. */
+					for (i = 0; i < sense_len - len_to_copy;
+					    i++) {
+						if (data[i] != 0)
+							break;
+					}
+					if (i >= sense_len - len_to_copy) {
+						sense->error_code |=
+						    SSD_ERRCODE_VALID;
+					}
 				}
 
 				/*
@@ -5680,6 +5686,32 @@ scsi_devid_is_lun_name(uint8_t *bufp)
 	if ((descr->id_type & SVPD_ID_ASSOC_MASK) != SVPD_ID_ASSOC_LUN)
 		return 0;
 	if ((descr->id_type & SVPD_ID_TYPE_MASK) != SVPD_ID_TYPE_SCSI_NAME)
+		return 0;
+	return 1;
+}
+
+int
+scsi_devid_is_lun_md5(uint8_t *bufp)
+{
+	struct scsi_vpd_id_descriptor *descr;
+
+	descr = (struct scsi_vpd_id_descriptor *)bufp;
+	if ((descr->id_type & SVPD_ID_ASSOC_MASK) != SVPD_ID_ASSOC_LUN)
+		return 0;
+	if ((descr->id_type & SVPD_ID_TYPE_MASK) != SVPD_ID_TYPE_MD5_LUN_ID)
+		return 0;
+	return 1;
+}
+
+int
+scsi_devid_is_lun_uuid(uint8_t *bufp)
+{
+	struct scsi_vpd_id_descriptor *descr;
+
+	descr = (struct scsi_vpd_id_descriptor *)bufp;
+	if ((descr->id_type & SVPD_ID_ASSOC_MASK) != SVPD_ID_ASSOC_LUN)
+		return 0;
+	if ((descr->id_type & SVPD_ID_TYPE_MASK) != SVPD_ID_TYPE_UUID)
 		return 0;
 	return 1;
 }
