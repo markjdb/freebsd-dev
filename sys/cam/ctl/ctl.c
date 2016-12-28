@@ -407,6 +407,9 @@ SYSCTL_INT(_kern_cam_ctl, OID_AUTO, worker_threads, CTLFLAG_RDTUN,
 static int ctl_debug = CTL_DEBUG_NONE;
 SYSCTL_INT(_kern_cam_ctl, OID_AUTO, debug, CTLFLAG_RWTUN,
     &ctl_debug, 0, "Enabled debug flags");
+static int ctl_lun_map_size = 1024;
+SYSCTL_INT(_kern_cam_ctl, OID_AUTO, lun_map_size, CTLFLAG_RWTUN,
+    &ctl_lun_map_size, 0, "Size of per-port LUN map (max LUN + 1)");
 
 /*
  * Supported pages (0x00), Serial number (0x80), Device ID (0x83),
@@ -826,7 +829,7 @@ ctl_isc_announce_port(struct ctl_port *port)
 		return;
 	i = sizeof(msg->port) + strlen(port->port_name) + 1;
 	if (port->lun_map)
-		i += sizeof(uint32_t) * CTL_MAX_LUNS;
+		i += port->lun_map_size * sizeof(uint32_t);
 	if (port->port_devid)
 		i += port->port_devid->len;
 	if (port->target_devid)
@@ -846,7 +849,7 @@ ctl_isc_announce_port(struct ctl_port *port)
 	    "%d:%s", softc->ha_id, port->port_name) + 1;
 	i += msg->port.name_len;
 	if (port->lun_map) {
-		msg->port.lun_map_len = sizeof(uint32_t) * CTL_MAX_LUNS;
+		msg->port.lun_map_len = port->lun_map_size * sizeof(uint32_t);
 		memcpy(&msg->port.data[i], port->lun_map,
 		    msg->port.lun_map_len);
 		i += msg->port.lun_map_len;
@@ -1024,7 +1027,7 @@ ctl_isc_ua(struct ctl_softc *softc, union ctl_ha_msg *msg, int len)
 	uint32_t iid = ctl_get_initindex(&msg->hdr.nexus);
 
 	mtx_lock(&softc->ctl_lock);
-	if (msg->hdr.nexus.targ_lun >= CTL_MAX_LUNS ||
+	if (msg->hdr.nexus.targ_mapped_lun >= CTL_MAX_LUNS ||
 	    (lun = softc->ctl_luns[msg->hdr.nexus.targ_mapped_lun]) == NULL) {
 		mtx_unlock(&softc->ctl_lock);
 		return;
@@ -1074,7 +1077,7 @@ ctl_isc_lun_sync(struct ctl_softc *softc, union ctl_ha_msg *msg, int len)
 	    memcmp(&msg->lun.data[0], lun->lun_devid->data, i) != 0)) {
 		mtx_unlock(&lun->lun_lock);
 		printf("%s: Received conflicting HA LUN %d\n",
-		    __func__, msg->hdr.nexus.targ_lun);
+		    __func__, targ_lun);
 		return;
 	} else {
 		/* Record whether peer is primary. */
@@ -1108,7 +1111,7 @@ ctl_isc_lun_sync(struct ctl_softc *softc, union ctl_ha_msg *msg, int len)
 
 		mtx_unlock(&lun->lun_lock);
 		CTL_DEBUG_PRINT(("%s: Known LUN %d, peer is %s\n",
-		    __func__, msg->hdr.nexus.targ_lun,
+		    __func__, targ_lun,
 		    (msg->lun.flags & CTL_LUN_PRIMARY_SC) ?
 		    "primary" : "secondary"));
 
@@ -1155,19 +1158,25 @@ ctl_isc_port_sync(struct ctl_softc *softc, union ctl_ha_msg *msg, int len)
 	    M_CTL);
 	i += msg->port.name_len;
 	if (msg->port.lun_map_len != 0) {
-		if (port->lun_map == NULL)
-			port->lun_map = malloc(sizeof(uint32_t) * CTL_MAX_LUNS,
+		if (port->lun_map == NULL ||
+		    port->lun_map_size * sizeof(uint32_t) <
+		    msg->port.lun_map_len) {
+			port->lun_map_size = 0;
+			free(port->lun_map, M_CTL);
+			port->lun_map = malloc(msg->port.lun_map_len,
 			    M_CTL, M_WAITOK);
-		memcpy(port->lun_map, &msg->port.data[i],
-		    sizeof(uint32_t) * CTL_MAX_LUNS);
+		}
+		memcpy(port->lun_map, &msg->port.data[i], msg->port.lun_map_len);
+		port->lun_map_size = msg->port.lun_map_len / sizeof(uint32_t);
 		i += msg->port.lun_map_len;
 	} else {
+		port->lun_map_size = 0;
 		free(port->lun_map, M_CTL);
 		port->lun_map = NULL;
 	}
 	if (msg->port.port_devid_len != 0) {
 		if (port->port_devid == NULL ||
-		    port->port_devid->len != msg->port.port_devid_len) {
+		    port->port_devid->len < msg->port.port_devid_len) {
 			free(port->port_devid, M_CTL);
 			port->port_devid = malloc(sizeof(struct ctl_devid) +
 			    msg->port.port_devid_len, M_CTL, M_WAITOK);
@@ -1182,7 +1191,7 @@ ctl_isc_port_sync(struct ctl_softc *softc, union ctl_ha_msg *msg, int len)
 	}
 	if (msg->port.target_devid_len != 0) {
 		if (port->target_devid == NULL ||
-		    port->target_devid->len != msg->port.target_devid_len) {
+		    port->target_devid->len < msg->port.target_devid_len) {
 			free(port->target_devid, M_CTL);
 			port->target_devid = malloc(sizeof(struct ctl_devid) +
 			    msg->port.target_devid_len, M_CTL, M_WAITOK);
@@ -1197,7 +1206,7 @@ ctl_isc_port_sync(struct ctl_softc *softc, union ctl_ha_msg *msg, int len)
 	}
 	if (msg->port.init_devid_len != 0) {
 		if (port->init_devid == NULL ||
-		    port->init_devid->len != msg->port.init_devid_len) {
+		    port->init_devid->len < msg->port.init_devid_len) {
 			free(port->init_devid, M_CTL);
 			port->init_devid = malloc(sizeof(struct ctl_devid) +
 			    msg->port.init_devid_len, M_CTL, M_WAITOK);
@@ -3295,7 +3304,7 @@ ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 
 			if (port->lun_map != NULL) {
 				sbuf_printf(sb, "\t<lun_map>on</lun_map>\n");
-				for (j = 0; j < CTL_MAX_LUNS; j++) {
+				for (j = 0; j < port->lun_map_size; j++) {
 					plun = ctl_lun_map_from_port(port, j);
 					if (plun == UINT32_MAX)
 						continue;
@@ -3375,7 +3384,7 @@ ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 			}
 		}
 		mtx_unlock(&softc->ctl_lock); // XXX: port_enable sleeps
-		if (lm->plun < CTL_MAX_LUNS) {
+		if (lm->plun != UINT32_MAX) {
 			if (lm->lun == UINT32_MAX)
 				retval = ctl_lun_map_unset(port, lm->plun);
 			else if (lm->lun < CTL_MAX_LUNS &&
@@ -3383,13 +3392,12 @@ ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 				retval = ctl_lun_map_set(port, lm->plun, lm->lun);
 			else
 				return (ENXIO);
-		} else if (lm->plun == UINT32_MAX) {
+		} else {
 			if (lm->lun == UINT32_MAX)
 				retval = ctl_lun_map_deinit(port);
 			else
 				retval = ctl_lun_map_init(port);
-		} else
-			return (ENXIO);
+		}
 		if (port->status & CTL_PORT_STATUS_ONLINE)
 			ctl_isc_announce_port(port);
 		break;
@@ -3442,15 +3450,20 @@ ctl_lun_map_init(struct ctl_port *port)
 {
 	struct ctl_softc *softc = port->ctl_softc;
 	struct ctl_lun *lun;
+	int size = ctl_lun_map_size;
 	uint32_t i;
 
-	if (port->lun_map == NULL)
-		port->lun_map = malloc(sizeof(uint32_t) * CTL_MAX_LUNS,
+	if (port->lun_map == NULL || port->lun_map_size < size) {
+		port->lun_map_size = 0;
+		free(port->lun_map, M_CTL);
+		port->lun_map = malloc(size * sizeof(uint32_t),
 		    M_CTL, M_NOWAIT);
+	}
 	if (port->lun_map == NULL)
 		return (ENOMEM);
-	for (i = 0; i < CTL_MAX_LUNS; i++)
+	for (i = 0; i < size; i++)
 		port->lun_map[i] = UINT32_MAX;
+	port->lun_map_size = size;
 	if (port->status & CTL_PORT_STATUS_ONLINE) {
 		if (port->lun_disable != NULL) {
 			STAILQ_FOREACH(lun, &softc->lun_list, links)
@@ -3469,6 +3482,7 @@ ctl_lun_map_deinit(struct ctl_port *port)
 
 	if (port->lun_map == NULL)
 		return (0);
+	port->lun_map_size = 0;
 	free(port->lun_map, M_CTL);
 	port->lun_map = NULL;
 	if (port->status & CTL_PORT_STATUS_ONLINE) {
@@ -3492,6 +3506,8 @@ ctl_lun_map_set(struct ctl_port *port, uint32_t plun, uint32_t glun)
 		if (status != 0)
 			return (status);
 	}
+	if (plun >= port->lun_map_size)
+		return (EINVAL);
 	old = port->lun_map[plun];
 	port->lun_map[plun] = glun;
 	if ((port->status & CTL_PORT_STATUS_ONLINE) && old == UINT32_MAX) {
@@ -3507,7 +3523,7 @@ ctl_lun_map_unset(struct ctl_port *port, uint32_t plun)
 {
 	uint32_t old;
 
-	if (port->lun_map == NULL)
+	if (port->lun_map == NULL || plun >= port->lun_map_size)
 		return (0);
 	old = port->lun_map[plun];
 	port->lun_map[plun] = UINT32_MAX;
@@ -3525,8 +3541,10 @@ ctl_lun_map_from_port(struct ctl_port *port, uint32_t lun_id)
 
 	if (port == NULL)
 		return (UINT32_MAX);
-	if (port->lun_map == NULL || lun_id == UINT32_MAX)
+	if (port->lun_map == NULL)
 		return (lun_id);
+	if (lun_id > port->lun_map_size)
+		return (UINT32_MAX);
 	return (port->lun_map[lun_id]);
 }
 
@@ -3539,7 +3557,7 @@ ctl_lun_map_to_port(struct ctl_port *port, uint32_t lun_id)
 		return (UINT32_MAX);
 	if (port->lun_map == NULL)
 		return (lun_id);
-	for (i = 0; i < CTL_MAX_LUNS; i++) {
+	for (i = 0; i < port->lun_map_size; i++) {
 		if (port->lun_map[i] == lun_id)
 			return (i);
 	}
@@ -5815,7 +5833,7 @@ ctl_default_page_handler(struct ctl_scsiio *ctsio,
 			 struct ctl_page_index *page_index, uint8_t *page_ptr)
 {
 	struct ctl_lun *lun;
-	uint8_t *current_cp, *saved_cp;
+	uint8_t *current_cp;
 	int set_ua;
 	uint32_t initidx;
 
@@ -5825,13 +5843,10 @@ ctl_default_page_handler(struct ctl_scsiio *ctsio,
 
 	current_cp = (page_index->page_data + (page_index->page_len *
 	    CTL_PAGE_CURRENT));
-	saved_cp = (page_index->page_data + (page_index->page_len *
-	    CTL_PAGE_SAVED));
 
 	mtx_lock(&lun->lun_lock);
 	if (memcmp(current_cp, page_ptr, page_index->page_len)) {
 		memcpy(current_cp, page_ptr, page_index->page_len);
-		memcpy(saved_cp, page_ptr, page_index->page_len);
 		set_ua = 1;
 	}
 	if (set_ua != 0)
@@ -5921,7 +5936,7 @@ ctl_do_mode_select(union ctl_io *io)
 	int page_len, page_len_offset, page_len_size;
 	union ctl_modepage_info *modepage_info;
 	struct ctl_lun *lun;
-	int *len_left, *len_used;
+	uint16_t *len_left, *len_used;
 	int retval, i;
 
 	ctsio = &io->scsiio;
@@ -6140,10 +6155,13 @@ bailout_no_done:
 int
 ctl_mode_select(struct ctl_scsiio *ctsio)
 {
-	int param_len, pf, sp;
-	int header_size, bd_len;
+	struct ctl_lun *lun;
 	union ctl_modepage_info *modepage_info;
+	int bd_len, i, header_size, param_len, pf, rtd, sp;
+	uint32_t initidx;
 
+	lun = ctsio->io_hdr.ctl_private[CTL_PRIV_LUN].ptr;
+	initidx = ctl_get_initindex(&ctsio->io_hdr.nexus);
 	switch (ctsio->cdb[0]) {
 	case MODE_SELECT_6: {
 		struct scsi_mode_select_6 *cdb;
@@ -6151,6 +6169,7 @@ ctl_mode_select(struct ctl_scsiio *ctsio)
 		cdb = (struct scsi_mode_select_6 *)ctsio->cdb;
 
 		pf = (cdb->byte2 & SMS_PF) ? 1 : 0;
+		rtd = (cdb->byte2 & SMS_RTD) ? 1 : 0;
 		sp = (cdb->byte2 & SMS_SP) ? 1 : 0;
 		param_len = cdb->length;
 		header_size = sizeof(struct scsi_mode_header_6);
@@ -6162,6 +6181,7 @@ ctl_mode_select(struct ctl_scsiio *ctsio)
 		cdb = (struct scsi_mode_select_10 *)ctsio->cdb;
 
 		pf = (cdb->byte2 & SMS_PF) ? 1 : 0;
+		rtd = (cdb->byte2 & SMS_RTD) ? 1 : 0;
 		sp = (cdb->byte2 & SMS_SP) ? 1 : 0;
 		param_len = scsi_2btoul(cdb->length);
 		header_size = sizeof(struct scsi_mode_header_10);
@@ -6169,6 +6189,30 @@ ctl_mode_select(struct ctl_scsiio *ctsio)
 	}
 	default:
 		ctl_set_invalid_opcode(ctsio);
+		ctl_done((union ctl_io *)ctsio);
+		return (CTL_RETVAL_COMPLETE);
+	}
+
+	if (rtd) {
+		if (param_len != 0) {
+			ctl_set_invalid_field(ctsio, /*sks_valid*/ 0,
+			    /*command*/ 1, /*field*/ 0,
+			    /*bit_valid*/ 0, /*bit*/ 0);
+			ctl_done((union ctl_io *)ctsio);
+			return (CTL_RETVAL_COMPLETE);
+		}
+
+		/* Revert to defaults. */
+		ctl_init_page_index(lun);
+		mtx_lock(&lun->lun_lock);
+		ctl_est_ua_all(lun, initidx, CTL_UA_MODE_CHANGE);
+		mtx_unlock(&lun->lun_lock);
+		for (i = 0; i < CTL_NUM_MODE_PAGES; i++) {
+			ctl_isc_announce_mode(lun, -1,
+			    lun->mode_pages.index[i].page_code & SMPH_PC_MASK,
+			    lun->mode_pages.index[i].subpage);
+		}
+		ctl_set_success(ctsio);
 		ctl_done((union ctl_io *)ctsio);
 		return (CTL_RETVAL_COMPLETE);
 	}
@@ -9048,9 +9092,8 @@ ctl_report_luns(struct ctl_scsiio *ctsio)
 	struct scsi_report_luns_data *lun_data;
 	struct ctl_lun *lun, *request_lun;
 	struct ctl_port *port;
-	int num_luns, retval;
+	int num_filled, num_luns, num_port_luns, retval;
 	uint32_t alloc_len, lun_datalen;
-	int num_filled;
 	uint32_t initidx, targ_lun_id, lun_id;
 
 	retval = CTL_RETVAL_COMPLETE;
@@ -9060,9 +9103,10 @@ ctl_report_luns(struct ctl_scsiio *ctsio)
 
 	CTL_DEBUG_PRINT(("ctl_report_luns\n"));
 
-	mtx_lock(&softc->ctl_lock);
 	num_luns = 0;
-	for (targ_lun_id = 0; targ_lun_id < CTL_MAX_LUNS; targ_lun_id++) {
+	num_port_luns = port->lun_map ? port->lun_map_size : CTL_MAX_LUNS;
+	mtx_lock(&softc->ctl_lock);
+	for (targ_lun_id = 0; targ_lun_id < num_port_luns; targ_lun_id++) {
 		if (ctl_lun_map_from_port(port, targ_lun_id) != UINT32_MAX)
 			num_luns++;
 	}
@@ -9121,7 +9165,9 @@ ctl_report_luns(struct ctl_scsiio *ctsio)
 	initidx = ctl_get_initindex(&ctsio->io_hdr.nexus);
 
 	mtx_lock(&softc->ctl_lock);
-	for (targ_lun_id = 0, num_filled = 0; targ_lun_id < CTL_MAX_LUNS && num_filled < num_luns; targ_lun_id++) {
+	for (targ_lun_id = 0, num_filled = 0;
+	    targ_lun_id < num_port_luns && num_filled < num_luns;
+	    targ_lun_id++) {
 		lun_id = ctl_lun_map_from_port(port, targ_lun_id);
 		if (lun_id == UINT32_MAX)
 			continue;
@@ -9541,6 +9587,11 @@ ctl_inquiry_evpd_eid(struct ctl_scsiio *ctsio, int alloc_len)
 	 * it to that nexus once.  This bit is required as of SPC-4.
 	 */
 	eid_ptr->flags4 = SVPD_EID_LUICLR;
+
+	/*
+	 * We support revert to defaults (RTD) bit in MODE SELECT.
+	 */
+	eid_ptr->flags5 = SVPD_EID_RTD_SUP;
 
 	/*
 	 * XXX KDM in order to correctly answer this, we would need
