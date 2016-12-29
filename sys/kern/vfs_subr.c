@@ -130,7 +130,7 @@ static counter_u64_t vnodes_created;
 SYSCTL_COUNTER_U64(_vfs, OID_AUTO, vnodes_created, CTLFLAG_RD, &vnodes_created,
     "Number of vnodes created by getnewvnode");
 
-static u_long mnt_free_list_batch = 128;
+static u_long __read_mostly	mnt_free_list_batch = 128;
 SYSCTL_ULONG(_vfs, OID_AUTO, mnt_free_list_batch, CTLFLAG_RW,
     &mnt_free_list_batch, 0, "Limit of vnodes held on mnt's free list");
 

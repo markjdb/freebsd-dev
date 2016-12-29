@@ -96,7 +96,7 @@ static int vfs_mountroot_wait_if_neccessary(const char *fs, const char *dev);
  * The vnode of the system's root (/ in the filesystem, without chroot
  * active.)
  */
-struct vnode *rootvnode;
+struct vnode *rootvnode __read_mostly;
 
 /*
  * Mount of the system's /dev.

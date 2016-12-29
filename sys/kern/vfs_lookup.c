@@ -74,10 +74,10 @@ SDT_PROBE_DEFINE3(vfs, namei, lookup, entry, "struct vnode *", "char *",
 SDT_PROBE_DEFINE2(vfs, namei, lookup, return, "int", "struct vnode *");
 
 /* Allocation zone for namei. */
-uma_zone_t namei_zone;
+uma_zone_t namei_zone __read_mostly;
 
 /* Placeholder vnode for mp traversal. */
-static struct vnode *vp_crossmp;
+static struct vnode *vp_crossmp __read_mostly;
 
 static int
 crossmp_vop_islocked(struct vop_islocked_args *ap)
