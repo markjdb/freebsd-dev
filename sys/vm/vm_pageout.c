@@ -1234,8 +1234,8 @@ vm_pageout_laundry_worker(void *arg)
 		 * memory pressure required to trigger laundering decreases.
 		 */
 trybackground:
-		nclean = vm_cnt.v_inactive_count + vm_cnt.v_free_count;
-		ndirty = vm_cnt.v_laundry_count;
+		nclean = global_v_inactive_count + global_v_free_count;
+		ndirty = global_v_laundry_count;
 		if (target == 0 && wakeups != last_launder &&
 		    ndirty * isqrt(wakeups - last_launder) >= nclean) {
 			target = vm_background_launder_target;
@@ -1596,8 +1596,8 @@ drop_page:
 	 * more aggressively, improving the effectiveness of clustering and
 	 * ensuring that they can eventually be reused.
 	 */
-	inactq_shortage = vm_cnt.v_inactive_target - (vm_cnt.v_inactive_count +
-	    vm_cnt.v_laundry_count / act_scan_laundry_weight) +
+	inactq_shortage = vm_cnt.v_inactive_target - (global_v_inactive_count +
+	    global_v_laundry_count / act_scan_laundry_weight) +
 	    vm_paging_target() + deficit + addl_page_shortage;
 	page_shortage *= act_scan_laundry_weight;
 
@@ -1971,7 +1971,7 @@ vm_pageout_oom(int shortage)
 		sched_nice(bigproc, PRIO_MIN);
 		_PRELE(bigproc);
 		PROC_UNLOCK(bigproc);
-		wakeup(&vm_cnt.v_free_count);
+		wakeup(&global_v_free_count);
 	}
 }
 
@@ -2025,7 +2025,7 @@ vm_pageout_worker(void *arg)
 		 */
 		if (vm_pages_needed && !vm_page_count_min()) {
 			vm_pages_needed = false;
-			wakeup(&vm_cnt.v_free_count);
+			wakeup(&global_v_free_count);
 		}
 
 		/*
@@ -2103,8 +2103,8 @@ vm_pageout_init(void)
 	vm_cnt.v_free_min += vm_cnt.v_free_reserved;
 	vm_cnt.v_free_severe += vm_cnt.v_free_reserved;
 	vm_cnt.v_inactive_target = (3 * vm_cnt.v_free_target) / 2;
-	if (vm_cnt.v_inactive_target > vm_cnt.v_free_count / 3)
-		vm_cnt.v_inactive_target = vm_cnt.v_free_count / 3;
+	if (vm_cnt.v_inactive_target > global_v_free_count / 3)
+		vm_cnt.v_inactive_target = global_v_free_count / 3;
 
 	/*
 	 * Set the default wakeup threshold to be 10% above the minimum
@@ -2122,7 +2122,7 @@ vm_pageout_init(void)
 
 	/* XXX does not really belong here */
 	if (vm_page_max_wired == 0)
-		vm_page_max_wired = vm_cnt.v_free_count / 3;
+		vm_page_max_wired = global_v_free_count / 3;
 
 	/*
 	 * Target amount of memory to move out of the laundry queue during a
@@ -2169,7 +2169,7 @@ vm_pageout(void)
 /*
  * Unless the free page queue lock is held by the caller, this function
  * should be regarded as advisory.  Specifically, the caller should
- * not msleep() on &vm_cnt.v_free_count following this function unless
+ * not msleep() on &global_v_free_count following this function unless
  * the free page queue lock is held until the msleep() is performed.
  */
 void

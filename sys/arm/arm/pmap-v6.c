@@ -2597,7 +2597,7 @@ pmap_unwire_pt2pg(pmap_t pmap, vm_offset_t va, vm_page_t m)
 	 * the L2 page table page is globally performed before TLB shoot-
 	 * down is begun.
 	 */
-	atomic_subtract_rel_int(&vm_cnt.v_wire_count, 1);
+	atomic_subtract_rel_int(&global_v_wire_count, 1);
 }
 
 /*
@@ -2904,7 +2904,7 @@ out:
 		SLIST_REMOVE_HEAD(&free, plinks.s.ss);
 		/* Recycle a freed page table page. */
 		m_pc->wire_count = 1;
-		atomic_add_int(&vm_cnt.v_wire_count, 1);
+		atomic_add_int(&global_v_wire_count, 1);
 	}
 	pmap_free_zero_pages(&free);
 	return (m_pc);

@@ -119,7 +119,7 @@ vm_phys_freecnt_adj(vm_page_t m, int adj)
 #if 0
 	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
 #endif
-	atomic_add_int(&vm_cnt.v_free_count, adj);
+	atomic_add_int(&global_v_free_count, adj);
 	atomic_add_int(&vm_phys_domain(m)->vmd_free_count, adj);
 }
 

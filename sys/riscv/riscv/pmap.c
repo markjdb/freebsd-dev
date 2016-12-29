@@ -1156,7 +1156,7 @@ _pmap_unwire_l3(pmap_t pmap, vm_offset_t va, vm_page_t m, struct spglist *free)
 	 * the page table page is globally performed before TLB shoot-
 	 * down is begun.
 	 */
-	atomic_subtract_rel_int(&vm_cnt.v_wire_count, 1);
+	atomic_subtract_rel_int(&global_v_wire_count, 1);
 
 	/* 
 	 * Put page on a list so that it is released after
@@ -1301,7 +1301,7 @@ _pmap_alloc_l3(pmap_t pmap, vm_pindex_t ptepindex, struct rwlock **lockp)
 			if (_pmap_alloc_l3(pmap, NUPDE + l1index,
 			    lockp) == NULL) {
 				--m->wire_count;
-				atomic_subtract_int(&vm_cnt.v_wire_count, 1);
+				atomic_subtract_int(&global_v_wire_count, 1);
 				vm_page_free_zero(m);
 				return (NULL);
 			}
@@ -1387,7 +1387,7 @@ pmap_release(pmap_t pmap)
 
 	m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)pmap->pm_l1));
 	m->wire_count--;
-	atomic_subtract_int(&vm_cnt.v_wire_count, 1);
+	atomic_subtract_int(&global_v_wire_count, 1);
 	vm_page_free_zero(m);
 
 	/* Remove pmap from the allpmaps list */

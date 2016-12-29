@@ -198,7 +198,7 @@ sysctl_hw_usermem(SYSCTL_HANDLER_ARGS)
 {
 	u_long val;
 
-	val = ctob(physmem - vm_cnt.v_wire_count);
+	val = ctob(physmem - global_v_wire_count);
 	return (sysctl_handle_long(oidp, &val, 0, req));
 }
 

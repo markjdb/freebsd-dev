@@ -280,7 +280,7 @@ struct ib_umem *ib_umem_get_ex(struct ib_ucontext *context, unsigned long addr,
 		return ERR_PTR(-ENOMEM);
 	}
         PROC_UNLOCK(proc);
-	if (npages + vm_cnt.v_wire_count > vm_page_max_wired) {
+	if (npages + global_v_wire_count > vm_page_max_wired) {
 		kfree(umem);
 		return ERR_PTR(-EAGAIN);
 	}

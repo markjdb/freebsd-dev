@@ -787,7 +787,7 @@ svr4_sys_sysconfig(td, uap)
 #if defined(UVM)
 		*retval = uvmexp.free;	/* XXX: free instead of total */
 #else
-		*retval = vm_cnt.v_free_count;	/* XXX: free instead of total */
+		*retval = global_v_free_count;	/* XXX: free instead of total */
 #endif
 		break;
 	case SVR4_CONFIG_AVPHYS_PAGES:

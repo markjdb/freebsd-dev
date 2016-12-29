@@ -1165,7 +1165,7 @@ vnode_pager_putpages(vm_object_t object, vm_page_t *m, int count,
 	 * daemon up.  This should be probably be addressed XXX.
 	 */
 
-	if (vm_cnt.v_free_count < vm_cnt.v_pageout_free_min)
+	if (global_v_free_count < vm_cnt.v_pageout_free_min)
 		flags |= VM_PAGER_PUT_SYNC;
 
 	/*

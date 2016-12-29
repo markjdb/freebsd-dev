@@ -91,12 +91,12 @@ struct vmmeter {
 	u_int v_free_reserved;	/* (c) pages reserved for deadlock */
 	u_int v_free_target;	/* (c) pages desired free */
 	u_int v_free_min;	/* (c) pages desired free */
-	u_int v_free_count;	/* (a) pages free */
-	u_int v_wire_count;	/* (a) pages wired down */
-	u_int v_active_count;	/* (q) pages active */
+	u_int v_free_count_UNUSED;	/* (a) pages free */
+	u_int v_wire_count_UNUSED;	/* (a) pages wired down */
+	u_int v_active_count_UNUSED;	/* (q) pages active */
 	u_int v_inactive_target; /* (c) pages desired inactive */
-	u_int v_inactive_count;	/* (q) pages inactive */
-	u_int v_laundry_count;	/* (q) pages eligible for laundering */
+	u_int v_inactive_count_UNUSED;	/* (q) pages inactive */
+	u_int v_laundry_count_UNUSED;	/* (q) pages dirty */
 	u_int v_pageout_free_min;   /* (c) min pages reserved for kernel */
 	u_int v_interrupt_free_min; /* (c) reserved pages for int code */
 	u_int v_free_severe;	/* (c) severe page depletion point */
@@ -114,9 +114,14 @@ struct vmmeter {
 };
 #ifdef _KERNEL
 
+extern u_int global_v_free_count;
+extern u_int global_v_wire_count;
 extern struct vmmeter vm_cnt;
 
 extern u_int vm_pageout_wakeup_thresh;
+extern u_int global_v_active_count;
+extern u_int global_v_inactive_count;
+extern u_int global_v_laundry_count;
 
 /*
  * Return TRUE if we are under our severe low-free-pages threshold
@@ -128,7 +133,7 @@ static inline int
 vm_page_count_severe(void)
 {
 
-	return (vm_cnt.v_free_severe > vm_cnt.v_free_count);
+	return (vm_cnt.v_free_severe > global_v_free_count);
 }
 
 /*
@@ -144,7 +149,7 @@ static inline int
 vm_page_count_min(void)
 {
 
-	return (vm_cnt.v_free_min > vm_cnt.v_free_count);
+	return (vm_cnt.v_free_min > global_v_free_count);
 }
 
 /*
@@ -155,7 +160,7 @@ static inline int
 vm_page_count_target(void)
 {
 
-	return (vm_cnt.v_free_target > vm_cnt.v_free_count);
+	return (vm_cnt.v_free_target > global_v_free_count);
 }
 
 /*
@@ -166,7 +171,7 @@ static inline int
 vm_paging_target(void)
 {
 
-	return (vm_cnt.v_free_target - vm_cnt.v_free_count);
+	return (vm_cnt.v_free_target - global_v_free_count);
 }
 
 /*
@@ -176,7 +181,7 @@ static inline int
 vm_paging_needed(void)
 {
 
-	return (vm_cnt.v_free_count < vm_pageout_wakeup_thresh);
+	return (global_v_free_count < vm_pageout_wakeup_thresh);
 }
 
 /*

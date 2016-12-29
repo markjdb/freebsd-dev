@@ -55,7 +55,12 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_object.h>
 #include <sys/sysctl.h>
 
-struct vmmeter vm_cnt;
+struct vmmeter vm_cnt __exclusive_cache_line;
+u_int global_v_free_count __exclusive_cache_line;
+u_int global_v_wire_count __exclusive_cache_line;
+u_int global_v_active_count __exclusive_cache_line;
+u_int global_v_inactive_count __exclusive_cache_line;
+u_int global_v_laundry_count __exclusive_cache_line;
 
 SYSCTL_UINT(_vm, VM_V_FREE_MIN, v_free_min,
 	CTLFLAG_RW, &vm_cnt.v_free_min, 0, "Minimum low-free-pages threshold");
@@ -137,7 +142,7 @@ vmtotal(SYSCTL_HANDLER_ARGS)
 						else
 							total.t_sl++;
 						if (td->td_wchan ==
-						    &vm_cnt.v_free_count)
+						    &global_v_free_count)
 							total.t_pw++;
 					}
 					break;
@@ -206,7 +211,7 @@ vmtotal(SYSCTL_HANDLER_ARGS)
 		}
 	}
 	mtx_unlock(&vm_object_list_mtx);
-	total.t_free = vm_cnt.v_free_count;
+	total.t_free = global_v_free_count;
 	return (sysctl_handle_opaque(oidp, &total, sizeof(total), req));
 }
 
@@ -293,12 +298,7 @@ VM_STATS_VM(v_page_count, "Total number of pages in system");
 VM_STATS_VM(v_free_reserved, "Pages reserved for deadlock");
 VM_STATS_VM(v_free_target, "Pages desired free");
 VM_STATS_VM(v_free_min, "Minimum low-free-pages threshold");
-VM_STATS_VM(v_free_count, "Free pages");
-VM_STATS_VM(v_wire_count, "Wired pages");
-VM_STATS_VM(v_active_count, "Active pages");
 VM_STATS_VM(v_inactive_target, "Desired inactive pages");
-VM_STATS_VM(v_inactive_count, "Inactive pages");
-VM_STATS_VM(v_laundry_count, "Pages eligible for laundering");
 VM_STATS_VM(v_pageout_free_min, "Min pages reserved for kernel");
 VM_STATS_VM(v_interrupt_free_min, "Reserved pages for interrupt code");
 VM_STATS_VM(v_forks, "Number of fork() calls");
@@ -309,6 +309,17 @@ VM_STATS_VM(v_forkpages, "VM pages affected by fork()");
 VM_STATS_VM(v_vforkpages, "VM pages affected by vfork()");
 VM_STATS_VM(v_rforkpages, "VM pages affected by rfork()");
 VM_STATS_VM(v_kthreadpages, "VM pages affected by fork() by kernel");
+
+SYSCTL_UINT(_vm_stats_vm, OID_AUTO, v_free_count, CTLFLAG_RW,
+    &global_v_wire_count, 0, "Free pages");
+SYSCTL_UINT(_vm_stats_vm, OID_AUTO, v_wire_count, CTLFLAG_RW,
+    &global_v_wire_count, 0, "Wired pages");
+SYSCTL_UINT(_vm_stats_vm, OID_AUTO, v_active_count, CTLFLAG_RW,
+    &global_v_active_count, 0, "Active pages");
+SYSCTL_UINT(_vm_stats_vm, OID_AUTO, v_inactive_count, CTLFLAG_RW,
+    &global_v_inactive_count, 0, "Inactive pages");
+SYSCTL_UINT(_vm_stats_vm, OID_AUTO, v_laundry_count, CTLFLAG_RW,
+    &global_v_laundry_count, 0, "Dirty pages");
 
 #ifdef COMPAT_FREEBSD11
 /*

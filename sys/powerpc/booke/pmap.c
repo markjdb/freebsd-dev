@@ -613,7 +613,7 @@ ptbl_alloc(mmu_t mmu, pmap_t pmap, unsigned int pdir_idx, boolean_t nosleep)
 				ptbl_free_pmap_ptbl(pmap, ptbl);
 				for (j = 0; j < i; j++)
 					vm_page_free(mtbl[j]);
-				atomic_subtract_int(&vm_cnt.v_wire_count, i);
+				atomic_subtract_int(&global_v_wire_count, i);
 				return (NULL);
 			}
 			VM_WAIT;
@@ -674,7 +674,7 @@ ptbl_free(mmu_t mmu, pmap_t pmap, unsigned int pdir_idx)
 		pa = pte_vatopa(mmu, kernel_pmap, va);
 		m = PHYS_TO_VM_PAGE(pa);
 		vm_page_free_zero(m);
-		atomic_subtract_int(&vm_cnt.v_wire_count, 1);
+		atomic_subtract_int(&global_v_wire_count, 1);
 		mmu_booke_kremove(mmu, va);
 	}
 
