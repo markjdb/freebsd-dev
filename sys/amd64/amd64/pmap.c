@@ -2805,7 +2805,10 @@ pv_to_chunk(pv_entry_t pv)
 static const uint64_t pc_freemask[_NPCM] = { PC_FREE0, PC_FREE1, PC_FREE2 };
 
 #ifdef PV_STATS
-static int pc_chunk_count, pc_chunk_allocs, pc_chunk_frees, pc_chunk_tryfail;
+static int pc_chunk_count __exclusive_cache_line;
+static int pc_chunk_allocs __exclusive_cache_line;
+static int pc_chunk_frees __exclusive_cache_line;
+static int pc_chunk_tryfail __exclusive_cache_line;
 
 SYSCTL_INT(_vm_pmap, OID_AUTO, pc_chunk_count, CTLFLAG_RD, &pc_chunk_count, 0,
 	"Current number of pv entry chunks");
@@ -2816,8 +2819,10 @@ SYSCTL_INT(_vm_pmap, OID_AUTO, pc_chunk_frees, CTLFLAG_RD, &pc_chunk_frees, 0,
 SYSCTL_INT(_vm_pmap, OID_AUTO, pc_chunk_tryfail, CTLFLAG_RD, &pc_chunk_tryfail, 0,
 	"Number of times tried to get a chunk page but failed.");
 
-static long pv_entry_frees, pv_entry_allocs, pv_entry_count;
-static int pv_entry_spare;
+static long pv_entry_frees __exclusive_cache_line;
+static long pv_entry_allocs __exclusive_cache_line;
+static long pv_entry_count __exclusive_cache_line;
+static int pv_entry_spare __exclusive_cache_line;
 
 SYSCTL_LONG(_vm_pmap, OID_AUTO, pv_entry_frees, CTLFLAG_RD, &pv_entry_frees, 0,
 	"Current number of pv entry frees");
