@@ -29,6 +29,7 @@
 #ifndef __SYS_COUNTER_H__
 #define __SYS_COUNTER_H__
 
+typedef int32_t *counter_s32_t;
 typedef uint64_t *counter_u64_t;
 
 #ifdef _KERNEL
@@ -39,6 +40,13 @@ void		counter_u64_free(counter_u64_t);
 
 void		counter_u64_zero(counter_u64_t);
 uint64_t	counter_u64_fetch(counter_u64_t);
+
+counter_s32_t	counter_s32_alloc(int);
+void		counter_s32_free(counter_s32_t);
+
+void		counter_s32_zero(counter_s32_t);
+uint64_t	counter_s32_fetch(counter_s32_t);
+
 
 #define	COUNTER_ARRAY_ALLOC(a, n, wait)	do {			\
 	for (int i = 0; i < (n); i++)				\

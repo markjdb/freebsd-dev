@@ -40,6 +40,7 @@
 #include <sys/lockmgr.h>
 #include <sys/_mutex.h>
 #include <sys/_sx.h>
+#include <sys/pcpu_ref.h>
 #endif
 
 /*
@@ -164,10 +165,8 @@ struct mount {
 	struct vfsconf	*mnt_vfc;		/* configuration info */
 	struct vnode	*mnt_vnodecovered;	/* vnode we mounted on */
 	struct vnode	*mnt_syncer;		/* syncer vnode */
-	int		mnt_ref;		/* (i) Reference count */
 	struct vnodelst	mnt_nvnodelist;		/* (i) list of vnodes */
 	int		mnt_nvnodelistsize;	/* (i) # of vnodes */
-	int		mnt_writeopcount;	/* (i) write syscalls pending */
 	int		mnt_kern_flag;		/* (i) kernel only flags */
 	uint64_t	mnt_flag;		/* (i) flags shared with user */
 	struct vfsoptlist *mnt_opt;		/* current mount options */
@@ -181,7 +180,6 @@ struct mount {
 	struct netexport *mnt_export;		/* export list */
 	struct label	*mnt_label;		/* MAC label for the fs */
 	u_int		mnt_hashseed;		/* Random seed for vfs_hash */
-	int		mnt_lockref;		/* (i) Lock reference count */
 	int		mnt_secondary_writes;   /* (i) # of secondary writes */
 	int		mnt_secondary_accwrites;/* (i) secondary wr. starts */
 	struct thread	*mnt_susp_owner;	/* (i) thread owning suspension */
@@ -192,6 +190,9 @@ struct mount {
 	int		mnt_activevnodelistsize;/* (l) # of active vnodes */
 	struct vnodelst	mnt_tmpfreevnodelist;	/* (l) list of free vnodes */
 	int		mnt_tmpfreevnodelistsize;/* (l) # of free vnodes */
+	pcpu_ref_t	mnt_lockref;		/* (i) Lock reference count */
+	pcpu_ref_t	mnt_ref;		/* (i) Reference count */
+	pcpu_ref_t	mnt_writeopcount;	/* (i) write syscalls pending */
 	struct lock	mnt_explock;		/* vfs_export walkers lock */
 	TAILQ_ENTRY(mount) mnt_upper_link;	/* (m) we in the all uppers */
 	TAILQ_HEAD(, mount) mnt_uppers;		/* (m) upper mounts over us*/
@@ -234,13 +235,10 @@ void          __mnt_vnode_markerfree_active(struct vnode **mvp, struct mount *);
 #define	MNT_ITRYLOCK(mp) mtx_trylock(&(mp)->mnt_mtx)
 #define	MNT_IUNLOCK(mp)	mtx_unlock(&(mp)->mnt_mtx)
 #define	MNT_MTX(mp)	(&(mp)->mnt_mtx)
-#define	MNT_REF(mp)	(mp)->mnt_ref++
-#define	MNT_REL(mp)	do {						\
-	KASSERT((mp)->mnt_ref > 0, ("negative mnt_ref"));		\
-	(mp)->mnt_ref--;						\
-	if ((mp)->mnt_ref == 0)						\
-		wakeup((mp));						\
-} while (0)
+#define	MNT_REF(mp)	pcpu_ref_acq_force(&(mp)->mnt_ref)
+#define	MNT_REF_UNLOCKED(mp)	pcpu_ref_acq_force(&(mp)->mnt_ref) /* XXXMJG */
+#define	MNT_REL(mp)	pcpu_ref_rel_locked(&(mp)->mnt_ref)
+#define	MNT_REL_UNLOCKED(mp)	pcpu_ref_rel(&(mp)->mnt_ref)
 
 #endif /* _KERNEL */
 

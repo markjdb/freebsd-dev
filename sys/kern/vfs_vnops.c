@@ -1629,36 +1629,50 @@ vn_suspendable(struct mount *mp)
 static int
 vn_start_write_locked(struct mount *mp, int flags)
 {
+	struct thread *td;
 	int error, mflags;
 
-	mtx_assert(MNT_MTX(mp), MA_OWNED);
 	error = 0;
 
+	td = curthread;
+	if ((td->td_pflags & TDP_IGNSUSP) != 0 && mp->mnt_susp_owner == td)
+		goto out;
+
+	if ((flags & V_XSLEEP) != 0)
+		goto hard_way;
+
+	/*
+	 * An opportunistic attempt to bump writeopcount.
+	 */
+	if (pcpu_ref_acq(&mp->mnt_writeopcount))
+		return (error);
+
+	//printf("%s: doing it the hard way %p\n", __func__, &mp->mnt_writeopcount);
+hard_way:
+	MNT_ILOCK(mp);
 	/*
 	 * Check on status of suspension.
 	 */
-	if ((curthread->td_pflags & TDP_IGNSUSP) == 0 ||
-	    mp->mnt_susp_owner != curthread) {
-		mflags = ((mp->mnt_vfc->vfc_flags & VFCF_SBDRY) != 0 ?
-		    (flags & PCATCH) : 0) | (PUSER - 1);
-		while ((mp->mnt_kern_flag & MNTK_SUSPEND) != 0) {
-			if (flags & V_NOWAIT) {
-				error = EWOULDBLOCK;
-				goto unlock;
-			}
-			error = msleep(&mp->mnt_flag, MNT_MTX(mp), mflags,
-			    "suspfs", 0);
-			if (error)
-				goto unlock;
+	mflags = ((mp->mnt_vfc->vfc_flags & VFCF_SBDRY) != 0 ?
+			(flags & PCATCH) : 0) | (PUSER - 1);
+	while ((mp->mnt_kern_flag & MNTK_SUSPEND) != 0) {
+		if (flags & V_NOWAIT) {
+			error = EWOULDBLOCK;
+			goto out_unlock;
 		}
+		error = msleep(&mp->mnt_flag, MNT_MTX(mp), mflags,
+				"suspfs", 0);
+		if (error)
+			goto out_unlock;
 	}
 	if (flags & V_XSLEEP)
-		goto unlock;
-	mp->mnt_writeopcount++;
-unlock:
-	if (error != 0 || (flags & V_XSLEEP) != 0)
-		MNT_REL(mp);
+		goto out_unlock;
+	pcpu_ref_acq_valid(&mp->mnt_writeopcount);
+out_unlock:
 	MNT_IUNLOCK(mp);
+out:
+	if (error != 0 || (flags & V_XSLEEP) != 0)
+		MNT_REL_UNLOCKED(mp);
 	return (error);
 }
 
@@ -1700,7 +1714,6 @@ vn_start_write(struct vnode *vp, struct mount **mpp, int flags)
 	 * refcount for the provided mountpoint too, in order to
 	 * emulate a vfs_ref().
 	 */
-	MNT_ILOCK(mp);
 	if (vp == NULL && (flags & V_MNTREF) == 0)
 		MNT_REF(mp);
 
@@ -1789,15 +1802,21 @@ vn_finished_write(mp)
 {
 	if (mp == NULL || !vn_suspendable(mp))
 		return;
+
+	pcpu_ref_rel(&mp->mnt_writeopcount);
+	MNT_REL_UNLOCKED(mp);
+#if 0
+	if (refcount_release(&mp->mnt_writeopcount) == 0 &&
+	    (mp->mnt_kern_flag & MNTK_SUSPEND) == 0) {
+		MNT_REL(mp);
+		return;
+	}
 	MNT_ILOCK(mp);
-	MNT_REL(mp);
-	mp->mnt_writeopcount--;
-	if (mp->mnt_writeopcount < 0)
-		panic("vn_finished_write: neg cnt");
-	if ((mp->mnt_kern_flag & MNTK_SUSPEND) != 0 &&
-	    mp->mnt_writeopcount <= 0)
+	if (mp->mnt_writeopcount == 0)
 		wakeup(&mp->mnt_writeopcount);
 	MNT_IUNLOCK(mp);
+	MNT_REL(mp);
+#endif
 }
 
 
@@ -1859,11 +1878,8 @@ vfs_write_suspend(struct mount *mp, int flags)
 
 	mp->mnt_kern_flag |= MNTK_SUSPEND;
 	mp->mnt_susp_owner = curthread;
-	if (mp->mnt_writeopcount > 0)
-		(void) msleep(&mp->mnt_writeopcount, 
-		    MNT_MTX(mp), (PUSER - 1)|PDROP, "suspwt", 0);
-	else
-		MNT_IUNLOCK(mp);
+	pcpu_ref_block(&mp->mnt_writeopcount, (PUSER - 1), "suspwt");
+	MNT_IUNLOCK(mp);
 	if ((error = VFS_SYNC(mp, MNT_SUSPEND)) != 0)
 		vfs_write_resume(mp, 0);
 	return (error);
@@ -1887,15 +1903,17 @@ vfs_write_resume(struct mount *mp, int flags)
 		wakeup(&mp->mnt_writeopcount);
 		wakeup(&mp->mnt_flag);
 		curthread->td_pflags &= ~TDP_IGNSUSP;
+		pcpu_ref_unblock(&mp->mnt_writeopcount);
 		if ((flags & VR_START_WRITE) != 0) {
 			MNT_REF(mp);
-			mp->mnt_writeopcount++;
+			pcpu_ref_acq_valid(&mp->mnt_writeopcount);
 		}
 		MNT_IUNLOCK(mp);
 		if ((flags & VR_NO_SUSPCLR) == 0)
 			VFS_SUSP_CLEAN(mp);
 	} else if ((flags & VR_START_WRITE) != 0) {
 		MNT_REF(mp);
+		MNT_IUNLOCK(mp);
 		vn_start_write_locked(mp, 0);
 	} else {
 		MNT_IUNLOCK(mp);

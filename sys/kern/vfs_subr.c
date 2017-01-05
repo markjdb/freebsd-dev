@@ -547,45 +547,23 @@ SYSINIT(vfs, SI_SUB_VFS, SI_ORDER_FIRST, vntblinit, NULL);
 int
 vfs_busy(struct mount *mp, int flags)
 {
+	int error, ref_flags;
 
 	MPASS((flags & ~MBF_MASK) == 0);
 	CTR3(KTR_VFS, "%s: mp %p with flags %d", __func__, mp, flags);
 
-	MNT_ILOCK(mp);
+	ref_flags = (flags & MBF_NOWAIT) ? PCPU_REF_NOWAIT : 0;
+
 	MNT_REF(mp);
-	/*
-	 * If mount point is currently being unmounted, sleep until the
-	 * mount point fate is decided.  If thread doing the unmounting fails,
-	 * it will clear MNTK_UNMOUNT flag before waking us up, indicating
-	 * that this mount point has survived the unmount attempt and vfs_busy
-	 * should retry.  Otherwise the unmounter thread will set MNTK_REFEXPIRE
-	 * flag in addition to MNTK_UNMOUNT, indicating that mount point is
-	 * about to be really destroyed.  vfs_busy needs to release its
-	 * reference on the mount point in this case and return with ENOENT,
-	 * telling the caller that mount mount it tried to busy is no longer
-	 * valid.
-	 */
-	while (mp->mnt_kern_flag & MNTK_UNMOUNT) {
-		if (flags & MBF_NOWAIT || mp->mnt_kern_flag & MNTK_REFEXPIRE) {
-			MNT_REL(mp);
-			MNT_IUNLOCK(mp);
-			CTR1(KTR_VFS, "%s: failed busying before sleeping",
-			    __func__);
-			return (ENOENT);
-		}
-		if (flags & MBF_MNTLSTLOCK)
-			mtx_unlock(&mountlist_mtx);
-		mp->mnt_kern_flag |= MNTK_MWAIT;
-		msleep(mp, MNT_MTX(mp), PVFS | PDROP, "vfs_busy", 0);
-		if (flags & MBF_MNTLSTLOCK)
-			mtx_lock(&mountlist_mtx);
-		MNT_ILOCK(mp);
-	}
-	if (flags & MBF_MNTLSTLOCK)
+	if ((flags & MBF_MNTLSTLOCK) != 0)
 		mtx_unlock(&mountlist_mtx);
-	mp->mnt_lockref++;
-	MNT_IUNLOCK(mp);
-	return (0);
+	error = pcpu_ref_acq_hard(&mp->mnt_lockref, ref_flags, PVFS, "vfs_busy");
+	if (error != 0) {
+		MNT_REL_UNLOCKED(mp);
+		if ((flags & MBF_MNTLSTLOCK) != 0)
+			mtx_lock(&mountlist_mtx);
+	}
+	return (error);
 }
 
 /*
@@ -596,17 +574,8 @@ vfs_unbusy(struct mount *mp)
 {
 
 	CTR2(KTR_VFS, "%s: mp %p", __func__, mp);
-	MNT_ILOCK(mp);
-	MNT_REL(mp);
-	KASSERT(mp->mnt_lockref > 0, ("negative mnt_lockref"));
-	mp->mnt_lockref--;
-	if (mp->mnt_lockref == 0 && (mp->mnt_kern_flag & MNTK_DRAINING) != 0) {
-		MPASS(mp->mnt_kern_flag & MNTK_UNMOUNT);
-		CTR1(KTR_VFS, "%s: waking up waiters", __func__);
-		mp->mnt_kern_flag &= ~MNTK_DRAINING;
-		wakeup(&mp->mnt_lockref);
-	}
-	MNT_IUNLOCK(mp);
+	pcpu_ref_rel(&mp->mnt_lockref);
+	MNT_REL_UNLOCKED(mp);
 }
 
 /*
@@ -3851,16 +3820,17 @@ DB_SHOW_COMMAND(mount, db_show_mount)
 	if (jailed(mp->mnt_cred))
 		db_printf(", jail=%d", mp->mnt_cred->cr_prison->pr_id);
 	db_printf(" }\n");
-	db_printf("    mnt_ref = %d\n", mp->mnt_ref);
+	db_printf("    mnt_ref = %d\n", pcpu_ref_fetch(&mp->mnt_ref));
 	db_printf("    mnt_gen = %d\n", mp->mnt_gen);
 	db_printf("    mnt_nvnodelistsize = %d\n", mp->mnt_nvnodelistsize);
 	db_printf("    mnt_activevnodelistsize = %d\n",
 	    mp->mnt_activevnodelistsize);
-	db_printf("    mnt_writeopcount = %d\n", mp->mnt_writeopcount);
+	db_printf("    mnt_writeopcount = %d\n",
+	    pcpu_ref_fetch(&mp->mnt_writeopcount));
 	db_printf("    mnt_maxsymlinklen = %d\n", mp->mnt_maxsymlinklen);
 	db_printf("    mnt_iosize_max = %d\n", mp->mnt_iosize_max);
 	db_printf("    mnt_hashseed = %u\n", mp->mnt_hashseed);
-	db_printf("    mnt_lockref = %d\n", mp->mnt_lockref);
+	db_printf("    mnt_lockref = %d\n", pcpu_ref_fetch(&mp->mnt_lockref));
 	db_printf("    mnt_secondary_writes = %d\n", mp->mnt_secondary_writes);
 	db_printf("    mnt_secondary_accwrites = %d\n",
 	    mp->mnt_secondary_accwrites);

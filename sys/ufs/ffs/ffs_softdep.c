@@ -13326,9 +13326,9 @@ softdep_request_cleanup(fs, vp, cred, resource)
 	 * (fs_minfree).
 	 */
 	if (resource == FLUSH_INODES_WAIT) {
-		needed = vp->v_mount->mnt_writeopcount + 2;
+		needed = pcpu_ref_fetch(&vp->v_mount->mnt_writeopcount) + 2;
 	} else if (resource == FLUSH_BLOCKS_WAIT) {
-		needed = (vp->v_mount->mnt_writeopcount + 2) *
+		needed = (pcpu_ref_fetch(&(vp->v_mount->mnt_writeopcount)) + 2) *
 		    fs->fs_contigsumsize;
 		if (priv_check_cred(cred, PRIV_VFS_BLOCKRESERVE, 0))
 			needed += fragstoblks(fs,

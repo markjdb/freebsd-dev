@@ -31,7 +31,7 @@
 
 #include <sys/pcpu.h>
 
-extern struct pcpu __pcpu[1];
+extern struct pcpu __pcpu[];
 
 #define	counter_enter()	do {} while (0)
 #define	counter_exit()	do {} while (0)
@@ -72,6 +72,43 @@ counter_u64_zero_inline(counter_u64_t c)
 	smp_rendezvous(smp_no_rendevous_barrier, counter_u64_zero_one_cpu,
 	    smp_no_rendevous_barrier, c);
 }
+
+/* XXXMJG */
+static inline uint64_t
+counter_s32_read_one(int32_t *p, int cpu)
+{
+
+	return (*(int32_t *)((char *)p + sizeof(struct pcpu) * cpu));
+}
+
+static inline int32_t
+counter_s32_fetch_inline(int32_t *p)
+{
+	int32_t r;
+	int i;
+
+	r = 0;
+	CPU_FOREACH(i)
+		r += counter_s32_read_one((int32_t *)p, i);
+
+	return (r);
+}
+
+static void
+counter_s32_zero_one_cpu(void *arg)
+{
+
+	*((int32_t *)((char *)arg + sizeof(struct pcpu) *
+	    PCPU_GET(cpuid))) = 0;
+}
+
+static inline void
+counter_s32_zero_inline(counter_s32_t c)
+{
+
+	smp_rendezvous(smp_no_rendevous_barrier, counter_s32_zero_one_cpu,
+	    smp_no_rendevous_barrier, c);
+}
 #endif
 
 #define	counter_u64_add_protected(c, i)	counter_u64_add(c, i)
@@ -83,6 +120,26 @@ counter_u64_add(counter_u64_t c, int64_t inc)
 	__asm __volatile("addq\t%1,%%gs:(%0)"
 	    :
 	    : "r" ((char *)c - (char *)&__pcpu[0]), "ri" (inc)
+	    : "memory", "cc");
+}
+
+static inline void
+counter_s32_add_protected(counter_s32_t c, int inc)
+{
+
+	__asm __volatile("addl\t%1,%%gs:(%0)"
+	    :
+	    : "r" ((char *)c - (char *)&__pcpu[0]), "ri" (inc)
+	    : "memory", "cc");
+}
+
+static inline void
+counter_s32_dec_protected(counter_s32_t c, int dec)
+{
+
+	__asm __volatile("subl\t%1,%%gs:(%0)"
+	    :
+	    : "r" ((char *)c - (char *)&__pcpu[0]), "ri" (dec)
 	    : "memory", "cc");
 }
 

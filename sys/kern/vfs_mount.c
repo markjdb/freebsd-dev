@@ -112,6 +112,10 @@ mount_init(void *mem, int size, int flags)
 	mtx_init(&mp->mnt_mtx, "struct mount mtx", NULL, MTX_DEF);
 	mtx_init(&mp->mnt_listmtx, "struct mount vlist mtx", NULL, MTX_DEF);
 	lockinit(&mp->mnt_explock, PVFS, "explock", 0, 0);
+	/* XXXMJG: error checking */
+	pcpu_ref_alloc(&mp->mnt_ref, &mp->mnt_mtx, flags);
+	pcpu_ref_alloc(&mp->mnt_lockref, &mp->mnt_mtx, flags);
+	pcpu_ref_alloc(&mp->mnt_writeopcount, &mp->mnt_mtx, flags);
 	return (0);
 }
 
@@ -124,6 +128,9 @@ mount_fini(void *mem, int size)
 	lockdestroy(&mp->mnt_explock);
 	mtx_destroy(&mp->mnt_listmtx);
 	mtx_destroy(&mp->mnt_mtx);
+	pcpu_ref_destroy(&mp->mnt_ref);
+	pcpu_ref_destroy(&mp->mnt_lockref);
+	pcpu_ref_destroy(&mp->mnt_writeopcount);
 }
 
 static void
@@ -433,9 +440,7 @@ vfs_ref(struct mount *mp)
 {
 
 	CTR2(KTR_VFS, "%s: mp %p", __func__, mp);
-	MNT_ILOCK(mp);
-	MNT_REF(mp);
-	MNT_IUNLOCK(mp);
+	MNT_REF_UNLOCKED(mp);
 }
 
 void
@@ -443,9 +448,7 @@ vfs_rel(struct mount *mp)
 {
 
 	CTR2(KTR_VFS, "%s: mp %p", __func__, mp);
-	MNT_ILOCK(mp);
-	MNT_REL(mp);
-	MNT_IUNLOCK(mp);
+	MNT_REL_UNLOCKED(mp);
 }
 
 /*
@@ -466,7 +469,9 @@ vfs_mount_alloc(struct vnode *vp, struct vfsconf *vfsp, const char *fspath,
 	mp->mnt_activevnodelistsize = 0;
 	TAILQ_INIT(&mp->mnt_tmpfreevnodelist);
 	mp->mnt_tmpfreevnodelistsize = 0;
-	mp->mnt_ref = 0;
+	pcpu_ref_init(&mp->mnt_ref);
+	pcpu_ref_init(&mp->mnt_lockref);
+	pcpu_ref_init(&mp->mnt_writeopcount);
 	(void) vfs_busy(mp, MBF_NOWAIT);
 	atomic_add_acq_int(&vfsp->vfc_refcount, 1);
 	mp->mnt_op = vfsp->vfc_vfsops;
@@ -501,13 +506,43 @@ vfs_mount_destroy(struct mount *mp)
 		mp->mnt_kern_flag &= ~MNTK_MWAIT;
 		wakeup(mp);
 	}
+	pcpu_ref_kill(&mp->mnt_ref, PVFS, "mntref");
+	pcpu_ref_kill(&mp->mnt_lockref, PVFS, "lockref");
+
+	/* XXXMJG */
+	DELAY(1000);
+
+	int mnt_ref = pcpu_ref_fetch(&mp->mnt_ref);
+	if (mnt_ref != 0)
+		panic("mp %p ref %d\n", mp, mnt_ref);
+
+	int mnt_lockref = pcpu_ref_fetch(&mp->mnt_lockref);
+	if (mnt_lockref != 0)
+		panic("mp %p ref %d\n", mp, mnt_lockref);
+	int mnt_writeopcount = pcpu_ref_fetch(&mp->mnt_writeopcount);
+	if (mnt_writeopcount != 0)
+		panic("mp %p ref %d\n", mp, mnt_writeopcount);
+
+#if 0
+	if (mp->mnt_ref)
+		printf("%s: waiting for %p to drain, %d\n", __func__, mp, mp->mnt_ref);
 	while (mp->mnt_ref)
 		msleep(mp, MNT_MTX(mp), PVFS, "mntref", 0);
 	KASSERT(mp->mnt_ref == 0,
 	    ("%s: invalid refcount in the drain path @ %s:%d", __func__,
 	    __FILE__, __LINE__));
+
+	/* XXXMJG */
+	DELAY(1000);
+
+	if (mp->mnt_ref != 0)
+		panic("vfs_mount_destroy: nonzero ref");
+
+	if (mp->mnt_lockref != 0)
+		panic("vfs_mount_destroy: nonzero lockref");
 	if (mp->mnt_writeopcount != 0)
 		panic("vfs_mount_destroy: nonzero writeopcount");
+#endif
 	if (mp->mnt_secondary_writes != 0)
 		panic("vfs_mount_destroy: nonzero secondary_writes");
 	atomic_subtract_rel_int(&mp->mnt_vfc->vfc_refcount, 1);
@@ -525,8 +560,10 @@ vfs_mount_destroy(struct mount *mp)
 		panic("vfs_mount_destroy: nonzero activevnodelistsize");
 	if (mp->mnt_tmpfreevnodelistsize != 0)
 		panic("vfs_mount_destroy: nonzero tmpfreevnodelistsize");
+#if 0
 	if (mp->mnt_lockref != 0)
 		panic("vfs_mount_destroy: nonzero lock refcount");
+#endif
 	MNT_IUNLOCK(mp);
 #ifdef MAC
 	mac_mount_destroy(mp);
@@ -1333,15 +1370,15 @@ dounmount(struct mount *mp, int flags, struct thread *td)
 		MNT_ILOCK(mp);
 	}
 	error = 0;
+	pcpu_ref_block(&mp->mnt_lockref, PVFS, "mount drain");
+#if 0
 	if (mp->mnt_lockref) {
 		mp->mnt_kern_flag |= MNTK_DRAINING;
 		error = msleep(&mp->mnt_lockref, MNT_MTX(mp), PVFS,
 		    "mount drain", 0);
 	}
+#endif
 	MNT_IUNLOCK(mp);
-	KASSERT(mp->mnt_lockref == 0,
-	    ("%s: invalid lock refcount in the drain path @ %s:%d",
-	    __func__, __FILE__, __LINE__));
 	KASSERT(error == 0,
 	    ("%s: invalid return value for msleep in the drain path @ %s:%d",
 	    __func__, __FILE__, __LINE__));
@@ -1421,6 +1458,7 @@ dounmount(struct mount *mp, int flags, struct thread *td)
 			mp->mnt_kern_flag &= ~MNTK_MWAIT;
 			wakeup(mp);
 		}
+		pcpu_ref_unblock(&mp->mnt_lockref);
 		MNT_IUNLOCK(mp);
 		if (coveredvp)
 			VOP_UNLOCK(coveredvp, 0);

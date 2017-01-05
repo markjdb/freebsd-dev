@@ -74,6 +74,39 @@ counter_u64_free(counter_u64_t c)
 	uma_zfree(pcpu_zone_64, c);
 }
 
+void
+counter_s32_zero(counter_s32_t c)
+{
+
+	counter_s32_zero_inline(c);
+}
+
+uint64_t
+counter_s32_fetch(counter_s32_t c)
+{
+
+	return (counter_s32_fetch_inline(c));
+}
+
+counter_s32_t
+counter_s32_alloc(int flags)
+{
+	counter_s32_t r;
+
+	r = uma_zalloc(pcpu_zone_32, flags);
+	if (r != NULL)
+		counter_s32_zero(r);
+
+	return (r);
+}
+
+void
+counter_s32_free(counter_s32_t c)
+{
+
+	uma_zfree(pcpu_zone_32, c);
+}
+
 int
 sysctl_handle_counter_u64(SYSCTL_HANDLER_ARGS)
 {

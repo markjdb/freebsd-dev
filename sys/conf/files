@@ -3695,6 +3695,7 @@ kern/subr_module.c		standard
 kern/subr_msgbuf.c		standard
 kern/subr_param.c		standard
 kern/subr_pcpu.c		standard
+kern/subr_pcpu_ref.c		standard
 kern/subr_pctrie.c		standard
 kern/subr_power.c		standard
 kern/subr_prf.c			standard
