@@ -295,7 +295,7 @@ extern	struct pcpu __pcpu[];
 #define	pa_index(pa)	((pa) >> PDRSHIFT)
 #define	pa_to_pvh(pa)	(&pv_table[pa_index(pa)])
 
-#define	NPV_LIST_LOCKS	MAXCPU
+#define	NPV_LIST_LOCKS	(4 * MAXCPU)
 
 #define	PHYS_TO_PV_LIST_LOCK(pa)			\
 	(struct rwlock *)(&pv_list_locks[pa_index(pa) % NPV_LIST_LOCKS])
