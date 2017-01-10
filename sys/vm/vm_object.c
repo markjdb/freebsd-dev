@@ -1143,28 +1143,21 @@ shadowlookup:
 			if (tpindex == end)
 				break;
 			pindex = tpindex = m->pindex;
-		} else {
-			m = vm_page_lookup(tobject, tpindex);
-			if (m == NULL) {
-				if (advice == MADV_FREE &&
-				    tobject->type == OBJT_SWAP)
-					swap_pager_freespace(tobject, tpindex,
-					    1);
-				/*
-				 * Prepare to search the next object in the
-				 * chain.
-				 */
-				backing_object = tobject->backing_object;
-				if (backing_object == NULL)
-					goto unlock_tobject;
-				VM_OBJECT_WLOCK(backing_object);
-				tpindex +=
-				    OFF_TO_IDX(tobject->backing_object_offset);
-				if (tobject != object)
-					VM_OBJECT_WUNLOCK(tobject);
-				tobject = backing_object;
-				goto shadowlookup;
-			}
+		} else if ((m = vm_page_lookup(tobject, tpindex)) == NULL) {
+			if (advice == MADV_FREE && tobject->type == OBJT_SWAP)
+				swap_pager_freespace(tobject, tpindex, 1);
+			/*
+			 * Prepare to search the next object in the chain.
+			 */
+			backing_object = tobject->backing_object;
+			if (backing_object == NULL)
+				goto unlock_tobject;
+			VM_OBJECT_WLOCK(backing_object);
+			tpindex += OFF_TO_IDX(tobject->backing_object_offset);
+			if (tobject != object)
+				VM_OBJECT_WUNLOCK(tobject);
+			tobject = backing_object;
+			goto shadowlookup;
 		}
 
 		/*
