@@ -2791,8 +2791,8 @@ vm_page_free_toq(vm_page_t m)
 		panic("vm_page_free: freeing busy page %p", m);
 
 #ifndef VM_PAGE_CACHE
-	cacheable = m->object == NULL ||
-	    (m->object->flags & OBJ_COLORED) == 0;
+	cacheable = ((m->object == NULL && vm_reserv_level(m) == -1) ||
+	    (m->object->flags & OBJ_COLORED) == 0);
 #else
 	cacheable = false;
 #endif
