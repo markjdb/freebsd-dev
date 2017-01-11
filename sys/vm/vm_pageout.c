@@ -121,7 +121,7 @@ static void vm_pageout(void);
 static void vm_pageout_init(void);
 static int vm_pageout_clean(vm_page_t m, int *numpagedout);
 static int vm_pageout_cluster(vm_page_t m);
-static bool vm_pageout_scan(struct vm_domain *vmd, int pass);
+static bool vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage);
 static void vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
     int starting_page_shortage);
 
@@ -1312,7 +1312,7 @@ dolaundry:
  * queue scan to meet the target.
  */
 static bool
-vm_pageout_scan(struct vm_domain *vmd, int pass)
+vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage)
 {
 	vm_page_t m, next;
 	struct vm_pagequeue *pq;
@@ -1356,7 +1356,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	 */
 	if (pass > 0) {
 		deficit = atomic_readandclear_int(&vm_pageout_deficit);
-		page_shortage = vm_paging_target() + deficit;
+		page_shortage = shortage + deficit;
 	} else
 		page_shortage = deficit = 0;
 	starting_page_shortage = page_shortage;
@@ -1954,17 +1954,67 @@ vm_pageout_oom(int shortage)
 	}
 }
 
+static int v_pdc_page_shortage;
+static int v_pdc_page_shortage_dt;
+static int v_pdc_page_integral;
+static int v_pdc_output;
+static int v_pdc_ticks;
+
+static int v_pdc_max_in;
+static int v_pdc_max_out;
+
+static int v_Kpd = 4;	/* Proportional gain divisor. */
+static int v_Kid = 4;	/* Integral gain divisor. */
+static int v_Kdd = 8;	/* Derivative gain divisor. */
+static int v_bound = 4;
+
+#define	VM_PAGEOUT_TICKS	(hz / 100)
+
+static int
+vm_pageout_controller(void)
+{
+	int integral, derivative, output;
+	int shortage, bound;
+
+	shortage = vm_paging_target();
+	v_pdc_max_in = imax(shortage, v_pdc_max_in);
+	if (ticks - v_pdc_ticks >= VM_PAGEOUT_TICKS) {
+		derivative = shortage - v_pdc_page_shortage;
+		derivative = (v_pdc_page_shortage_dt * 9 + derivative) / 10;
+		v_pdc_ticks = ticks;
+		v_pdc_page_shortage = 0;
+		v_pdc_output = 0;
+	} else {
+		shortage = imax(shortage, 0);
+		derivative = v_pdc_page_shortage_dt;
+	}
+
+	bound = vm_cnt.v_free_target * v_Kid * v_bound;
+	integral = v_pdc_page_integral + shortage;
+	integral = imax(imin(integral, bound), 0);
+	shortage += v_pdc_page_shortage;
+	output = shortage / v_Kpd + integral / v_Kid + derivative / v_Kdd;
+	output = imax(output - v_pdc_output, 0);
+	v_pdc_output += output;
+	v_pdc_page_integral = integral;
+	v_pdc_page_shortage = shortage;
+
+	v_pdc_max_out = imax(output, v_pdc_max_out);
+
+	return (output);
+}
+
 static void
 vm_pageout_worker(void *arg)
 {
 	struct vm_domain *domain;
-	int domidx, pass;
-	bool target_met;
+	int domidx, error, pass, shortage;
+	bool met_control;
 
 	domidx = (uintptr_t)arg;
 	domain = &vm_dom[domidx];
 	pass = 0;
-	target_met = true;
+	met_control = true;
 
 	/*
 	 * XXXKIB It could be useful to bind pageout daemon threads to
@@ -2007,13 +2057,14 @@ vm_pageout_worker(void *arg)
 		 * target.  Otherwise, we may be awakened over and over again,
 		 * wasting CPU time.
 		 */
-		if (vm_pageout_wanted && target_met)
+		if (vm_pageout_wanted && !vm_paging_needed())
 			vm_pageout_wanted = false;
 
 		/*
 		 * Might the page daemon receive a wakeup call?
 		 */
-		if (vm_pageout_wanted) {
+		if (!met_control || vm_pageout_wanted ||
+		    vm_paging_target() > 0) {
 			/*
 			 * No.  Either vm_pageout_wanted was set by another
 			 * thread during the previous scan, which must have
@@ -2026,23 +2077,35 @@ vm_pageout_worker(void *arg)
 			 */
 			mtx_unlock(&vm_page_queue_free_mtx);
 			if (pass >= 1)
-				pause("psleep", hz / VM_INACT_SCAN_RATE);
-			pass++;
+				error = mtx_sleep(&vm_pageout_wanted,
+				    &vm_page_queue_free_mtx, PVM, "psleep",
+				    VM_PAGEOUT_TICKS);
+			shortage = vm_pageout_controller();
 		} else {
 			/*
 			 * Yes.  Sleep until pages need to be reclaimed or
 			 * have their reference stats updated.
 			 */
-			if (mtx_sleep(&vm_pageout_wanted,
-			    &vm_page_queue_free_mtx, PDROP | PVM, "psleep",
-			    hz) == 0) {
-				PCPU_INC(cnt.v_pdwakeups);
-				pass = 1;
-			} else
-				pass = 0;
+			pass = 0;
+			error = mtx_sleep(&vm_pageout_wanted,
+			    &vm_page_queue_free_mtx, PVM, "psleep",
+			    VM_PAGEOUT_TICKS);
+			shortage = vm_pageout_controller();
+			if (error == EWOULDBLOCK && shortage <= 0 &&
+			    vm_pages_needed == 0) {
+				mtx_unlock(&vm_page_queue_free_mtx);
+				continue;
+			}
 		}
 
-		target_met = vm_pageout_scan(domain, pass);
+		if (shortage > 0 && pass == 0)
+			pass = 1;
+		if (vm_pageout_wanted)
+			PCPU_INC(cnt.v_pdwakeups);
+		mtx_unlock(&vm_page_queue_free_mtx);
+		met_control = vm_pageout_scan(domain, pass, shortage);
+		if (!met_control)
+			pass++;
 	}
 }
 
