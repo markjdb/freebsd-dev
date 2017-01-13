@@ -220,7 +220,6 @@ device		uart		# Generic UART driver
 #device		bxe		# Broadcom BCM57710/BCM57711/BCM57711E 10Gb Ethernet
 #device		de		# DEC/Intel DC21x4x (``Tulip'')
 device		em		# Intel PRO/1000 Gigabit Ethernet Family
-device		igb		# Intel PRO/1000 PCIE Server Gigabit Family
 #device		ixgbe		# Intel PRO/10GbE PCIE Ethernet Family
 #device		le		# AMD Am7900 LANCE and Am79C9xx PCnet
 #device		ti		# Alteon Networks Tigon I/II gigabit Ethernet
