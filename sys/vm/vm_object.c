@@ -1140,9 +1140,8 @@ shadowlookup:
 			    tpindex > pindex)
 				swap_pager_freespace(object, pindex,
 				    tpindex - pindex);
-			if (tpindex == end)
+			if ((pindex = tpindex) == end)
 				break;
-			pindex = tpindex = m->pindex;
 		} else if ((m = vm_page_lookup(tobject, tpindex)) == NULL) {
 			if (advice == MADV_FREE && tobject->type == OBJT_SWAP)
 				swap_pager_freespace(tobject, tpindex, 1);
