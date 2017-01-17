@@ -19,9 +19,6 @@
  * CDDL HEADER END
  *
  * Portions Copyright 2006-2008 John Birrell jb@freebsd.org
- *
- * $FreeBSD$
- *
  */
 
 /*
@@ -30,6 +27,8 @@
  */
 
 #include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
@@ -152,27 +151,19 @@ typedef struct profile_probe {
 	char		prof_name[PROF_NAMELEN];
 	dtrace_id_t	prof_id;
 	int		prof_kind;
-#ifdef illumos
-	hrtime_t	prof_interval;
-	cyclic_id_t	prof_cyclic;
-#else
 	sbintime_t	prof_interval;
 	struct callout	prof_cyclic;
 	sbintime_t	prof_expected;
 	struct profile_probe_percpu **prof_pcpus;
-#endif
 } profile_probe_t;
 
 typedef struct profile_probe_percpu {
 	hrtime_t	profc_expected;
 	hrtime_t	profc_interval;
 	profile_probe_t	*profc_probe;
-#ifdef __FreeBSD__
 	struct callout	profc_cyclic;
-#endif
 } profile_probe_percpu_t;
 
-static d_open_t	profile_open;
 static int	profile_unload(void);
 static void	profile_create(hrtime_t, char *, int);
 static void	profile_destroy(void *, dtrace_id_t, void *);
@@ -206,12 +197,6 @@ static uint32_t profile_max = PROFILE_MAX_DEFAULT;
 					/* maximum number of profile probes */
 static uint32_t profile_total;		/* current number of profile probes */
 
-static struct cdevsw profile_cdevsw = {
-	.d_version	= D_VERSION,
-	.d_open		= profile_open,
-	.d_name		= "profile",
-};
-
 static dtrace_pattr_t profile_attr = {
 { DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
 { DTRACE_STABILITY_PRIVATE, DTRACE_STABILITY_PRIVATE, DTRACE_CLASS_UNKNOWN },
@@ -233,15 +218,16 @@ static dtrace_pops_t profile_pops = {
 	profile_destroy
 };
 
-static struct cdev		*profile_cdev;
 static dtrace_provider_id_t	profile_id;
 static hrtime_t			profile_interval_min = NANOSEC / 5000;	/* 5000 hz */
 static int			profile_aframes = PROF_ARTIFICIAL_FRAMES;
 
 SYSCTL_DECL(_kern_dtrace);
-SYSCTL_NODE(_kern_dtrace, OID_AUTO, profile, CTLFLAG_RD, 0, "DTrace profile parameters");
-SYSCTL_INT(_kern_dtrace_profile, OID_AUTO, aframes, CTLFLAG_RW, &profile_aframes,
-    0, "Skipped frames for profile provider");
+SYSCTL_NODE(_kern_dtrace, OID_AUTO, profile, CTLFLAG_RD, 0,
+    "DTrace profile parameters");
+SYSCTL_INT(_kern_dtrace_profile, OID_AUTO, aframes, CTLFLAG_RW,
+    &profile_aframes, 0,
+    "Skipped frames for profile provider");
 
 static sbintime_t
 nsec_to_sbt(hrtime_t nsec)
@@ -274,11 +260,7 @@ profile_fire(void *arg)
 	struct trapframe *frame;
 	uintfptr_t pc, upc;
 
-#ifdef illumos
-	late = gethrtime() - pcpu->profc_expected;
-#else
 	late = sbt_to_nsec(sbinuptime() - pcpu->profc_expected);
-#endif
 
 	pc = 0;
 	upc = 0;
@@ -350,20 +332,14 @@ profile_create(hrtime_t interval, char *name, int kind)
 
 	prof = kmem_zalloc(sizeof (profile_probe_t), KM_SLEEP);
 	(void) strcpy(prof->prof_name, name);
-#ifdef illumos
-	prof->prof_interval = interval;
-	prof->prof_cyclic = CYCLIC_NONE;
-#else
 	prof->prof_interval = nsec_to_sbt(interval);
 	callout_init(&prof->prof_cyclic, 1);
-#endif
 	prof->prof_kind = kind;
 	prof->prof_id = dtrace_probe_create(profile_id,
 	    NULL, NULL, name,
 	    profile_aframes, prof);
 }
 
-/*ARGSUSED*/
 static void
 profile_provide(void *arg, dtrace_probedesc_t *desc)
 {
@@ -495,100 +471,17 @@ profile_provide(void *arg, dtrace_probedesc_t *desc)
 	profile_create(val, name, kind);
 }
 
-/* ARGSUSED */
 static void
 profile_destroy(void *arg, dtrace_id_t id, void *parg)
 {
 	profile_probe_t *prof = parg;
 
-#ifdef illumos
-	ASSERT(prof->prof_cyclic == CYCLIC_NONE);
-#else
 	ASSERT(!callout_active(&prof->prof_cyclic) && prof->prof_pcpus == NULL);
-#endif
 	kmem_free(prof, sizeof (profile_probe_t));
 
 	ASSERT(profile_total >= 1);
 	atomic_add_32(&profile_total, -1);
 }
-
-#ifdef illumos
-/*ARGSUSED*/
-static void
-profile_online(void *arg, cpu_t *cpu, cyc_handler_t *hdlr, cyc_time_t *when)
-{
-	profile_probe_t *prof = arg;
-	profile_probe_percpu_t *pcpu;
-
-	pcpu = kmem_zalloc(sizeof (profile_probe_percpu_t), KM_SLEEP);
-	pcpu->profc_probe = prof;
-
-	hdlr->cyh_func = profile_fire;
-	hdlr->cyh_arg = pcpu;
-
-	when->cyt_interval = prof->prof_interval;
-	when->cyt_when = gethrtime() + when->cyt_interval;
-
-	pcpu->profc_expected = when->cyt_when;
-	pcpu->profc_interval = when->cyt_interval;
-}
-
-/*ARGSUSED*/
-static void
-profile_offline(void *arg, cpu_t *cpu, void *oarg)
-{
-	profile_probe_percpu_t *pcpu = oarg;
-
-	ASSERT(pcpu->profc_probe == arg);
-	kmem_free(pcpu, sizeof (profile_probe_percpu_t));
-}
-
-/* ARGSUSED */
-static void
-profile_enable(void *arg, dtrace_id_t id, void *parg)
-{
-	profile_probe_t *prof = parg;
-	cyc_omni_handler_t omni;
-	cyc_handler_t hdlr;
-	cyc_time_t when;
-
-	ASSERT(prof->prof_interval != 0);
-	ASSERT(MUTEX_HELD(&cpu_lock));
-
-	if (prof->prof_kind == PROF_TICK) {
-		hdlr.cyh_func = profile_tick;
-		hdlr.cyh_arg = prof;
-
-		when.cyt_interval = prof->prof_interval;
-		when.cyt_when = gethrtime() + when.cyt_interval;
-	} else {
-		ASSERT(prof->prof_kind == PROF_PROFILE);
-		omni.cyo_online = profile_online;
-		omni.cyo_offline = profile_offline;
-		omni.cyo_arg = prof;
-	}
-
-	if (prof->prof_kind == PROF_TICK) {
-		prof->prof_cyclic = cyclic_add(&hdlr, &when);
-	} else {
-		prof->prof_cyclic = cyclic_add_omni(&omni);
-	}
-}
-
-/* ARGSUSED */
-static void
-profile_disable(void *arg, dtrace_id_t id, void *parg)
-{
-	profile_probe_t *prof = parg;
-
-	ASSERT(prof->prof_cyclic != CYCLIC_NONE);
-	ASSERT(MUTEX_HELD(&cpu_lock));
-
-	cyclic_remove(prof->prof_cyclic);
-	prof->prof_cyclic = CYCLIC_NONE;
-}
-
-#else
 
 static void
 profile_enable_omni(profile_probe_t *prof)
@@ -629,7 +522,6 @@ profile_disable_omni(profile_probe_t *prof)
 	prof->prof_pcpus = NULL;
 }
 
-/* ARGSUSED */
 static void
 profile_enable(void *arg, dtrace_id_t id, void *parg)
 {
@@ -646,7 +538,6 @@ profile_enable(void *arg, dtrace_id_t id, void *parg)
 	}
 }
 
-/* ARGSUSED */
 static void
 profile_disable(void *arg, dtrace_id_t id, void *parg)
 {
@@ -661,40 +552,32 @@ profile_disable(void *arg, dtrace_id_t id, void *parg)
 		profile_disable_omni(prof);
 	}
 }
-#endif
 
 static void
 profile_load(void *dummy)
 {
-	/* Create the /dev/dtrace/profile entry. */
-	profile_cdev = make_dev(&profile_cdevsw, 0, UID_ROOT, GID_WHEEL, 0600,
-	    "dtrace/profile");
+	int error;
 
-	if (dtrace_register("profile", &profile_attr, DTRACE_PRIV_USER,
-	    NULL, &profile_pops, NULL, &profile_id) != 0)
-		return;
+	error = dtrace_register("profile", &profile_attr, DTRACE_PRIV_USER,
+	    NULL, &profile_pops, NULL, &profile_id);
+	if (error != 0)
+		printf("%s: failed to register profile provider: %d\n",
+		    __func__, error);
 }
-
 
 static int
-profile_unload()
+profile_unload(void)
 {
-	int error = 0;
 
-	if ((error = dtrace_unregister(profile_id)) != 0)
-		return (error);
-
-	destroy_dev(profile_cdev);
-
-	return (error);
+	return (dtrace_unregister(profile_id));
 }
 
-/* ARGSUSED */
 static int
 profile_modevent(module_t mod __unused, int type, void *data __unused)
 {
-	int error = 0;
+	int error;
 
+	error = 0;
 	switch (type) {
 	case MOD_LOAD:
 		break;
@@ -708,20 +591,13 @@ profile_modevent(module_t mod __unused, int type, void *data __unused)
 	default:
 		error = EOPNOTSUPP;
 		break;
-
 	}
 	return (error);
 }
 
-/* ARGSUSED */
-static int
-profile_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused, struct thread *td __unused)
-{
-	return (0);
-}
-
 SYSINIT(profile_load, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, profile_load, NULL);
-SYSUNINIT(profile_unload, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, profile_unload, NULL);
+SYSUNINIT(profile_unload, SI_SUB_DTRACE_PROVIDER, SI_ORDER_ANY, profile_unload,
+    NULL);
 
 DEV_MODULE(profile, profile_modevent, NULL);
 MODULE_VERSION(profile, 1);
