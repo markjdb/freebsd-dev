@@ -140,6 +140,7 @@ SYSINIT(pagedaemon, SI_SUB_KTHREAD_PAGE, SI_ORDER_SECOND, kproc_start,
 
 SDT_PROVIDER_DEFINE(vm);
 SDT_PROBE_DEFINE(vm, , , vm__lowmem_scan);
+SDT_PROBE_DEFINE4(vm, , , controller, "int", "int", "int", "int");
 
 #if !defined(NO_SWAPPING)
 /* the kernel process "vm_daemon"*/
@@ -2000,6 +2001,8 @@ vm_pageout_controller(void)
 	v_pdc_page_shortage = shortage;
 
 	v_pdc_max_out = imax(output, v_pdc_max_out);
+
+	SDT_PROBE4(vm, , , controller, output, shortage, integral, derivative);
 
 	return (output);
 }
