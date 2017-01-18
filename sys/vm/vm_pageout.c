@@ -2075,7 +2075,6 @@ vm_pageout_worker(void *arg)
 			 * and scan again now.  Otherwise, sleep a bit and
 			 * try again later.
 			 */
-			mtx_unlock(&vm_page_queue_free_mtx);
 			if (pass >= 1)
 				error = mtx_sleep(&vm_pageout_wanted,
 				    &vm_page_queue_free_mtx, PVM, "psleep",
