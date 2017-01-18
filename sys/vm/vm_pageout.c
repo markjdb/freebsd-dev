@@ -1968,7 +1968,7 @@ static int v_Kid = 4;	/* Integral gain divisor. */
 static int v_Kdd = 8;	/* Derivative gain divisor. */
 static int v_bound = 4;
 
-#define	VM_PAGEOUT_TICKS	(hz / 100)
+#define	VM_PAGEOUT_TICKS	imax(hz / 100, 1)
 
 static int
 vm_pageout_controller(void)
