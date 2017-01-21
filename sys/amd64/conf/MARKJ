@@ -100,6 +100,8 @@ options		ALT_BREAK_TO_DEBUGGER
 # Make an SMP-capable kernel by default
 options 	SMP			# Symmetric MultiProcessor Kernel
 
+device		nmdm
+
 # CPU frequency control
 device		cpufreq
 
