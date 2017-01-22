@@ -1074,25 +1074,23 @@ vm_object_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
 	return (res);
 }
 
-/*
- *	vm_object_advice_applies:
- *
- *	Return true if the specified advice can be applied to the given
- *	object, and false otherwise.
- */
 static bool
 vm_object_advice_applies(vm_object_t object, int advice)
 {
 
-	if (advice == MADV_FREE) {
-		if ((object->type != OBJT_DEFAULT &&
-		     object->type != OBJT_SWAP) ||
-		    (object->flags & OBJ_ONEMAPPING) == 0) {
-			return (false);
-		}
-	} else if ((object->flags & OBJ_UNMANAGED) != 0)
-		return (false);
-	return (true);
+	if (advice != MADV_FREE)
+		return ((object->flags & OBJ_UNMANAGED) == 0);
+	return ((object->type == OBJT_DEFAULT || object->type == OBJT_SWAP) &&
+	    (object->flags & OBJ_ONEMAPPING) != 0);
+}
+
+static void
+vm_object_madvise_freespace(vm_object_t object, int advice, vm_pindex_t pindex,
+    vm_size_t size)
+{
+
+	if (advice == MADV_FREE && object->type == OBJT_SWAP)
+		swap_pager_freespace(object, pindex, size);
 }
 
 /*
@@ -1151,21 +1149,19 @@ relookup:
 			if (object->backing_object == NULL) {
 				tpindex = (m != NULL && m->pindex < end) ?
 				    m->pindex : end;
-				if (advice == MADV_FREE &&
-				    object->type == OBJT_SWAP)
-					swap_pager_freespace(object, pindex,
-					    tpindex - pindex);
+				vm_object_madvise_freespace(object, advice,
+				    pindex, tpindex - pindex);
 				if ((pindex = tpindex) == end)
 					break;
 				goto next_page;
 			}
 
+			tm = NULL;
 			tpindex = pindex;
 			do {
-				if (advice == MADV_FREE &&
-				    tobject->type == OBJT_SWAP)
-					swap_pager_freespace(tobject, tpindex,
-					    1);
+				MPASS(tm == NULL || tm->object != object);
+				vm_object_madvise_freespace(tobject, advice,
+				    tpindex, 1);
 				/*
 				 * Prepare to search the next object in the
 				 * chain.
@@ -1220,8 +1216,7 @@ next_page:
 		}
 		vm_page_advise(tm, advice);
 		vm_page_unlock(tm);
-		if (advice == MADV_FREE && tobject->type == OBJT_SWAP)
-			swap_pager_freespace(tobject, tm->pindex, 1);
+		vm_object_madvise_freespace(tobject, advice, tm->pindex, 1);
 next_pindex:
 		if (tobject != object)
 			VM_OBJECT_WUNLOCK(tobject);
