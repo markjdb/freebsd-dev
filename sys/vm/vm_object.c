@@ -1078,8 +1078,10 @@ static bool
 vm_object_advice_applies(vm_object_t object, int advice)
 {
 
+	if ((object->flags & OBJ_UNMANAGED) != 0)
+		return (false);
 	if (advice != MADV_FREE)
-		return ((object->flags & OBJ_UNMANAGED) == 0);
+		return (true);
 	return ((object->type == OBJT_DEFAULT || object->type == OBJT_SWAP) &&
 	    (object->flags & OBJ_ONEMAPPING) != 0);
 }
