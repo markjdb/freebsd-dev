@@ -495,7 +495,7 @@ srat_set_cpus(void *dummy)
 			    cpu->domain);
 	}
 }
-SYSINIT(srat_set_cpus, SI_SUB_CPU, SI_ORDER_ANY, srat_set_cpus, NULL);
+SYSINIT(srat_set_cpus, SI_SUB_CPU, SI_ORDER_MIDDLE + 1, srat_set_cpus, NULL);
 
 /*
  * Map a _PXM value to a VM domain ID.

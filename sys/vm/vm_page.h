@@ -246,6 +246,7 @@ struct vm_domain {
 	boolean_t vmd_oom;
 	int vmd_oom_seq;
 	int vmd_last_active_scan;
+	int vmd_phys;	/* used by fake affinity code */
 };
 
 extern struct vm_domain vm_dom[MAXMEMDOM];

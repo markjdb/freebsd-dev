@@ -473,6 +473,284 @@ vm_page_domain_init(struct vm_domain *vmd, int instance)
 	}
 }
 
+#if defined(VM_NUMA_ALLOC) && MAXMEMDOM > 1
+struct mem_affinity fake_affinity[VM_PHYSSEG_MAX + 1];
+static int vm_fake_doms = 0;
+static int vm_phys_doms;
+
+static void
+vm_build_fake_affinity_numa(void)
+{
+	struct mem_affinity *m_old, *m_new;
+	vm_paddr_t mem, per_dom, start, resid;
+	int i;
+
+	for (mem = 0, m_old = mem_affinity;
+	    m_old->start != m_old->end;
+	    m_old++)
+		mem += (m_old->end - m_old->start);
+
+	per_dom = mem / vm_fake_doms;
+	m_new = fake_affinity;
+	m_old = mem_affinity;
+	start = m_old->start;
+	for (i = 0; i < vm_fake_doms; i++) {
+		resid = per_dom;
+		m_new->domain = i;
+		vm_dom[i].vmd_phys = m_old->domain;
+		while (resid) {
+			m_new->start = start;
+			m_new->end = MIN(start + resid, m_old->end);
+			resid -= m_new->end - m_new->start;
+			start += m_new->end - m_new->start;
+			if (start == m_old->end) {
+				m_old++;
+				start = m_old->start;
+				if (start == m_old->end)
+					break;
+			}
+			m_new++;
+		}
+	}
+	if (bootverbose) {
+		printf("Using %d Fake Numa Domains for VM scaling\n",
+		    vm_fake_doms);
+		printf("Real affinity:\n");
+		for (m_old = mem_affinity; m_old->start != m_old->end; m_old++)
+			printf("\t[%d]: 0x%jx -> 0x%jx\n",
+			    m_old->domain,
+			    (uintmax_t)m_old->start,
+			    (uintmax_t)m_old->end);
+		printf("Fake affinity:\n");
+		for (m_new = fake_affinity;
+		    m_new->start != m_new->end;
+		    m_new++)
+			printf("\t[%d] (%d): 0x%jx -> 0x%jx\n",
+			    m_new->domain,
+			    vm_dom[m_new->domain].vmd_phys,
+			    (uintmax_t)m_new->start,
+			    (uintmax_t)m_new->end);
+	}
+	vm_phys_doms = vm_ndomains;
+	vm_ndomains = vm_fake_doms;
+	mem_affinity = fake_affinity;
+}
+
+static int
+phys_avail_cmp(const void *p1, const void *p2)
+{
+	vm_paddr_t left = *(const vm_paddr_t *)p1;
+	vm_paddr_t right = *(const vm_paddr_t *)p2;
+	return ((left > right) - (left < right));
+}
+
+static void
+vm_build_fake_affinity(void)
+{
+	int dom, i;
+	vm_paddr_t per_dom, mem, low, end, size, inc;
+#define MAX_AVAIL 128
+	static vm_paddr_t avail[MAX_AVAIL];
+
+
+	TUNABLE_INT_FETCH("vm.fake_doms", &vm_fake_doms);
+	/*
+	 * autotune no more than 4 CPUs in a domain to avoid
+	 * lock contention
+	 */
+
+	if (vm_fake_doms == -1)
+		vm_fake_doms = mp_ncpus / 4;
+
+	/* User disabled, or no more than 4 cpus, so don't bother.. */
+	if (vm_fake_doms < 2)
+		return;
+
+	if (vm_fake_doms > MAXMEMDOM)
+		vm_fake_doms = MAXMEMDOM;
+
+
+	/* check to see if we have real NUMA affinity info */
+	if (mem_affinity != NULL) {
+		vm_build_fake_affinity_numa();
+		return;
+	}
+
+	/* copy phys_avail to sort it, and count pages */
+	for (mem = 0, i = 0; phys_avail[i + 1]; i += 2) {
+		/* 
+		 * Leave 2 indexes free at the end, so we can advance
+		 * avail to a zero value when distributing pages to
+		 * domains.
+		 */
+		if (i + 3 >= MAX_AVAIL - 1)
+			return;
+		avail[i] = phys_avail[i];
+		avail[i + 1] = phys_avail[i + 1];
+		mem += avail[i + 1] - avail[i];
+	}
+
+	/* 
+	 * Produce a sorted avail which we can use to fairly
+	 * distribute pages which are backed by RAM.  
+	 * We could just distribute based on high/low water, but
+	 * that leaves some domains with a lot of memory holes.
+	 */
+	qsort(avail, i / 2, 2 * sizeof (avail[0]), phys_avail_cmp);
+
+	per_dom = trunc_page(mem / vm_fake_doms);
+
+	if (bootverbose)
+		printf("memory per_dom = %jx\n", (uintmax_t)per_dom);
+
+	low = avail[0];
+	for (dom = 0, i = 0; dom < vm_fake_doms && avail[i]; dom++) {
+		fake_affinity[dom].start = low;
+		size = 0;
+		while (size < per_dom && avail[i]) {
+			if (bootverbose)
+				printf("avail[%d]=%jx..%jx, low=%jx\n",
+				    i, (uintmax_t)avail[i],
+				    (uintmax_t)avail[i + 1], (uintmax_t)low);
+			inc = MIN(per_dom - size, avail[i + 1] - low);
+			size += inc;
+			low += inc;
+			end = low;
+			if (bootverbose)
+				printf("\t size=%jx, inc = %jx, low = %jx\n",
+				    (uintmax_t)size, (uintmax_t)inc,
+				    (uintmax_t)low);
+			if (avail[i + 1] == low) {
+				i += 2;
+				low = avail[i];
+			}
+		}
+		fake_affinity[dom].end = end;
+		fake_affinity[dom].domain = dom;
+		if (bootverbose)
+			printf("Domain %d:  0x%jx ... 0x%jx\n", dom,
+			    (uintmax_t)fake_affinity[dom].start,
+			    (uintmax_t)fake_affinity[dom].end);
+	}
+
+	/*
+	 * when dividing ram / vm_fake_doms, remainders will wind up
+	 * unassigned.  This will be indicated by having more pages
+	 * left in the current avail slot (eg, we did not walk avail
+	 * to 0).  In this case, put the remainder in the last domain.
+	 */
+
+	if (avail[i]) {
+		if (bootverbose)
+			printf("at end, avail is %jx, correcting..\n",
+			    (uintmax_t)avail[i]);
+		dom = vm_fake_doms - 1;
+		fake_affinity[dom].end = avail[i + 1];
+		if (bootverbose)
+			printf("Domain %d:  0x%jx ... 0x%jx\n", dom,
+			    (uintmax_t)fake_affinity[dom].start,
+			    (uintmax_t)fake_affinity[dom].end);
+	}
+	vm_phys_doms = vm_ndomains;
+	vm_ndomains = vm_fake_doms;
+	mem_affinity = fake_affinity;
+	if (bootverbose)
+		printf("Using %d Fake Numa Domains for VM scaling\n",
+		    vm_fake_doms);
+}
+
+/*
+ * Map fake numa domains to per-cpu domains.  
+ * We wrap around the domains, only using a fake domain
+ * if it has a matching backing numa domain 
+ */
+
+static void
+vm_fake_affinity_fixup_cpus()
+{
+	struct pcpu *pc;
+	unsigned int cpu, dom, search, per_dom;
+	static int cpus_assigned[MAXMEMDOM];
+
+
+	bzero(cpus_assigned, sizeof(cpus_assigned));
+	per_dom = mp_ncpus / vm_ndomains;
+	if (mp_ncpus % vm_ndomains != 0)
+		per_dom++;
+	if (bootverbose)
+		printf("assigning %u CPUs per domain\n", per_dom);
+	for (cpu = 0; cpu < MAXCPU; cpu++) {
+		if (CPU_ABSENT(cpu))
+			continue;
+		pc = pcpu_find(cpu);
+		KASSERT(pc != NULL, ("no pcpu data for CPU %u", cpu));
+		
+		search = dom;
+		while(cpus_assigned[search % vm_ndomains] >= per_dom ||
+		  pc->pc_domain != vm_dom[search % vm_ndomains].vmd_phys) {
+			search++;
+			if ((search - dom) > vm_ndomains) {
+				printf("Couldn't find backing domain %d\n",
+				    pc->pc_domain);
+				return;
+			}
+		}
+		dom = search % vm_ndomains;
+		pc->pc_domain = dom;
+		CPU_SET(cpu, &cpuset_domain[dom]);
+		cpus_assigned[dom]++;
+		if (bootverbose)
+			printf("vm_fake_affinity: CPU %u: domain %d\n", cpu,
+			    pc->pc_domain);
+	}
+}
+
+/*
+ * Walk the memory affinity table and apply the locality
+ * information from the backing numa domain to the fake domains
+ */
+static void
+vm_fake_affinity_fixup_locality()
+{
+	unsigned int f, t, fake_idx, phys_idx;
+	static int tmp_locality[MAXMEMDOM * MAXMEMDOM];
+
+	bcopy(mem_locality, tmp_locality, sizeof(tmp_locality));
+	for (f = 0; f < vm_ndomains; f++) {
+		for (t = 0; t < vm_ndomains; t++) {
+			fake_idx = f * vm_ndomains + t;
+			phys_idx = vm_dom[f].vmd_phys * vm_phys_doms +
+			    vm_dom[t].vmd_phys;
+			mem_locality[fake_idx] = tmp_locality[phys_idx];
+		}
+	}
+}
+
+static void
+vm_fake_affinity_fixup(void *dummy)
+{
+	/* did we setup any fake domains ? */
+	if (mem_affinity != fake_affinity)
+		return;
+
+	vm_fake_affinity_fixup_cpus();
+
+	/* if we have memory locality info, use it */	
+	if (mem_locality != NULL)
+		vm_fake_affinity_fixup_locality();
+}
+
+
+SYSINIT(vm_fake_affinity_fixup, SI_SUB_CPU, SI_ORDER_ANY,
+	vm_fake_affinity_fixup, NULL);
+
+#else
+static void
+vm_build_fake_affinity(void)
+{
+}
+#endif	/* defined(VM_NUMA_ALLOC) && MAXMEMDOM > 1 */
+
 /*
  *	vm_page_startup:
  *
@@ -512,7 +790,8 @@ vm_page_startup(vm_offset_t vaddr)
 		}
 	}
 
-	end = phys_avail[biggestone+1];
+	end = phys_avail[biggestone + 1];
+	vm_build_fake_affinity();
 
 	/*
 	 * Initialize the page and queue locks.
