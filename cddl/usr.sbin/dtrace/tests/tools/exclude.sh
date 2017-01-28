@@ -191,3 +191,6 @@ exclude EXFAIL common/usdt/tst.user.ksh
 
 # Triggers a lock assertion by using the raise() action from a profile probe.
 exclude SKIP common/ustack/tst.spin.ksh
+
+# STV_ELIMINATE is only recognized by the Sun link editor.
+exclude EXFAIL common/usdt/tst.eliminate.ksh
