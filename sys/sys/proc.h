@@ -860,16 +860,14 @@ extern pid_t pid_max;
 	PROC_UNLOCK(p);							\
 } while (0)
 #define	_PHOLD(p) do {							\
-	PROC_LOCK_ASSERT((p), MA_OWNED);				\
-	KASSERT(!((p)->p_flag & P_WEXIT) || (p) == curproc,		\
-	    ("PHOLD of exiting process %p", p));			\
-	(p)->p_lock++;							\
+	_PHOLD_LITE(p);							\
 	if (((p)->p_flag & P_INMEM) == 0)				\
 		faultin((p));						\
 } while (0)
 #define	_PHOLD_LITE(p) do {						\
 	PROC_LOCK_ASSERT((p), MA_OWNED);				\
-	KASSERT(!((p)->p_flag & P_WEXIT) || (p) == curproc,		\
+	KASSERT(((p)->p_flag & P_WEXIT) == 0 || (p)->p_lock > 0 ||	\
+	    (p) == curproc,						\
 	    ("PHOLD of exiting process %p", p));			\
 	(p)->p_lock++;							\
 } while (0)
