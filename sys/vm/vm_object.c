@@ -1074,6 +1074,12 @@ vm_object_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
 	return (res);
 }
 
+/*
+ * Determine whether the given advice can be applied to the object.  Advice is
+ * not applied to unmanaged pages since they never belong to page queues, and
+ * since MADV_FREE is destructive, it can apply only to anonymous pages that
+ * have been mapped at most once.
+ */
 static bool
 vm_object_advice_applies(vm_object_t object, int advice)
 {
@@ -1144,9 +1150,9 @@ relookup:
 		 */
 		if (m == NULL || pindex < m->pindex) {
 			/*
-			 * Optimize a common special case: if the top-level
-			 * object has no backing object, we can skip over the
-			 * non-resident range in constant time.
+			 * Optimize a common case: if the top-level object has
+			 * no backing object, we can skip over the non-resident
+			 * range in constant time.
 			 */
 			if (object->backing_object == NULL) {
 				tpindex = (m != NULL && m->pindex < end) ?
