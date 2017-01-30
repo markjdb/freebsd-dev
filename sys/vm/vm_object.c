@@ -1164,10 +1164,8 @@ relookup:
 				goto next_page;
 			}
 
-			tm = NULL;
 			tpindex = pindex;
 			do {
-				MPASS(tm == NULL || tm->object != object);
 				vm_object_madvise_freespace(tobject, advice,
 				    tpindex, 1);
 				/*
