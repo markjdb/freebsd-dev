@@ -812,7 +812,7 @@ retry:
 	    line);
 	WITNESS_LOCK(&m->lock_object, opts | LOP_EXCLUSIVE, file, line);
 #ifdef KDTRACE_HOOKS
-	if (spin_time != 0)
+	if (lda.spin_cnt > 0)
 		LOCKSTAT_RECORD1(thread__spin, m, spin_time);
 #endif
 }
