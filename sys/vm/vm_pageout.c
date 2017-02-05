@@ -276,7 +276,7 @@ static boolean_t vm_pageout_page_lock(vm_page_t, vm_page_t *);
  * PG_MARKER.  Nonetheless, it write busies and initializes the hold count
  * to one as safety precautions.
  */ 
-static void
+void
 vm_pageout_init_marker(vm_page_t marker, u_short queue)
 {
 
@@ -1314,7 +1314,7 @@ dolaundry:
 static bool
 vm_pageout_scan(struct vm_domain *vmd, int pass)
 {
-	vm_page_t m, next;
+	vm_page_t m, next, ins;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
 	uint64_t start, end;
@@ -1493,7 +1493,8 @@ unlock_page:
 				vm_pagequeue_lock(pq);
 				queue_locked = TRUE;
 				m->queue = PQ_INACTIVE;
-				TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+				TAILQ_INSERT_BEFORE(&pq->pq_insmarker, m,
+				    plinks.q);
 				vm_pagequeue_cnt_inc(pq);
 				goto drop_page;
 			}
@@ -1616,12 +1617,19 @@ drop_page:
 	 * candidates.  Held pages may be deactivated.
 	 */
 	start = rdtsc();
-	for (m = TAILQ_FIRST(&pq->pq_pl), scanned = 0; m != NULL && (scanned <
-	    min_scan || (inactq_shortage > 0 && scanned < maxscan)); m = next,
-	    scanned++) {
+	ins = &pq->pq_insmarker;
+	m = TAILQ_NEXT(ins, plinks.q);
+	if (m == NULL)
+		m = TAILQ_FIRST(&pq->pq_pl);
+	next = NULL;
+	for (scanned = 0; m != ins &&
+	    (scanned < min_scan || (inactq_shortage > 0 && scanned < maxscan));
+	    m = next, scanned++) {
 		KASSERT(m->queue == PQ_ACTIVE,
 		    ("vm_pageout_scan: page %p isn't active", m));
 		next = TAILQ_NEXT(m, plinks.q);
+		if (next == NULL)
+			next = TAILQ_FIRST(&pq->pq_pl);
 		if ((m->flags & PG_MARKER) != 0)
 			continue;
 		KASSERT((m->flags & PG_FICTITIOUS) == 0,
@@ -1630,6 +1638,8 @@ drop_page:
 		    ("Unmanaged page %p cannot be in active queue", m));
 		if (!vm_pageout_page_lock(m, &next)) {
 			vm_page_unlock(m);
+			if (next == NULL)
+				next = TAILQ_FIRST(&pq->pq_pl);
 			continue;
 		}
 
@@ -1713,9 +1723,17 @@ drop_page:
 					inactq_shortage--;
 				}
 			}
-		} else
-			vm_page_requeue_locked(m);
+		}
 		vm_page_unlock(m);
+	}
+	/*
+	 * Reposition the insertion marker so that the next scan starts at
+	 * "next." It's possible that we just scanned the entire queue, in
+	 * which case "next" will be the marker itself.
+	 */
+	if (next != NULL && next != ins) {
+		TAILQ_REMOVE(&pq->pq_pl, ins, plinks.q);
+		TAILQ_INSERT_BEFORE(next, ins, plinks.q);
 	}
 	end = rdtsc();
 	vm_pagequeue_unlock(pq);

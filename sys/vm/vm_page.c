@@ -387,7 +387,8 @@ static void
 vm_page_domain_init(struct vm_domain *vmd)
 {
 	struct vm_pagequeue *pq;
-	int i;
+	vm_page_t marker;
+	u_short queue;
 
 	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_INACTIVE].pq_name) =
 	    "vm inactive pagequeue";
@@ -410,11 +411,15 @@ vm_page_domain_init(struct vm_domain *vmd)
 	vmd->vmd_free_count = 0;
 	vmd->vmd_segs = 0;
 	vmd->vmd_oom = FALSE;
-	for (i = 0; i < PQ_COUNT; i++) {
-		pq = &vmd->vmd_pagequeues[i];
+	for (queue = 0; queue < PQ_COUNT; queue++) {
+		pq = &vmd->vmd_pagequeues[queue];
 		TAILQ_INIT(&pq->pq_pl);
 		mtx_init(&pq->pq_mutex, pq->pq_name, "vm pagequeue",
 		    MTX_DEF | MTX_DUPOK);
+
+		marker = &pq->pq_insmarker;
+		vm_pageout_init_marker(marker, queue);
+		TAILQ_INSERT_TAIL(&pq->pq_pl, marker, plinks.q);
 	}
 }
 
@@ -2618,7 +2623,7 @@ vm_page_enqueue(uint8_t queue, vm_page_t m)
 		pq = &vm_phys_domain(m)->vmd_pagequeues[queue];
 	vm_pagequeue_lock(pq);
 	m->queue = queue;
-	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+	TAILQ_INSERT_BEFORE(&pq->pq_insmarker, m, plinks.q);
 	vm_pagequeue_cnt_inc(pq);
 	vm_pagequeue_unlock(pq);
 }
@@ -2641,7 +2646,7 @@ vm_page_requeue(vm_page_t m)
 	pq = vm_page_pagequeue(m);
 	vm_pagequeue_lock(pq);
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
-	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+	TAILQ_INSERT_BEFORE(&pq->pq_insmarker, m, plinks.q);
 	vm_pagequeue_unlock(pq);
 }
 
@@ -2662,7 +2667,7 @@ vm_page_requeue_locked(vm_page_t m)
 	pq = vm_page_pagequeue(m);
 	vm_pagequeue_assert_locked(pq);
 	TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
-	TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+	TAILQ_INSERT_BEFORE(&pq->pq_insmarker, m, plinks.q);
 }
 
 /*
@@ -2927,7 +2932,7 @@ _vm_page_deactivate(vm_page_t m, boolean_t noreuse)
 			TAILQ_INSERT_BEFORE(&vm_phys_domain(m)->vmd_inacthead,
 			    m, plinks.q);
 		else
-			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+			TAILQ_INSERT_BEFORE(&pq->pq_insmarker, m, plinks.q);
 		vm_pagequeue_cnt_inc(pq);
 		vm_pagequeue_unlock(pq);
 	}

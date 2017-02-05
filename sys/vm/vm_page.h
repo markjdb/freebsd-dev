@@ -218,9 +218,9 @@ struct vm_pagequeue {
 	struct pglist	pq_pl;
 	int		pq_cnt;
 	u_int		* const pq_vcnt;
+	struct vm_page	pq_insmarker;
 	const char	* const pq_name;
 } __aligned(CACHE_LINE_SIZE);
-
 
 struct vm_domain {
 	struct vm_pagequeue vmd_pagequeues[PQ_COUNT];
