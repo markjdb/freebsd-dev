@@ -97,6 +97,11 @@ options 	WITNESS_SKIPSPIN	# Don't run witness on spinlocks for speed
 options 	MALLOC_DEBUG_MAXZONES=8	# Separate malloc(9) zones
 options		ALT_BREAK_TO_DEBUGGER
 
+options 	KTR
+options 	KTR_COMPILE=(KTR_SPARE4)
+options 	KTR_ENTRIES=(256*1024)
+options 	KTR_MASK=(KTR_SPARE4)
+
 # Make an SMP-capable kernel by default
 options 	SMP			# Symmetric MultiProcessor Kernel
 
