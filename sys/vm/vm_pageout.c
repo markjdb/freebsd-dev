@@ -1317,6 +1317,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	vm_page_t m, next;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
+	uint64_t start, end;
 	long min_scan;
 	int act_delta, addl_page_shortage, deficit, inactq_shortage, maxscan;
 	int page_shortage, scan_tick, scanned, starting_page_shortage;
@@ -1614,6 +1615,7 @@ drop_page:
 	 * the per-page activity counter and use it to identify deactivation
 	 * candidates.  Held pages may be deactivated.
 	 */
+	start = rdtsc();
 	for (m = TAILQ_FIRST(&pq->pq_pl), scanned = 0; m != NULL && (scanned <
 	    min_scan || (inactq_shortage > 0 && scanned < maxscan)); m = next,
 	    scanned++) {
@@ -1715,6 +1717,7 @@ drop_page:
 			vm_page_requeue_locked(m);
 		vm_page_unlock(m);
 	}
+	end = rdtsc();
 	vm_pagequeue_unlock(pq);
 #if !defined(NO_SWAPPING)
 	/*
@@ -1729,6 +1732,9 @@ drop_page:
 		}
 	}
 #endif
+
+	CTR2(KTR_SPARE4, "act scan %d pages in %ju cycles",
+	    scanned, (uintmax_t)(end - start));
 	return (page_shortage <= 0);
 }
 
