@@ -365,11 +365,6 @@ uma_zfree(uma_zone_t zone, void *item)
 }
 
 /*
- * XXX The rest of the prototypes in this header are h0h0 magic for the VM.
- * If you think you need to use it for a normal zone you're probably incorrect.
- */
-
-/*
  * Backend page supplier routines
  *
  * Arguments:
@@ -397,8 +392,6 @@ typedef void *(*uma_alloc)(uma_zone_t zone, vm_size_t size, uint8_t *pflag,
  *	None
  */
 typedef void (*uma_free)(void *item, vm_size_t size, uint8_t pflag);
-
-
 
 /*
  * Sets up the uma allocator. (Called by vm_mem_init)
