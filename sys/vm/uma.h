@@ -45,6 +45,7 @@
 /* Types and type defs */
 
 struct uma_zone;
+struct vm_domain_selector;
 /* Opaque type used as a handle to the zone */
 typedef struct uma_zone * uma_zone_t;
 
@@ -126,7 +127,8 @@ typedef void (*uma_fini)(void *mem, int size);
 /*
  * Import new memory into a cache zone.
  */
-typedef int (*uma_import)(void *arg, void **store, int count, int flags);
+typedef int (*uma_import)(void *arg, void **store, int count, int domain,
+    int flags);
 
 /*
  * Free memory from a cache zone.
@@ -371,14 +373,15 @@ uma_zfree(uma_zone_t zone, void *item)
  *	zone  The zone that is requesting pages.
  *	size  The number of bytes being requested.
  *	pflag Flags for these memory pages, see below.
+ *	domain The NUMA domain that we prefer for this allocation.
  *	wait  Indicates our willingness to block.
  *
  * Returns:
  *	A pointer to the allocated memory or NULL on failure.
  */
 
-typedef void *(*uma_alloc)(uma_zone_t zone, vm_size_t size, uint8_t *pflag,
-    int wait);
+typedef void *(*uma_alloc)(uma_zone_t zone, vm_size_t size, int domain,
+    uint8_t *pflag, int wait);
 
 /*
  * Backend page free routines
@@ -589,6 +592,19 @@ void uma_zone_set_allocf(uma_zone_t zone, uma_alloc allocf);
  */
 
 void uma_zone_set_freef(uma_zone_t zone, uma_free freef);
+
+/*
+ * XXX
+ *
+ * Arguments:
+ *	zone	The zone NUMA policy is being installed into.
+ *	sel	Selector of the NUMA policy requested.
+ *
+ * Returns:
+ *	Nothing
+ */
+void uma_zone_set_domain_selector(uma_zone_t zone,
+    struct vm_domain_selector *sel);
 
 /*
  * These flags are setable in the allocf and visible in the freef.
