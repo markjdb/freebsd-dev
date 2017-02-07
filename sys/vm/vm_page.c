@@ -1881,6 +1881,14 @@ vm_page_alloc_check(vm_page_t m)
 	KASSERT(m->valid == 0, ("free page %p is valid", m));
 }
 
+/* XXX */
+vm_page_t
+vm_page_alloc_domain(vm_object_t obj, vm_pindex_t pindex, int domain, int req)
+{
+
+	return (vm_page_alloc(obj, pindex, req));
+}
+
 /*
  * 	vm_page_alloc_freelist:
  *
