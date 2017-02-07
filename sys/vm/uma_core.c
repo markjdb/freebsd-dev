@@ -300,6 +300,10 @@ bucket_enable(void)
  * For each zone, calculate the memory required for each bucket, consisting
  * of the header and an array of pointers.
  */
+/* XXXMJ */
+static struct vm_domain_policy bucket_policy =
+    VM_DOMAIN_POLICY_STATIC_INITIALISER(VM_POLICY_FIRST_TOUCH, 0);
+
 static void
 bucket_init(void)
 {
@@ -312,7 +316,7 @@ bucket_init(void)
 		ubz->ubz_zone = uma_zcreate(ubz->ubz_name, size,
 		    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
 		    UMA_ZONE_MTXCLASS | UMA_ZFLAG_BUCKET);
-		uma_zone_set_domain_selector(ubz->ubz_zone, &vm_self_ft);
+		uma_zone_set_domain_selector(ubz->ubz_zone, &bucket_policy);
 	}
 }
 
@@ -726,8 +730,17 @@ cache_drain_safe_cpu(uma_zone_t zone)
 	critical_enter();
 	if (zone->uz_sel == NULL)
 		domain = 0;
-	else
+	else {
+		struct vm_domain_iterator vi;
+
+		vm_domain_iterator_init(&vi);
+		vm_domain_iterator_set_policy(&vi, zone->uz_sel);
+		vm_domain_iterator_run(&vi, &domain);
+		vm_domain_iterator_cleanup(&vi);
+#if 0
 		domain = vm_domain_select_first(zone->uz_sel);
+#endif
+	}
 	cache = &zone->uz_cpu[curcpu];
 	if (cache->uc_allocbucket) {
 		if (cache->uc_allocbucket->ub_cnt != 0)
@@ -2210,7 +2223,15 @@ zalloc_start:
 		domain = UMA_ANYDOMAIN;
 		zdom = &zone->uz_domain[0];
 	} else {
+		struct vm_domain_iterator vi;
+
+		vm_domain_iterator_init(&vi);
+		vm_domain_iterator_set_policy(&vi, zone->uz_sel);
+		vm_domain_iterator_run(&vi, &domain);
+		vm_domain_iterator_cleanup(&vi);
+#if 0
 		domain = vm_domain_select_first(zone->uz_sel);
+#endif
 		zdom = &zone->uz_domain[domain];
 	}
 
@@ -2779,7 +2800,15 @@ zfree_start:
 		zdom = &zone->uz_domain[0];
 		domain = UMA_ANYDOMAIN;
 	} else {
+#if 0
 		domain = vm_domain_select_first(zone->uz_sel);
+#endif
+		struct vm_domain_iterator vi;
+
+		vm_domain_iterator_init(&vi);
+		vm_domain_iterator_set_policy(&vi, zone->uz_sel);
+		vm_domain_iterator_run(&vi, &domain);
+		vm_domain_iterator_cleanup(&vi);
 		zdom = &zone->uz_domain[domain];
 	}
 
@@ -3112,11 +3141,11 @@ uma_zone_set_allocf(uma_zone_t zone, uma_alloc allocf)
 
 /* See uma.h */
 void
-uma_zone_set_domain_selector(uma_zone_t zone, struct vm_domain_select *sel)
+uma_zone_set_domain_selector(uma_zone_t zone, struct vm_domain_policy *policy)
 {
 
 	ZONE_LOCK(zone);
-	zone->uz_sel = sel;
+	zone->uz_sel = policy;
 	ZONE_UNLOCK(zone);
 }
 
