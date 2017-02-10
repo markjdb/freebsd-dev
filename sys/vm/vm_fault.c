@@ -512,7 +512,7 @@ RetryFault:;
 	fs.map = map;
 	result = vm_map_lookup(&fs.map, vaddr, fault_type, &fs.entry,
 	    &fs.first_object, &fs.first_pindex, &prot, &wired);
-	if (result != KERN_SUCCESS) {
+	if (__predict_false(result != KERN_SUCCESS)) {
 		if (growstack && result == KERN_INVALID_ADDRESS &&
 		    map != kernel_map) {
 			result = vm_map_growstack(curproc, vaddr);
@@ -532,8 +532,8 @@ RetryFault:;
 		    __func__, (u_long)vaddr);
 	}
 
-	if (fs.entry->eflags & MAP_ENTRY_IN_TRANSITION &&
-	    fs.entry->wiring_thread != curthread) {
+	if (__predict_false(fs.entry->eflags & MAP_ENTRY_IN_TRANSITION &&
+	    fs.entry->wiring_thread != curthread)) {
 		vm_map_unlock_read(fs.map);
 		vm_map_lock(fs.map);
 		if (vm_map_lookup_entry(fs.map, vaddr, &fs.entry) &&
@@ -614,7 +614,7 @@ RetryFault:;
 		 * with us.  Otherwise, if we see terminally dead
 		 * object, return fail.
 		 */
-		if ((fs.object->flags & OBJ_DEAD) != 0) {
+		if (__predict_false((fs.object->flags & OBJ_DEAD) != 0)) {
 			dead = fs.object->type == OBJT_DEAD;
 			unlock_and_deallocate(&fs);
 			if (dead)
@@ -644,7 +644,7 @@ RetryFault:;
 			 * around with a shared busied page except, perhaps,
 			 * to pmap it.
 			 */
-			if (vm_page_busied(fs.m)) {
+			if (__predict_false(vm_page_busied(fs.m))) {
 				/*
 				 * Reference the page before unlocking and
 				 * sleeping so that the page daemon is less
@@ -701,7 +701,7 @@ RetryFault:;
 		 */
 		if (fs.object->type != OBJT_DEFAULT ||
 		    fs.object == fs.first_object) {
-			if (fs.pindex >= fs.object->size) {
+			if (__predict_false(fs.pindex >= fs.object->size)) {
 				unlock_and_deallocate(&fs);
 				return (KERN_PROTECTION_FAILURE);
 			}
@@ -751,7 +751,7 @@ RetryFault:;
 				fs.m = vm_page_alloc(fs.object, fs.pindex,
 				    alloc_req);
 			}
-			if (fs.m == NULL) {
+			if (__predict_false(fs.m == NULL)) {
 				unlock_and_deallocate(&fs);
 				VM_WAITPFAULT;
 				goto RetryFault;
@@ -1141,7 +1141,7 @@ readrest:
 	 * We must verify that the maps have not changed since our last
 	 * lookup.
 	 */
-	if (!fs.lookup_still_valid) {
+	if (__predict_false(!fs.lookup_still_valid)) {
 		if (!vm_map_trylock_read(fs.map)) {
 			release_page(&fs);
 			unlock_and_deallocate(&fs);
