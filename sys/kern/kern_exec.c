@@ -1320,7 +1320,7 @@ err_exit:
 
 struct exec_args_kva {
 	vm_offset_t addr;
-	int gen;
+	u_int gen;
 	SLIST_ENTRY(exec_args_kva) next;
 };
 
@@ -1328,7 +1328,7 @@ static DPCPU_DEFINE(struct exec_args_kva *, exec_args_kva);
 
 static SLIST_HEAD(, exec_args_kva) exec_args_kva_freelist;
 static struct mtx exec_args_kva_mtx;
-static int exec_args_gen;
+static u_int exec_args_gen;
 
 static void
 exec_prealloc_args_kva(void *arg __unused)
@@ -1367,25 +1367,16 @@ exec_alloc_args_kva(void **cookie)
 }
 
 static void
-exec_madvise_args_kva(struct exec_args_kva *argkva)
+exec_release_args_kva(struct exec_args_kva *argkva, u_int gen)
 {
 	vm_offset_t base;
 
 	base = argkva->addr;
-	if (argkva->gen != exec_args_gen) {
+	if (argkva->gen != gen) {
 		vm_map_madvise(exec_map, base, base + exec_map_entry_size,
 		    MADV_FREE);
-		argkva->gen = exec_args_gen;
+		argkva->gen = gen;
 	}
-}
-
-static void
-exec_free_args_kva(void *cookie)
-{
-	struct exec_args_kva *argkva;
-
-	argkva = cookie;
-	exec_madvise_args_kva(argkva);
 	if (!atomic_cmpset_ptr((uintptr_t *)DPCPU_PTR(exec_args_kva),
 	    (uintptr_t)NULL, (uintptr_t)argkva)) {
 		mtx_lock(&exec_args_kva_mtx);
@@ -1396,13 +1387,21 @@ exec_free_args_kva(void *cookie)
 }
 
 static void
+exec_free_args_kva(void *cookie)
+{
+
+	exec_release_args_kva(cookie, exec_args_gen);
+}
+
+static void
 exec_args_kva_lowmem(void *arg __unused)
 {
 	SLIST_HEAD(, exec_args_kva) head;
 	struct exec_args_kva *argkva;
+	u_int gen;
 	int i;
 
-	exec_args_gen++;
+	gen = atomic_fetchadd_int(&exec_args_gen, 1) + 1;
 
 	/*
 	 * Force an madvise of each KVA range. Any currently allocated ranges
@@ -1414,14 +1413,14 @@ exec_args_kva_lowmem(void *arg __unused)
 	mtx_unlock(&exec_args_kva_mtx);
 	while ((argkva = SLIST_FIRST(&head)) != NULL) {
 		SLIST_REMOVE_HEAD(&head, next);
-		exec_free_args_kva(argkva);
+		exec_release_args_kva(argkva, gen);
 	}
 
 	CPU_FOREACH(i) {
 		argkva = (void *)atomic_readandclear_ptr(
 		    (uintptr_t *)DPCPU_ID_PTR(i, exec_args_kva));
 		if (argkva != NULL)
-			exec_free_args_kva(argkva);
+			exec_release_args_kva(argkva, gen);
 	}
 }
 EVENTHANDLER_DEFINE(vm_lowmem, exec_args_kva_lowmem, NULL,
