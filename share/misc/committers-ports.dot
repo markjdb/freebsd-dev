@@ -173,6 +173,7 @@ milki [label="Jonathan Chu\nmilki@FreeBSD.org\n2013/12/15"]
 misha [label="Mikhail Pchelin\nmisha@FreeBSD.org\n2016/11/15"]
 miwi [label="Martin Wilke\nmiwi@FreeBSD.org\n2006/06/04"]
 mm [label="Martin Matuska\nmm@FreeBSD.org\n2007/04/04"]
+mmokhi [label="Mahdi Mokhtari\nmmokhi@FreeBSD.org\n2017/02/09"]
 mnag [label="Marcus Alves Grando\nmnag@FreeBSD.org\n2005/09/15"]
 mva [label="Marcus von Appen\nmva@FreeBSD.org\n2009/02/16"]
 nemysis [label="Rusmir Dusko\nnemysis@FreeBSD.org\n2013/07/31"]
@@ -230,6 +231,7 @@ tijl [label="Tijl Coosemans\ntijl@FreeBSD.org\n2013/03/27"]
 timur [label="Timur Bakeyev\ntimur@FreeBSD.org\n2007/06/07"]
 tj [label="Tom Judge\ntj@FreeBSD.org\n2012/05/28"]
 tmclaugh [label="Tom McLaughlin\ntmclaugh@FreeBSD.org\n2005/09/15"]
+tobik [label="Tobias Kortkamp\ntobik@FreeBSD.org\n2017/02/08"]
 tota [label="TAKATSU Tomonari\ntota@FreeBSD.org\n2009/03/30"]
 trasz [label="Edward Tomasz Napierala\ntrasz@FreeBSD.org\n2007/04/12"]
 trhodes [label="Tom Rhodes\ntrhodes@FreeBSD.org\n2004/07/06"]
@@ -372,6 +374,7 @@ erwin -> simon
 
 feld -> brnrd
 feld -> junovitch
+feld -> mmokhi
 feld -> rezny
 
 fjoe -> danfe
@@ -460,6 +463,8 @@ leeym -> clsung
 
 lioux -> pat
 
+lme -> tobik
+
 lwhsu -> yzlin
 
 maho -> stephen
@@ -481,8 +486,10 @@ makc -> rakuco
 mat -> bmah
 mat -> dvl
 mat -> gordon
+mat -> mmokhi
 mat -> tcberner
 mat -> thierry
+mat -> tobik
 mat -> woodsb02
 
 matthew -> lifanov
