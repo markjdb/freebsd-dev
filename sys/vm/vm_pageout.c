@@ -2052,37 +2052,35 @@ vm_pageout_worker(void *arg)
 static void
 vm_pageout_init(void)
 {
-	/*
-	 * Initialize some paging parameters.
-	 */
-	vm_cnt.v_interrupt_free_min = 2;
-	if (vm_cnt.v_page_count < 2000)
-		vm_pageout_page_count = 8;
 
 	/*
 	 * v_free_reserved needs to include enough for the largest
 	 * swap pager structures plus enough for any pv_entry structs
-	 * when paging. 
+	 * when paging.
 	 */
-	if (vm_cnt.v_page_count > 1024)
-		vm_cnt.v_free_min = 4 + (vm_cnt.v_page_count - 1024) / 200;
-	else
-		vm_cnt.v_free_min = 4;
-	vm_cnt.v_pageout_free_min = (2*MAXBSIZE)/PAGE_SIZE +
+	vm_cnt.v_interrupt_free_min = 2;
+	vm_cnt.v_pageout_free_min = (2 * MAXBSIZE) / PAGE_SIZE +
 	    vm_cnt.v_interrupt_free_min;
 	vm_cnt.v_free_reserved = vm_pageout_page_count +
 	    vm_cnt.v_pageout_free_min + (vm_cnt.v_page_count / 768);
-	vm_cnt.v_free_severe = vm_cnt.v_free_min / 2;
-	vm_cnt.v_free_target = 4 * vm_cnt.v_free_min + vm_cnt.v_free_reserved;
-	vm_cnt.v_free_min += vm_cnt.v_free_reserved;
-	vm_cnt.v_free_severe += vm_cnt.v_free_reserved;
-	vm_cnt.v_inactive_target = (3 * vm_cnt.v_free_target) / 2;
-	if (vm_cnt.v_inactive_target > vm_cnt.v_free_count / 3)
-		vm_cnt.v_inactive_target = vm_cnt.v_free_count / 3;
 
 	/*
-	 * Set the default wakeup threshold to be 10% above the minimum
-	 * page limit.  This keeps the steady state out of shortfall.
+	 * Set various page daemon and free page thresholds.  v_free_min and
+	 * v_free_target are the low and high watermarks for scans of the
+	 * inactive queue.  When the free page count crosses below
+	 * vm_pageout_wakeup_thresh, the page daemon attempts to reclaim clean
+	 * pages until the high watermark is met.
+	 */
+	vm_cnt.v_free_min = 4 + (vm_cnt.v_page_count - 1024) / 200 +
+	    vm_cnt.v_free_reserved;
+	vm_cnt.v_free_severe = vm_cnt.v_free_min / 2 + vm_cnt.v_free_reserved;
+	vm_cnt.v_free_target = 4 * vm_cnt.v_free_min + vm_cnt.v_free_reserved;
+	vm_cnt.v_inactive_target = min(3 * vm_cnt.v_free_target / 2,
+	    vm_cnt.v_free_count / 3);
+
+	/*
+	 * Set the default wakeup threshold to be 10% above the low free page
+	 * watermark.  This keeps the steady state out of shortfall.
 	 */
 	vm_pageout_wakeup_thresh = (vm_cnt.v_free_min / 10) * 11;
 
@@ -2094,7 +2092,11 @@ vm_pageout_init(void)
 	if (vm_pageout_update_period == 0)
 		vm_pageout_update_period = 600;
 
-	/* XXX does not really belong here */
+	/*
+	 * Set a limit for the amount of user-wired memory.  This does not
+	 * include pages that are wired for transient purposes, such as sysctl
+	 * buffers.
+	 */
 	if (vm_page_max_wired == 0)
 		vm_page_max_wired = vm_cnt.v_free_count / 3;
 
