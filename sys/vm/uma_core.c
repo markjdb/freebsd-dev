@@ -2741,7 +2741,7 @@ zfree_start:
 	critical_exit();
 
 	/* Can we throw this on the zone full list? */
-	if (bucket != NULL) {
+	if (bucket != NULL && (zone->uz_flags & UMA_ZONE_NOBUCKETCACHE) == 0) {
 #ifdef UMA_DEBUG_ALLOC
 		printf("uma_zfree: Putting old bucket on the free list.\n");
 #endif
@@ -2749,6 +2749,7 @@ zfree_start:
 		KASSERT(bucket->ub_cnt != 0,
 		    ("uma_zfree: Attempting to insert an empty bucket onto the full list.\n"));
 		LIST_INSERT_HEAD(&zone->uz_buckets, bucket, ub_link);
+		bucket = NULL;
 	}
 
 	/*
@@ -2758,6 +2759,11 @@ zfree_start:
 	if (lockfail && zone->uz_count < BUCKET_MAX)
 		zone->uz_count++;
 	ZONE_UNLOCK(zone);
+
+	if (bucket != NULL) {
+		bucket_drain(zone, bucket);
+		bucket_free(zone, bucket, udata);
+	}
 
 #ifdef UMA_DEBUG_ALLOC
 	printf("uma_zfree: Allocating new free bucket.\n");
