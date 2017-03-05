@@ -221,7 +221,6 @@ struct vm_pagequeue {
 	const char	* const pq_name;
 } __aligned(CACHE_LINE_SIZE);
 
-
 struct vm_domain {
 	struct vm_pagequeue vmd_pagequeues[PQ_COUNT];
 	u_int vmd_page_count;
@@ -230,6 +229,8 @@ struct vm_domain {
 	boolean_t vmd_oom;
 	int vmd_oom_seq;
 	int vmd_last_active_scan;
+	u_int vmd_free_target;
+	u_int vmd_inactive_target;
 	struct vm_page vmd_laundry_marker;
 	struct vm_page vmd_marker; /* marker for pagedaemon private use */
 	struct vm_page vmd_inacthead; /* marker for LRU-defeating insertions */
@@ -257,6 +258,13 @@ vm_pagequeue_cnt_add(struct vm_pagequeue *pq, int addend)
 }
 #define	vm_pagequeue_cnt_inc(pq)	vm_pagequeue_cnt_add((pq), 1)
 #define	vm_pagequeue_cnt_dec(pq)	vm_pagequeue_cnt_add((pq), -1)
+
+static inline int
+vm_pagequeue_cnt(struct vm_domain *vmd, uint8_t queue)
+{
+
+	return (vmd->vmd_pagequeues[queue].pq_cnt);
+}
 #endif	/* _KERNEL */
 
 extern struct mtx_padalign vm_page_queue_free_mtx;

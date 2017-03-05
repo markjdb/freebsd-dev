@@ -59,12 +59,16 @@ struct vmmeter vm_cnt;
 
 SYSCTL_UINT(_vm, VM_V_FREE_MIN, v_free_min,
 	CTLFLAG_RW, &vm_cnt.v_free_min, 0, "Minimum low-free-pages threshold");
+#if 0
 SYSCTL_UINT(_vm, VM_V_FREE_TARGET, v_free_target,
 	CTLFLAG_RW, &vm_cnt.v_free_target, 0, "Desired free pages");
+#endif
 SYSCTL_UINT(_vm, VM_V_FREE_RESERVED, v_free_reserved,
 	CTLFLAG_RW, &vm_cnt.v_free_reserved, 0, "Pages reserved for deadlock");
+#if 0
 SYSCTL_UINT(_vm, VM_V_INACTIVE_TARGET, v_inactive_target,
 	CTLFLAG_RW, &vm_cnt.v_inactive_target, 0, "Pages desired inactive");
+#endif
 SYSCTL_UINT(_vm, VM_V_PAGEOUT_FREE_MIN, v_pageout_free_min,
 	CTLFLAG_RW, &vm_cnt.v_pageout_free_min, 0, "Min pages reserved for kernel");
 SYSCTL_UINT(_vm, OID_AUTO, v_free_severe,
@@ -291,12 +295,16 @@ VM_STATS_VM(v_tfree, "Total pages freed");
 VM_STATS_VM(v_page_size, "Page size in bytes");
 VM_STATS_VM(v_page_count, "Total number of pages in system");
 VM_STATS_VM(v_free_reserved, "Pages reserved for deadlock");
+#if 0
 VM_STATS_VM(v_free_target, "Pages desired free");
+#endif
 VM_STATS_VM(v_free_min, "Minimum low-free-pages threshold");
 VM_STATS_VM(v_free_count, "Free pages");
 VM_STATS_VM(v_wire_count, "Wired pages");
 VM_STATS_VM(v_active_count, "Active pages");
+#if 0
 VM_STATS_VM(v_inactive_target, "Desired inactive pages");
+#endif
 VM_STATS_VM(v_inactive_count, "Inactive pages");
 VM_STATS_VM(v_laundry_count, "Pages eligible for laundering");
 VM_STATS_VM(v_pageout_free_min, "Min pages reserved for kernel");

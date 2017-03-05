@@ -148,28 +148,6 @@ vm_page_count_min(void)
 }
 
 /*
- * Return TRUE if we have not reached our free page target during
- * free page recovery operations.
- */
-static inline int
-vm_page_count_target(void)
-{
-
-	return (vm_cnt.v_free_target > vm_cnt.v_free_count);
-}
-
-/*
- * Return the number of pages we need to free-up or cache
- * A positive number indicates that we do not have enough free pages.
- */
-static inline int
-vm_paging_target(void)
-{
-
-	return (vm_cnt.v_free_target - vm_cnt.v_free_count);
-}
-
-/*
  * Returns TRUE if the pagedaemon needs to be woken up.
  */
 static inline int
@@ -177,17 +155,6 @@ vm_paging_needed(void)
 {
 
 	return (vm_cnt.v_free_count < vm_pageout_wakeup_thresh);
-}
-
-/*
- * Return the number of pages we need to launder.
- * A positive number indicates that we have a shortfall of clean pages.
- */
-static inline int
-vm_laundry_target(void)
-{
-
-	return (vm_paging_target());
 }
 
 /*

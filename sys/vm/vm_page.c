@@ -3577,8 +3577,10 @@ DB_SHOW_COMMAND(page, vm_page_print_page_info)
 	db_printf("vm_cnt.v_wire_count: %d\n", vm_cnt.v_wire_count);
 	db_printf("vm_cnt.v_free_reserved: %d\n", vm_cnt.v_free_reserved);
 	db_printf("vm_cnt.v_free_min: %d\n", vm_cnt.v_free_min);
+#if 0
 	db_printf("vm_cnt.v_free_target: %d\n", vm_cnt.v_free_target);
 	db_printf("vm_cnt.v_inactive_target: %d\n", vm_cnt.v_inactive_target);
+#endif
 }
 
 DB_SHOW_COMMAND(pageq, vm_page_print_pageq_info)

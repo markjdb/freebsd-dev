@@ -158,7 +158,7 @@ SYSINIT(vmdaemon, SI_SUB_KTHREAD_VM, SI_ORDER_FIRST, kproc_start, &vm_kp);
 #define	VM_LAUNDER_RATE		10
 #define	VM_INACT_SCAN_RATE	2
 
-int vm_pageout_deficit;		/* Estimated number of pages deficit */
+int vm_pageout_deficit;		/* Estimated number of pages deficit XXX per-dom */
 u_int vm_pageout_wakeup_thresh;
 static int vm_pageout_oom_seq = 12;
 bool vm_pageout_wanted;		/* Event on which pageout daemon sleeps */
@@ -269,6 +269,31 @@ static void vm_pageout_object_deactivate_pages(pmap_t, vm_object_t, long);
 static void vm_req_vmdaemon(int req);
 #endif
 static boolean_t vm_pageout_page_lock(vm_page_t, vm_page_t *);
+
+/*
+ * Return the number of pages we want to free in the given domain.
+ * A positive number indicates that we do not have enough free pages.
+ */
+static inline int
+vm_paging_target(struct vm_domain *vmd)
+{
+
+	return (vmd->vmd_free_target - vmd->vmd_free_count);
+}
+
+/*
+ * Return the number of pages we need to launder.
+ * A positive number indicates that we have a shortfall of clean pages.
+ */
+static inline int
+vm_laundry_target(void)
+{
+	int i, sum;
+
+	for (i = sum = 0; i < vm_ndomains; i++)
+		sum += vm_paging_target(&vm_dom[i]);
+	return (sum);
+}
 
 /*
  * Initialize a dummy page for marking the caller's place in the specified
@@ -1332,7 +1357,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 		 * Decrease registered cache sizes.
 		 */
 		SDT_PROBE0(vm, , , vm__lowmem_scan);
-		EVENTHANDLER_INVOKE(vm_lowmem, VM_LOW_PAGES);
+		EVENTHANDLER_INVOKE(vm_lowmem, 0);
 		/*
 		 * We do this explicitly after the caches have been
 		 * drained above.
@@ -1356,7 +1381,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	 */
 	if (pass > 0) {
 		deficit = atomic_readandclear_int(&vm_pageout_deficit);
-		page_shortage = vm_paging_target() + deficit;
+		page_shortage = vm_paging_target(vmd) + deficit;
 	} else
 		page_shortage = deficit = 0;
 	starting_page_shortage = page_shortage;
@@ -1586,9 +1611,10 @@ drop_page:
 	 * more aggressively, improving the effectiveness of clustering and
 	 * ensuring that they can eventually be reused.
 	 */
-	inactq_shortage = vm_cnt.v_inactive_target - (vm_cnt.v_inactive_count +
-	    vm_cnt.v_laundry_count / act_scan_laundry_weight) +
-	    vm_paging_target() + deficit + addl_page_shortage;
+	inactq_shortage = vmd->vmd_inactive_target -
+	    (vm_pagequeue_cnt(vmd, PQ_INACTIVE) +
+	     vm_pagequeue_cnt(vmd, PQ_LAUNDRY) / act_scan_laundry_weight) +
+	    vm_paging_target(vmd) + deficit + addl_page_shortage;
 	page_shortage *= act_scan_laundry_weight;
 
 	pq = &vmd->vmd_pagequeues[PQ_ACTIVE];
@@ -2052,6 +2078,8 @@ vm_pageout_worker(void *arg)
 static void
 vm_pageout_init(void)
 {
+	struct vm_domain *vmd;
+	int i;
 
 	/*
 	 * v_free_reserved needs to include enough for the largest
@@ -2070,13 +2098,17 @@ vm_pageout_init(void)
 	 * inactive queue.  When the free page count crosses below
 	 * vm_pageout_wakeup_thresh, the page daemon attempts to reclaim clean
 	 * pages until the high watermark is met.
+	 * XXX update
 	 */
 	vm_cnt.v_free_min = 4 + (vm_cnt.v_page_count - 1024) / 200 +
 	    vm_cnt.v_free_reserved;
 	vm_cnt.v_free_severe = vm_cnt.v_free_min / 2 + vm_cnt.v_free_reserved;
-	vm_cnt.v_free_target = 4 * vm_cnt.v_free_min + vm_cnt.v_free_reserved;
-	vm_cnt.v_inactive_target = min(3 * vm_cnt.v_free_target / 2,
-	    vm_cnt.v_free_count / 3);
+	for (i = 0; i < vm_ndomains; i++) {
+		vmd = &vm_dom[i];
+		vmd->vmd_free_target = 4 * vmd->vmd_page_count / 200;
+		vmd->vmd_inactive_target = min(3 * vmd->vmd_free_target / 2,
+		    vmd->vmd_free_target / 3);
+	}
 
 	/*
 	 * Set the default wakeup threshold to be 10% above the low free page
@@ -2105,8 +2137,8 @@ vm_pageout_init(void)
 	 * background laundering.  This is proportional to the amount of system
 	 * memory.
 	 */
-	vm_background_launder_target = (vm_cnt.v_free_target -
-	    vm_cnt.v_free_min) / 10;
+	vm_background_launder_target = (3 * vm_cnt.v_free_min +
+	    vm_cnt.v_free_reserved) / 10;
 }
 
 /*
