@@ -63,4 +63,6 @@ extern	int vm_domain_iterator_run(struct vm_domain_iterator *vi,
 extern	int vm_domain_iterator_isdone(struct vm_domain_iterator *vi);
 extern	int vm_domain_iterator_cleanup(struct vm_domain_iterator *vi);
 
+extern struct vm_domain_policy vm_default_policy;
+
 #endif	/* __VM_DOMAIN_H__ */
