@@ -217,7 +217,6 @@ struct vm_pagequeue {
 	struct mtx	pq_mutex;
 	struct pglist	pq_pl;
 	int		pq_cnt;
-	u_int		* const pq_vcnt;
 	const char	* const pq_name;
 } __aligned(CACHE_LINE_SIZE);
 
@@ -254,7 +253,6 @@ vm_pagequeue_cnt_add(struct vm_pagequeue *pq, int addend)
 	vm_pagequeue_assert_locked(pq);
 #endif
 	pq->pq_cnt += addend;
-	atomic_add_int(pq->pq_vcnt, addend);
 }
 #define	vm_pagequeue_cnt_inc(pq)	vm_pagequeue_cnt_add((pq), 1)
 #define	vm_pagequeue_cnt_dec(pq)	vm_pagequeue_cnt_add((pq), -1)

@@ -2108,6 +2108,8 @@ vm_pageout_init(void)
 		vmd->vmd_free_target = 4 * vmd->vmd_page_count / 200;
 		vmd->vmd_inactive_target = min(3 * vmd->vmd_free_target / 2,
 		    vmd->vmd_free_target / 3);
+		vm_cnt.v_free_target += vmd->vmd_free_target;
+		vm_cnt.v_inactive_target += vmd->vmd_inactive_target;
 	}
 
 	/*

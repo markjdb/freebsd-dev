@@ -389,23 +389,6 @@ vm_page_domain_init(struct vm_domain *vmd)
 	struct vm_pagequeue *pq;
 	int i;
 
-	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_INACTIVE].pq_name) =
-	    "vm inactive pagequeue";
-	*__DECONST(u_int **, &vmd->vmd_pagequeues[PQ_INACTIVE].pq_vcnt) =
-	    &vm_cnt.v_inactive_count;
-	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_ACTIVE].pq_name) =
-	    "vm active pagequeue";
-	*__DECONST(u_int **, &vmd->vmd_pagequeues[PQ_ACTIVE].pq_vcnt) =
-	    &vm_cnt.v_active_count;
-	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_name) =
-	    "vm laundry pagequeue";
-	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_vcnt) =
-	    &vm_cnt.v_laundry_count;
-	*__DECONST(char **, &vmd->vmd_pagequeues[PQ_UNSWAPPABLE].pq_name) =
-	    "vm unswappable pagequeue";
-	/* Unswappable dirty pages are counted as being in the laundry. */
-	*__DECONST(int **, &vmd->vmd_pagequeues[PQ_UNSWAPPABLE].pq_vcnt) =
-	    &vm_cnt.v_laundry_count;
 	vmd->vmd_page_count = 0;
 	vmd->vmd_free_count = 0;
 	vmd->vmd_segs = 0;
