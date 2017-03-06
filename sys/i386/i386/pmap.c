@@ -3671,6 +3671,7 @@ validate:
 			pte_store(pte, newpte);
 	}
 
+#if VM_NRESERVLEVEL > 0
 	/*
 	 * If both the page table page and the reservation are fully
 	 * populated, then attempt promotion.
@@ -3679,6 +3680,7 @@ validate:
 	    pg_ps_enabled && (m->flags & PG_FICTITIOUS) == 0 &&
 	    vm_reserv_level_iffullpop(m) == 0)
 		pmap_promote_pde(pmap, pde, va);
+#endif
 
 	sched_unpin();
 	rw_wunlock(&pvh_global_lock);

@@ -4018,6 +4018,8 @@ validate:
 		    va, opte2, npte2);
 	}
 #endif
+
+#if VM_NRESERVLEVEL > 0
 	/*
 	 * If both the L2 page table page and the reservation are fully
 	 * populated, then attempt promotion.
@@ -4026,6 +4028,7 @@ validate:
 	    sp_enabled && (m->flags & PG_FICTITIOUS) == 0 &&
 	    vm_reserv_level_iffullpop(m) == 0)
 		pmap_promote_pte1(pmap, pte1p, va);
+#endif
 	sched_unpin();
 	rw_wunlock(&pvh_global_lock);
 	PMAP_UNLOCK(pmap);
