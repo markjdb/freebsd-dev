@@ -22,6 +22,8 @@
         ..
         pkill
         ..
+        pwait
+        ..
         sh
             builtins
             ..
@@ -609,6 +611,8 @@
         comm
         ..
         cut
+        ..
+        diff
         ..
         dirname
         ..
