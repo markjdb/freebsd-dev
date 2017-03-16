@@ -1308,6 +1308,7 @@ g_mirror_sync_request_free(struct g_mirror_disk *disk, struct bio *bp)
 
 	if (disk != NULL && disk->d_sync.ds_bios != NULL) {
 		i = (int)(uintptr_t)bp->bio_caller1;
+		MPASS(disk->d_sync.ds_bios[i] == bp);
 		disk->d_sync.ds_bios[i] = NULL;
 	}
 	free(bp->bio_data, M_MIRROR);
@@ -1322,14 +1323,13 @@ g_mirror_sync_request_free(struct g_mirror_disk *disk, struct bio *bp)
  * send.
  */
 static void
-g_mirror_sync_request(struct bio *bp)
+g_mirror_sync_request(struct g_mirror_softc *sc, struct bio *bp)
 {
-	struct g_mirror_softc *sc;
 	struct g_mirror_disk *disk;
 	struct g_mirror_disk_sync *sync;
+	int idx;
 
 	bp->bio_from->index--;
-	sc = bp->bio_from->geom->softc;
 	disk = bp->bio_from->private;
 	if (disk == NULL) {
 		sx_xunlock(&sc->sc_lock); /* Avoid recursion on sc_lock. */
@@ -1413,6 +1413,7 @@ g_mirror_sync_request(struct bio *bp)
 
 		/* Send next synchronization request. */
 		data = bp->bio_data;
+		idx = (int)(uintptr_t)bp->bio_caller1;
 		g_reset_bio(bp);
 		bp->bio_cmd = BIO_READ;
 		bp->bio_offset = sync->ds_offset;
@@ -1422,6 +1423,7 @@ g_mirror_sync_request(struct bio *bp)
 		bp->bio_data = data;
 		bp->bio_from = sync->ds_consumer;
 		bp->bio_to = sc->sc_provider;
+		bp->bio_caller1 = (void *)(uintptr_t)idx;
 		G_MIRROR_LOGREQ(3, bp, "Sending synchronization request.");
 		sync->ds_consumer->index++;
 		/*
@@ -1439,7 +1441,7 @@ g_mirror_sync_request(struct bio *bp)
 		offset = sc->sc_mediasize;
 		for (i = 0; i < g_mirror_syncreqs; i++) {
 			bp = sync->ds_bios[i];
-			if (bp->bio_offset < offset)
+			if (bp != NULL && bp->bio_offset < offset)
 				offset = bp->bio_offset;
 		}
 		if (sync->ds_offset_done + (MAXPHYS * 100) < offset) {
@@ -1942,12 +1944,12 @@ g_mirror_worker(void *arg)
 
 		if (bp->bio_from->geom == sc->sc_sync.ds_geom &&
 		    (bp->bio_cflags & G_MIRROR_BIO_FLAG_SYNC) != 0) {
-			g_mirror_sync_request(bp);	/* READ */
+			g_mirror_sync_request(sc, bp);	/* READ */
 		} else if (bp->bio_to != sc->sc_provider) {
 			if ((bp->bio_cflags & G_MIRROR_BIO_FLAG_REGULAR) != 0)
 				g_mirror_regular_request(bp);
 			else if ((bp->bio_cflags & G_MIRROR_BIO_FLAG_SYNC) != 0)
-				g_mirror_sync_request(bp);	/* WRITE */
+				g_mirror_sync_request(sc, bp);	/* WRITE */
 			else {
 				KASSERT(0,
 				    ("Invalid request cflags=0x%hx to=%s.",
