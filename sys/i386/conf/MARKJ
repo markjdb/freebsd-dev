@@ -96,7 +96,6 @@ device		cpufreq
 
 # Bus support.
 device		acpi
-device		eisa
 device		pci
 
 # Floppy drives
