@@ -3043,14 +3043,17 @@ g_mirror_destroy(struct g_mirror_softc *sc, int how)
 	g_topology_assert_not();
 	sx_assert(&sc->sc_lock, SX_XLOCKED);
 
-	if (sc->sc_provider_open != 0) {
+	g_topology_lock();
+	if (sc->sc_provider_open != 0 || !g_mirror_can_destroy(sc)) {
 		switch (how) {
 		case G_MIRROR_DESTROY_SOFT:
+			g_topology_unlock();
 			G_MIRROR_DEBUG(1,
 			    "Device %s is still open (%d).", sc->sc_name,
 			    sc->sc_provider_open);
 			return (EBUSY);
 		case G_MIRROR_DESTROY_DELAYED:
+			g_topology_unlock();
 			G_MIRROR_DEBUG(1,
 			    "Device %s will be destroyed on last close.",
 			    sc->sc_name);
@@ -3067,8 +3070,6 @@ g_mirror_destroy(struct g_mirror_softc *sc, int how)
 			    "can't be definitely removed.", sc->sc_name);
 		}
 	}
-
-	g_topology_lock();
 	if (sc->sc_geom->softc == NULL) {
 		g_topology_unlock();
 		return (0);
