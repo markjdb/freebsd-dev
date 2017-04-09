@@ -2192,6 +2192,10 @@ g_mirror_destroy_provider(struct g_mirror_softc *sc)
 		if (bp->bio_to != pp ||
 		    bp->bio_from->geom == sc->sc_sync.ds_geom) {
 			bp->bio_from->index--;
+			if (bp->bio_cmd == BIO_READ &&
+			    (bp->bio_cflags & G_MIRROR_BIO_FLAG_REGULAR) != 0 &&
+			    bp->bio_parent->bio_error == 0)
+				g_io_deliver(bp->bio_parent, ENXIO);
 		}
 
 		/*
@@ -2200,7 +2204,8 @@ g_mirror_destroy_provider(struct g_mirror_softc *sc)
 		 * mirror components can be destroyed immediately.
 		 */
 		if (bp->bio_to == pp &&
-		    bp->bio_from->geom != sc->sc_sync.ds_geom) {
+		    (bp->bio_from->geom != sc->sc_sync.ds_geom ||
+		     (bp->bio_cflags & G_MIRROR_BIO_FLAG_SYNC) == 0)) {
 			g_io_deliver(bp, ENXIO);
 		} else {
 			if ((bp->bio_cflags & G_MIRROR_BIO_FLAG_SYNC) != 0)
