@@ -1466,6 +1466,20 @@ vm_map_fixed(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	return (result);
 }
 
+static const int aslr_pages_rnd_64[2] = {0x1000, 0x10};
+static const int aslr_pages_rnd_32[2] = {0x100, 0x4};
+
+static int aslr_sloppiness = 5;
+SYSCTL_INT(_vm, OID_AUTO, aslr_sloppiness, CTLFLAG_RW, &aslr_sloppiness, 0,
+    "");
+
+static int aslr_collapse_anon = 1;
+SYSCTL_INT(_vm, OID_AUTO, aslr_collapse_anon, CTLFLAG_RW,
+    &aslr_collapse_anon, 0,
+    "");
+
+#define	MAP_32BIT_MAX_ADDR	((vm_offset_t)1 << 31)
+
 /*
  *	vm_map_find finds an unallocated region in the target address
  *	map with the given length.  The search is defined to be
@@ -1481,8 +1495,11 @@ vm_map_find(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	    vm_size_t length, vm_offset_t max_addr, int find_space,
 	    vm_prot_t prot, vm_prot_t max, int cow)
 {
-	vm_offset_t alignment, initial_addr, start;
-	int result;
+	vm_map_entry_t prev_entry;
+	vm_offset_t alignment, addr_save, start, start1, rand_max, re;
+	const int *aslr_pages_rnd;
+	int result, do_aslr, pidx;
+	bool en_aslr, anon;
 
 	KASSERT((cow & (MAP_STACK_GROWS_DOWN | MAP_STACK_GROWS_UP)) == 0 ||
 	    object == NULL,
@@ -1495,20 +1512,85 @@ vm_map_find(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 		alignment = (vm_offset_t)1 << (find_space >> 8);
 	} else
 		alignment = 0;
-	initial_addr = *addr;
+	do_aslr = (map->flags & MAP_ASLR) != 0 ? aslr_sloppiness : 0;
+	en_aslr = do_aslr != 0;
+	anon = object == NULL && (cow & (MAP_INHERIT_SHARE |
+	    MAP_STACK_GROWS_UP | MAP_STACK_GROWS_DOWN)) == 0 &&
+	    prot != PROT_NONE && aslr_collapse_anon;
+	addr_save = *addr;
+	if (en_aslr) {
+		if (vm_map_max(map) > MAP_32BIT_MAX_ADDR &&
+		    (max_addr == 0 || max_addr > MAP_32BIT_MAX_ADDR))
+			aslr_pages_rnd = aslr_pages_rnd_64;
+		else
+			aslr_pages_rnd = aslr_pages_rnd_32;
+		if (find_space != VMFS_NO_SPACE && (map->flags &
+		    MAP_ASLR_IGNSTART) != 0) {
+			start = anon ? map->anon_loc : vm_map_min(map);
+		} else {
+			start = anon && *addr == 0 ? map->anon_loc : addr_save;
+		}
+	} else {
+		start = addr_save;
+	}
+	start1 = start; /* for again_any_space restart */
 again:
-	start = initial_addr;
+	if (en_aslr && (do_aslr == 0 || (anon &&
+	    do_aslr == aslr_sloppiness - 1))) {
+		/*
+		 * We are either at the last aslr iteration, or anon
+		 * coalescing failed on the first try.  Retry with
+		 * free run.
+		 */
+		if ((map->flags & MAP_ASLR_IGNSTART) != 0)
+			start = vm_map_min(map);
+		else
+			start = addr_save;
+	}
+again_any_space:
 	vm_map_lock(map);
 	do {
 		if (find_space != VMFS_NO_SPACE) {
 			if (vm_map_findspace(map, start, length, addr) ||
 			    (max_addr != 0 && *addr + length > max_addr)) {
 				vm_map_unlock(map);
-				if (find_space == VMFS_OPTIMAL_SPACE) {
-					find_space = VMFS_ANY_SPACE;
+				if (do_aslr > 0) {
+					do_aslr--;
 					goto again;
 				}
+				if (find_space == VMFS_OPTIMAL_SPACE) {
+					find_space = VMFS_ANY_SPACE;
+					start = start1;
+					goto again_any_space;
+				}
 				return (KERN_NO_SPACE);
+			}
+			/*
+			 * The R step for ASLR.  But skip it if we are
+			 * trying to coalesce anon memory request.
+			 */
+			if (do_aslr > 0 &&
+			    !(anon && do_aslr == aslr_sloppiness)) {
+				vm_map_lookup_entry(map, *addr, &prev_entry);
+				if (MAXPAGESIZES > 1 && pagesizes[1] != 0 &&
+				    (find_space == VMFS_SUPER_SPACE ||
+				    find_space == VMFS_OPTIMAL_SPACE))
+					pidx = 1;
+				else
+					pidx = 0;
+				re = prev_entry->next == &map->header ?
+				    map->max_offset : prev_entry->next->start;
+				rand_max = ((max_addr != 0 && re > max_addr) ?
+				    max_addr : re) - *addr - length;
+				rand_max /= pagesizes[pidx];
+				if (rand_max < aslr_pages_rnd[pidx]) {
+					vm_map_unlock(map);
+					start = re;
+					do_aslr--;
+					goto again;
+				}
+				*addr += (arc4random() % rand_max) *
+				    pagesizes[pidx];
 			}
 			switch (find_space) {
 			case VMFS_SUPER_SPACE:
@@ -1525,7 +1607,6 @@ again:
 				}
 				break;
 			}
-
 			start = *addr;
 		}
 		if ((cow & (MAP_STACK_GROWS_DOWN | MAP_STACK_GROWS_UP)) != 0) {
@@ -1535,8 +1616,15 @@ again:
 			result = vm_map_insert(map, object, offset, start,
 			    start + length, prot, max, cow);
 		}
+		if (result != KERN_SUCCESS && do_aslr > 0) {
+			vm_map_unlock(map);
+			do_aslr--;
+			goto again;
+		}
 	} while (result == KERN_NO_SPACE && find_space != VMFS_NO_SPACE &&
 	    find_space != VMFS_ANY_SPACE);
+	if (result == KERN_SUCCESS && anon)
+		map->anon_loc = *addr + length;
 	vm_map_unlock(map);
 	return (result);
 }
@@ -3055,6 +3143,9 @@ vm_map_delete(vm_map_t map, vm_offset_t start, vm_offset_t end)
 
 		pmap_remove(map->pmap, entry->start, entry->end);
 
+		if (entry->end == map->anon_loc)
+			map->anon_loc = entry->prev->end;
+
 		/*
 		 * Delete the entry only after removing all pmap
 		 * entries pointing to its pages.  (Otherwise, its
@@ -3496,6 +3587,17 @@ vmspace_fork(struct vmspace *vm1, vm_ooffset_t *fork_charge)
 	return (vm2);
 }
 
+static vm_size_t
+vm_map_stack_initsz(vm_map_t map, vm_size_t max_ssize, vm_size_t growsize)
+{
+	vm_size_t init_ssize;
+
+	init_ssize = max_ssize;
+	if ((map->flags & MAP_ASLR) == 0 && max_ssize > growsize)
+		init_ssize =  growsize;
+	return (init_ssize);
+}
+
 int
 vm_map_stack(vm_map_t map, vm_offset_t addrbos, vm_size_t max_ssize,
     vm_prot_t prot, vm_prot_t max, int cow)
@@ -3505,7 +3607,7 @@ vm_map_stack(vm_map_t map, vm_offset_t addrbos, vm_size_t max_ssize,
 	int rv;
 
 	growsize = sgrowsiz;
-	init_ssize = (max_ssize < growsize) ? max_ssize : growsize;
+	init_ssize = vm_map_stack_initsz(map, max_ssize, growsize);
 	vm_map_lock(map);
 	lmemlim = lim_cur(curthread, RLIMIT_MEMLOCK);
 	vmemlim = lim_cur(curthread, RLIMIT_VMEM);
@@ -3550,7 +3652,7 @@ vm_map_stack_locked(vm_map_t map, vm_offset_t addrbos, vm_size_t max_ssize,
 	    addrbos + max_ssize < addrbos)
 		return (KERN_NO_SPACE);
 
-	init_ssize = (max_ssize < growsize) ? max_ssize : growsize;
+	init_ssize = vm_map_stack_initsz(map, max_ssize, growsize);
 
 	/* If addr is already mapped, no go */
 	if (vm_map_lookup_entry(map, addrbos, &prev_entry))
