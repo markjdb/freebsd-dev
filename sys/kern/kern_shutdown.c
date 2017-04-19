@@ -1181,20 +1181,6 @@ dump_raw_write_pad(struct dumperinfo *di, void *virtual, vm_offset_t physical,
 }
 
 int
-dump_write_pad(struct dumperinfo *di, void *virtual, vm_offset_t physical,
-    off_t offset, size_t length, size_t *size)
-{
-	void *buf;
-	int error;
-
-	error = dump_pad(di, virtual, length, &buf, size);
-	if (error != 0)
-		return (error);
-
-	return (dump_write(di, buf, physical, offset, *size));
-}
-
-int
 dump_write_header(struct dumperinfo *di, struct kerneldumpheader *kdh,
     vm_offset_t physical, off_t offset)
 {
