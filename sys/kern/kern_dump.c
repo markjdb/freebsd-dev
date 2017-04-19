@@ -368,17 +368,9 @@ dumpsys_generic(struct dumperinfo *di)
 	printf("Dumping %ju MB (%d chunks)\n", (uintmax_t)dumpsize >> 20,
 	    ehdr.e_phnum - DUMPSYS_NUM_AUX_HDRS);
 
-	/* Dump leader */
-	error = dump_write_header(di, &kdh, 0, dumplo);
+	error = dump_start(di, &kdh, &dumplo);
 	if (error)
 		goto fail;
-	dumplo += di->blocksize;
-
-	/* Dump key */
-	error = dump_write_key(di, 0, dumplo);
-	if (error)
-		goto fail;
-	dumplo += kerneldumpcrypto_dumpkeysize(di->kdc);
 
 	/* Dump ELF header */
 	error = dumpsys_buf_write(di, (char*)&ehdr, sizeof(ehdr));

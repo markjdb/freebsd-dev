@@ -1195,20 +1195,31 @@ dump_write_header(struct dumperinfo *di, struct kerneldumpheader *kdh,
 }
 
 int
-dump_write_key(struct dumperinfo *di, vm_offset_t physical, off_t offset)
+dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t *offsetp)
 {
-#ifndef EKCD
-	return (0);
-#else /* EKCD */
+#ifdef EKCD
 	struct kerneldumpcrypto *kdc;
+#endif
+	off_t offset;
+	int ret;
 
+	offset = *offsetp;
+	ret = dump_write_header(di, kdh, 0, offset);
+	if (ret != 0)
+		return (ret);
+	offset += di->blocksize;
+
+#ifdef EKCD
 	kdc = di->kdc;
-	if (kdc == NULL)
-		return (0);
-
-	return (dump_raw_write(di, kdc->kdc_dumpkey, physical, offset,
-	    kdc->kdc_dumpkeysize));
-#endif /* !EKCD */
+	if (kdc != NULL) {
+		ret = dump_raw_write(di, kdc->kdc_dumpkey, physical, offset,
+		    kdc->kdc_dumpkeysize);
+		if (ret == 0)
+			offset += kdc->kdc_dumpkeysize;
+	}
+#endif
+	*offsetp = offset;
+	return (ret);
 }
 
 void

@@ -117,17 +117,9 @@ dumpsys(struct dumperinfo *di)
 
 	printf("Dumping %lu MB (%d chunks)\n", (u_long)(size >> 20), nreg);
 
-	/* Dump leader */
-	error = dump_write_header(di, &kdh, 0, dumplo);
+	error = dump_start(di, &kdh, &dumplo);
 	if (error)
 		goto fail;
-	dumplo += di->blocksize;
-
-	/* Dump key */
-	error = dump_write_key(di, 0, dumplo);
-	if (error)
-		goto fail;
-	dumplo += kerneldumpcrypto_dumpkeysize(di->kdc);
 
 	/* Dump the private header. */
 	hdr.dh_hdr_size = hdrsize;

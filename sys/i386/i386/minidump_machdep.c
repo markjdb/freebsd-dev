@@ -278,17 +278,9 @@ minidumpsys(struct dumperinfo *di)
 	printf("Physical memory: %ju MB\n", ptoa((uintmax_t)physmem) / 1048576);
 	printf("Dumping %llu MB:", (long long)dumpsize >> 20);
 
-	/* Dump leader */
-	error = dump_write_header(di, &kdh, 0, dumplo);
+	error = dump_start(di, &kdh, &dumplo);
 	if (error)
 		goto fail;
-	dumplo += di->blocksize;
-
-	/* Dump key */
-	error = dump_write_key(di, 0, dumplo);
-	if (error)
-		goto fail;
-	dumplo += kerneldumpcrypto_dumpkeysize(di->kdc);
 
 	/* Dump my header */
 	bzero(&fakept, sizeof(fakept));
