@@ -37,95 +37,47 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/sleepqueue.h>
 #include <sys/kernel.h>
+#include <sys/_mutex.h>
 #include <sys/proc.h>
+#include <sys/sleepqueue.h>
 
 typedef struct {
 } wait_queue_t;
 
 typedef struct {
 	unsigned int	wchan;
+	struct mtx	mtx;
+	struct list_head list;
 } wait_queue_head_t;
 
-#define	init_waitqueue_head(x) \
-    do { } while (0)
-
-static inline void
-__wake_up(wait_queue_head_t *q, int all)
-{
-	int wakeup_swapper;
-	void *c;
-
-	c = &q->wchan;
-	sleepq_lock(c);
-	if (all)
-		wakeup_swapper = sleepq_broadcast(c, SLEEPQ_SLEEP, 0, 0);
-	else
-		wakeup_swapper = sleepq_signal(c, SLEEPQ_SLEEP, 0, 0);
-	sleepq_release(c);
-	if (wakeup_swapper)
-		kick_proc0();
-}
-
-#define	wake_up(q)				__wake_up(q, 0)
-#define	wake_up_nr(q, nr)			__wake_up(q, 1)
-#define	wake_up_all(q)				__wake_up(q, 1)
-#define	wake_up_interruptible(q)		__wake_up(q, 0)
-#define	wake_up_interruptible_nr(q, nr)		__wake_up(q, 1)
-#define	wake_up_interruptible_all(q, nr)	__wake_up(q, 1)
-
-#define	wait_event(q, cond)						\
-do {									\
-	void *c = &(q).wchan;						\
-	if (!(cond)) {							\
-		for (;;) {						\
-			if (SCHEDULER_STOPPED())			\
-				break;					\
-			sleepq_lock(c);					\
-			if (cond) {					\
-				sleepq_release(c);			\
-				break;					\
-			}						\
-			sleepq_add(c, NULL, "completion", SLEEPQ_SLEEP, 0); \
-			sleepq_wait(c, 0);				\
-		}							\
-	}								\
+/* XXX should be in .c? */
+#define	init_waitqueue_head(wq) do {					\
+	INIT_LIST_HEAD(&(wq)->list);					\
+	mtx_init(&(wq)->mtx, "lnxwq", NULL, MTX_DEF);			\
 } while (0)
 
-#define	wait_event_interruptible(q, cond)				\
-({									\
-	void *c = &(q).wchan;						\
-	int _error;							\
-									\
-	_error = 0;							\
-	if (!(cond)) {							\
-		for (; _error == 0;) {					\
-			if (SCHEDULER_STOPPED())			\
-				break;					\
-			sleepq_lock(c);					\
-			if (cond) {					\
-				sleepq_release(c);			\
-				break;					\
-			}						\
-			sleepq_add(c, NULL, "completion",		\
-			    SLEEPQ_SLEEP | SLEEPQ_INTERRUPTIBLE, 0);	\
-			if (sleepq_wait_sig(c, 0))			\
-				_error = -ERESTARTSYS;			\
-		}							\
-	}								\
-	-_error;							\
-})
+extern void	linux_wake_up(wait_queue_head_t *q, bool all);
 
-#define	wait_event_interruptible_timeout(q, cond, timeout)		\
-({									\
-	void *c = &(q).wchan;						\
-	long end = jiffies + timeout;					\
-	int __ret = 0;	 						\
-	int __rc = 0;							\
+#define	wake_up(q)				linux_wake_up(q, false)
+#define	wake_up_nr(q, nr)			linux_wake_up(q, true)
+#define	wake_up_all(q)				linux_wake_up(q, true)
+#define	wake_up_interruptible(q)		linux_wake_up(q, false)
+#define	wake_up_interruptible_nr(q, nr)		linux_wake_up(q, true)
+#define	wake_up_interruptible_all(q, nr)	linux_wake_up(q, true)
+
+extern int	linux_wait_event_common(wait_queue_head_t *q, void *chan,
+		    long timeout, bool intr);
+
+#define	__wait_event_common(q, cond, timeout, intr) ({			\
+	void *__c;							\
+	int __error, __ret;						\
 									\
+	__c = &(q).wchan;						\
+	__ret = 1;							\
+	mtx_lock(&(q).mtx);						\
 	if (!(cond)) {							\
-		for (; __rc == 0;) {					\
+		for (;;) {						\
 			if (SCHEDULER_STOPPED())			\
 				break;					\
 			sleepq_lock(c);					\
@@ -134,41 +86,43 @@ do {									\
 				__ret = 1;				\
 				break;					\
 			}						\
-			sleepq_add(c, NULL, "completion",		\
-			SLEEPQ_SLEEP | SLEEPQ_INTERRUPTIBLE, 0);	\
-			sleepq_set_timeout(c, linux_timer_jiffies_until(end));\
-			__rc = sleepq_timedwait_sig (c, 0);		\
-			if (__rc != 0) {				\
-				/* check for timeout or signal. 	\
-				 * 0 if the condition evaluated to false\
-				 * after the timeout elapsed,  1 if the \
-				 * condition evaluated to true after the\
-				 * timeout elapsed.			\
-				 */					\
-				if (__rc == EWOULDBLOCK)		\
+			__error = linux_wait_event_common(&(q), __c,	\
+			    timeout, intr);				\
+			if (__error != 0) {				\
+				if (__error == EWOULDBLOCK)		\
 					__ret = (cond);			\
-				 else					\
+				else					\
 					__ret = -ERESTARTSYS;		\
+				break;					\
 			}						\
-									\
 		}							\
-	} else {							\
-		/* return remaining jiffies (at least 1) if the 	\
-		 * condition evaluated to true before the timeout	\
-		 * elapsed.						\
-		 */							\
-		__ret = (end - jiffies);				\
-		if( __ret < 1 )						\
-			__ret = 1;					\
 	}								\
+	mtx_unlock(&(q).mtx);						\
 	__ret;								\
 })
 
+#define	wait_event(q, cond) do {					\
+	(void)__wait_event_common(q, cond, 0, false);			\
+} while (0)
+
+#define	wait_event_timeout(q, cond, timeout)				\
+	__wait_event_common(q, cond, timeout, false)
+
+#define	wait_event_interruptible(q, cond)				\
+	__wait_event_common(q, cond, 0, true)
+
+#define	wait_event_interruptible_timeout(q, cond, timeout)		\
+	__wait_event_common(q, cond, timeout, true)
 
 static inline int
 waitqueue_active(wait_queue_head_t *q)
 {
-	return 0;	/* XXX: not really implemented */
+	int ret;
+
+	mtx_lock(&q->mtx);
+	ret = !list_empty(&q->list);
+	mtx_unlock(&q->mtx);
+	return (ret);
 }
 
 #define DEFINE_WAIT(name)	\

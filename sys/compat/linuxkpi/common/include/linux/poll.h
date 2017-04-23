@@ -28,7 +28,8 @@
  *
  * $FreeBSD$
  */
-#ifndef	_LINUX_POLL_H_
+
+#ifndef _LINUX_POLL_H_
 #define	_LINUX_POLL_H_
 
 #include <sys/poll.h>
@@ -40,10 +41,9 @@
 typedef struct poll_table_struct {
 } poll_table;
 
-static inline void
-poll_wait(struct linux_file *filp, wait_queue_head_t *wait_address, poll_table *p)
-{
-	selrecord(curthread, &filp->f_selinfo);
-}
+#define	poll_wait(filp, q, p)	linux_poll_wait(filp, q, p)
 
-#endif	/* _LINUX_POLL_H_ */
+extern void	linux_poll_wait(struct linux_file *, wait_queue_head_t *q,
+		    poll_table *p);
+
+#endif /* _LINUX_POLL_H_ */
