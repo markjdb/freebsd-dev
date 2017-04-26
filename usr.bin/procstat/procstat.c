@@ -53,7 +53,7 @@ usage(void)
 	xo_error("usage: procstat [-CHhn] [-M core] [-N system] "
 	    "[-w interval]\n"
 	    "                [-b | -c | -e | -f | -i | -j | -k | "
-	    "-l | -r | -s | -S | -t | -v | -x]\n"
+	    "-L | -l | -r | -s | -S | -t | -v | -x]\n"
 	    "                [-a | pid | core ...]\n");
 	xo_finish();
 	exit(EX_USAGE);
