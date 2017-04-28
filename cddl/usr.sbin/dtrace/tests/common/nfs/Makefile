@@ -17,5 +17,8 @@ CFILES= \
      tst.call.c  \
      tst.call3.c  \
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"

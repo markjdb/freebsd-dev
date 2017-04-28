@@ -52,6 +52,9 @@ TESTEXES= \
 CFILES= \
 
 
+ASMFILES= \
+
+
 
 TEST_METADATA.t_dtrace_contrib+=	required_memory="4g"
 

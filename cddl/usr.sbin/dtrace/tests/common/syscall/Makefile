@@ -16,5 +16,8 @@ TESTEXES= \
 CFILES= \
      tst.args.c  \
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"

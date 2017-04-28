@@ -35,5 +35,8 @@ CFILES= \
      tst.probestar.c  \
 
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"

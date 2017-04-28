@@ -24,10 +24,18 @@ CLEANFILES+=	${TESTWRAPPER}.sh
 
 .PATH:	${TESTSRC}
 
-PROGS=		${CFILES:T:S/.c$/.exe/g}
-.for prog in ${PROGS}
-SRCS.${prog}+= ${prog:S/.exe$/.c/}
+.for file in ${CFILES:T:S/.c$//g}
+PROGS+= ${file}.exe
+SRCS.${file}.exe= ${file}.c
+.endfor
 
+.for file in ${ASMFILES:T:S/.S$//g}
+PROGS+= ${file}.exe
+SRCS.${file}.exe= ${file}.S
+CFLAGS.${file}.exe+= -I${SRCDIR}/sys/cddl/contrib/opensolaris/uts/common -D_ASM -m32
+.endfor
+
+.for prog in ${PROGS}
 .if exists(${prog:S/^tst.//:S/.exe$/.d/})
 SRCS.${prog}+=	${prog:S/^tst.//:S/.exe$/.d/}
 .endif

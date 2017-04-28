@@ -65,5 +65,8 @@ CFILES= \
      tst.args.c  \
      tst.forker.c  \
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"
