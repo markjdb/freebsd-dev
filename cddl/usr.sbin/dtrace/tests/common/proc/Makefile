@@ -25,6 +25,9 @@ TESTEXES= \
 CFILES= \
      tst.sigwait.c  \
 
+ASMFILES= \
+
+
 
 LIBADD.tst.sigwait.exe+= rt
 

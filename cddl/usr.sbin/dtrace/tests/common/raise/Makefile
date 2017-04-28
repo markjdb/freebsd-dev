@@ -19,6 +19,9 @@ CFILES= \
      tst.raise2.c  \
      tst.raise3.c  \
 
+ASMFILES= \
+
+
 
 TEST_METADATA.t_dtrace_contrib+=	required_memory="4g"
 

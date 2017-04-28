@@ -7,11 +7,7 @@
 PACKAGE=	tests
 
 ${PACKAGE}FILES= \
-     tst.aggrate.d  \
-     tst.aggrate.d.out  \
-     tst.statusrate.d  \
-     tst.switchrate.d  \
-     tst.switchrate.d.out  \
+     tst.uregsarray.d  \
 
 TESTEXES= \
 

@@ -18,5 +18,8 @@ CFILES= \
      tst.bigstack.c  \
      tst.spin.c  \
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"

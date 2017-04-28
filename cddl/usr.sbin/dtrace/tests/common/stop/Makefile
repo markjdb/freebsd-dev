@@ -17,5 +17,8 @@ CFILES= \
      tst.stop1.c  \
      tst.stop2.c  \
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"

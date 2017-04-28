@@ -37,6 +37,9 @@ CFILES= \
      tst.libtype.c  \
      tst.printtype.c  \
 
+ASMFILES= \
+
+
 
 WITH_CTF=YES
 

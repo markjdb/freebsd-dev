@@ -17,5 +17,8 @@ CFILES= \
      tst.post.c  \
      tst.post_chan.c  \
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"
