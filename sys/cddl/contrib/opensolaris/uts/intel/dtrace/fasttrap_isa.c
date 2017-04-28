@@ -961,14 +961,15 @@ fasttrap_do_seg(fasttrap_tracepoint_t *tp, struct reg *rp, uintptr_t *addr)
 }
 
 int
-fasttrap_pid_probe(struct reg *rp)
+fasttrap_pid_probe(struct trapframe *frame)
 {
+	struct reg *rp, regs;
 	proc_t *p = curproc;
 #ifndef illumos
 	struct rm_priotracker tracker;
 	proc_t *pp;
 #endif
-	uintptr_t pc = rp->r_rip - 1;
+	uintptr_t pc = frame->tf_rip - 1;
 	uintptr_t new_pc = 0;
 	fasttrap_bucket_t *bucket;
 #ifdef illumos
@@ -978,6 +979,8 @@ fasttrap_pid_probe(struct reg *rp)
 	pid_t pid;
 	dtrace_icookie_t cookie;
 	uint_t is_enabled = 0;
+
+	enable_intr();
 
 	/*
 	 * It's possible that a user (in a veritable orgy of bad planning)
@@ -1018,11 +1021,13 @@ fasttrap_pid_probe(struct reg *rp)
 	mutex_enter(pid_mtx);
 #else
 	pp = p;
-	sx_slock(&proctree_lock);
-	while (pp->p_vmspace == pp->p_pptr->p_vmspace)
-		pp = pp->p_pptr;
+	if (pp->p_vmspace == pp->p_pptr->p_vmspace) {
+		sx_slock(&proctree_lock);
+		while (pp->p_vmspace == pp->p_pptr->p_vmspace)
+			pp = pp->p_pptr;
+		sx_sunlock(&proctree_lock);
+	}
 	pid = pp->p_pid;
-	sx_sunlock(&proctree_lock);
 	pp = NULL;
 
 	rm_rlock(&fasttrap_tp_lock, &tracker);
@@ -1050,8 +1055,17 @@ fasttrap_pid_probe(struct reg *rp)
 #else
 		rm_runlock(&fasttrap_tp_lock, &tracker);
 #endif
+		uint8_t instr;
+		if (copyin((void *)pc, &instr, 1) == 0 &&
+		    instr != FASTTRAP_INSTR) {
+			frame->tf_rip--;
+			return (0);
+		}
 		return (-1);
 	}
+
+	fill_frame_regs(frame, &regs);
+	rp = &regs;
 
 	/*
 	 * Set the program counter to the address of the traced instruction
@@ -1783,8 +1797,9 @@ done:
 }
 
 int
-fasttrap_return_probe(struct reg *rp)
+fasttrap_return_probe(struct trapframe *frame)
 {
+	struct reg *rp, regs;
 	proc_t *p = curproc;
 	uintptr_t pc = curthread->t_dtrace_pc;
 	uintptr_t npc = curthread->t_dtrace_npc;
@@ -1793,6 +1808,8 @@ fasttrap_return_probe(struct reg *rp)
 	curthread->t_dtrace_npc = 0;
 	curthread->t_dtrace_scrpc = 0;
 	curthread->t_dtrace_astpc = 0;
+
+	enable_intr();
 
 #ifdef illumos
 	/*
@@ -1803,7 +1820,17 @@ fasttrap_return_probe(struct reg *rp)
 	while (p->p_flag & SVFORK) {
 		p = p->p_parent;
 	}
+#else
+	if (p->p_vmspace == p->p_pptr->p_vmspace) {
+		sx_slock(&proctree_lock);
+		while (p->p_vmspace == p->p_pptr->p_vmspace)
+			p = p->p_pptr;
+		sx_sunlock(&proctree_lock);
+	}
 #endif
+
+	fill_frame_regs(frame, &regs);
+	rp = &regs;
 
 	/*
 	 * We set rp->r_rip to the address of the traced instruction so

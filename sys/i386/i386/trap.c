@@ -175,9 +175,6 @@ SYSCTL_INT(_machdep, OID_AUTO, uprintf_signal, CTLFLAG_RW,
 void
 trap(struct trapframe *frame)
 {
-#ifdef KDTRACE_HOOKS
-	struct reg regs;
-#endif
 	struct thread *td = curthread;
 	struct proc *p = td->td_proc;
 #ifdef KDB
@@ -318,15 +315,13 @@ trap(struct trapframe *frame)
 
 		case T_BPTFLT:		/* bpt instruction fault */
 		case T_TRCTRAP:		/* trace trap */
-			enable_intr();
 #ifdef KDTRACE_HOOKS
-			if (type == T_BPTFLT) {
-				fill_frame_regs(frame, &regs);
-				if (dtrace_pid_probe_ptr != NULL &&
-				    dtrace_pid_probe_ptr(&regs) == 0)
+			if (type == T_BPTFLT && dtrace_pid_probe_ptr != NULL) {
+				if (dtrace_pid_probe_ptr(frame) == 0)
 					goto out;
-			}
+			} else
 #endif
+				enable_intr();
 user_trctrap_out:
 			frame->tf_eflags &= ~PSL_T;
 			i = SIGTRAP;
@@ -494,11 +489,11 @@ user_trctrap_out:
 			break;
 #ifdef KDTRACE_HOOKS
 		case T_DTRACE_RET:
-			enable_intr();
-			fill_frame_regs(frame, &regs);
 			if (dtrace_return_probe_ptr != NULL &&
-			    dtrace_return_probe_ptr(&regs) == 0)
+			    dtrace_return_probe_ptr(frame) == 0)
 				goto out;
+			else
+				enable_intr();
 			break;
 #endif
 		}
