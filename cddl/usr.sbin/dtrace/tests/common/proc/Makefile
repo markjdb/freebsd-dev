@@ -26,6 +26,9 @@ CFILES= \
      tst.exitcore.c  \
      tst.sigwait.c  \
 
+ASMFILES= \
+
+
 
 LIBADD.tst.sigwait.exe+= rt
 

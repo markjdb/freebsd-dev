@@ -33,6 +33,8 @@ extern "C" {
 
 #ifdef _ASM	/* The remainder of this file is only for assembly files */
 
+#define	DGDEF(s)
+
 /*
  * make annoying differences in assembler syntax go away
  */

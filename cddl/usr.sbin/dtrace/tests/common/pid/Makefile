@@ -67,5 +67,8 @@ CFILES= \
      tst.weak1.c  \
      tst.weak2.c  \
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"

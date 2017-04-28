@@ -51,5 +51,8 @@ TESTEXES= \
 CFILES= \
      tst.ufuncsort.c  \
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"

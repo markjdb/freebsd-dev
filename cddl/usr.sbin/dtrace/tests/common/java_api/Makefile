@@ -42,5 +42,8 @@ CFILES= \
      tst.FunctionLookup.c  \
      tst.ProbeData.c  \
 
+ASMFILES= \
+
+
 
 .include "../../dtrace.test.mk"

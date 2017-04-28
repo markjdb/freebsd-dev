@@ -24,13 +24,15 @@ fmtflist()
 
 genmakefile()
 {
-    local basedir=$1
+    local basedir=$(basename $1)
+    local basetestdir=$(basename $(dirname $1))
 
-    local tdir=${CONTRIB_TESTDIR}/${basedir}
-    local tfiles=$(find $tdir -type f -a \
+    local testdir=${CONTRIB_TESTDIR}/${basetestdir}/${basedir}
+    local tfiles=$(find $testdir -type f -a \
         \( -name \*.d -o -name \*.ksh -o -name \*.out \) | sort | fmtflist)
-    local tcfiles=$(find $tdir -type f -a -name \*.c | sort | fmtflist)
-    local texes=$(find $tdir -type f -a -name \*.exe | sort | fmtflist)
+    local tcfiles=$(find $testdir -type f -a -name \*.c | sort | fmtflist)
+    local tasmfiles=$(find $testdir -type f -a -name \*.S | sort | fmtflist)
+    local texes=$(find $testdir -type f -a -name \*.exe | sort | fmtflist)
 
     # One-off variable definitions.
     local special
@@ -76,11 +78,14 @@ $texes
 CFILES= \\
 $tcfiles
 
+ASMFILES= \\
+$tasmfiles
+
 $special
 .include "../../dtrace.test.mk"
 __EOF__
 
-    mv -f $makefile ${ORIGINDIR}/../common/${basedir}/Makefile
+    mv -f $makefile ${ORIGINDIR}/../${basetestdir}/${basedir}/Makefile
 }
 
 set -e
@@ -93,9 +98,12 @@ export LC_ALL=C
 
 readonly ORIGINDIR=$(realpath $(dirname $0))
 readonly TOPDIR=$(realpath ${ORIGINDIR}/../../../../..)
-readonly CONTRIB_TESTDIR=${TOPDIR}/cddl/contrib/opensolaris/cmd/dtrace/test/tst/common
+readonly CONTRIB_TESTDIR=${TOPDIR}/cddl/contrib/opensolaris/cmd/dtrace/test/tst
+readonly TEST_SUBDIRS="common i386"
 
-# Generate a Makefile for each test group under common/.
-for dir in $(find ${CONTRIB_TESTDIR} -mindepth 1 -maxdepth 1 -type d); do
-    genmakefile $(basename $dir)
+# Generate a Makefile for each test group.
+for testdir in ${TEST_SUBDIRS}; do
+    for dir in $(find ${CONTRIB_TESTDIR}/$testdir -mindepth 1 -maxdepth 1 -type d); do
+        genmakefile $dir
+    done
 done

@@ -7,11 +7,11 @@
 PACKAGE=	tests
 
 ${PACKAGE}FILES= \
-     tst.aggrate.d  \
-     tst.aggrate.d.out  \
-     tst.statusrate.d  \
-     tst.switchrate.d  \
-     tst.switchrate.d.out  \
+     tst.badinstr.d  \
+     tst.branch.d  \
+     tst.embedded.d  \
+     tst.ret.d  \
+     tst.retlist.ksh  \
 
 TESTEXES= \
 
@@ -20,7 +20,11 @@ CFILES= \
 
 
 ASMFILES= \
-
+     tst.badinstr.S  \
+     tst.branch.S  \
+     tst.embedded.S  \
+     tst.ret.S  \
+     tst.retlist.S  \
 
 
 .include "../../dtrace.test.mk"
