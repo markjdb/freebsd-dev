@@ -739,6 +739,9 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	}
 	PROC_UNLOCK(p2);
 
+	if (--p1->p_infork == 0)
+		wakeup(&p1->p_infork);
+
 	/*
 	 * Now can be swapped.
 	 */
@@ -850,6 +853,10 @@ fork1(struct thread *td, struct fork_req *fr)
 	fp_procdesc = NULL;
 	newproc = NULL;
 	vm2 = NULL;
+
+	PROC_LOCK(p1);
+	p1->p_infork++;
+	PROC_UNLOCK(p1);
 
 	/*
 	 * Increment the nprocs resource before allocations occur.
@@ -986,6 +993,10 @@ fail1:
 	crfree(newproc->p_ucred);
 	newproc->p_ucred = NULL;
 fail2:
+	PROC_LOCK(p1);
+	if (--p1->p_infork == 0)
+		wakeup(&p1->p_infork);
+	PROC_UNLOCK(p1);
 	if (vm2 != NULL)
 		vmspace_free(vm2);
 	uma_zfree(proc_zone, newproc);

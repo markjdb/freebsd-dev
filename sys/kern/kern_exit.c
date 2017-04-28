@@ -88,11 +88,6 @@ __FBSDID("$FreeBSD$");
 #include <vm/uma.h>
 #include <vm/vm_domain.h>
 
-#ifdef KDTRACE_HOOKS
-#include <sys/dtrace_bsd.h>
-dtrace_execexit_func_t	dtrace_fasttrap_exit;
-#endif
-
 SDT_PROVIDER_DECLARE(proc);
 SDT_PROBE_DEFINE1(proc, , , exit, "int");
 
@@ -529,15 +524,6 @@ exit1(struct thread *td, int rval, int signo)
 
 	/* Tell the prison that we are gone. */
 	prison_proc_free(p->p_ucred->cr_prison);
-
-#ifdef KDTRACE_HOOKS
-	/*
-	 * Tell the DTrace fasttrap provider about the exit if it
-	 * has declared an interest.
-	 */
-	if (dtrace_fasttrap_exit)
-		dtrace_fasttrap_exit(p);
-#endif
 
 	/*
 	 * Notify interested parties of our demise.

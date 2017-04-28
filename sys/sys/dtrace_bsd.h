@@ -58,9 +58,9 @@ typedef void (*dtrace_doubletrap_func_t)(void);
 extern	dtrace_doubletrap_func_t	dtrace_doubletrap_func;
 
 /* Pid provider hooks */
-typedef int (*dtrace_pid_probe_ptr_t)(struct reg *);
+typedef int (*dtrace_pid_probe_ptr_t)(struct trapframe *);
 extern	dtrace_pid_probe_ptr_t	dtrace_pid_probe_ptr;
-typedef int (*dtrace_return_probe_ptr_t)(struct reg *);
+typedef int (*dtrace_return_probe_ptr_t)(struct trapframe *);
 extern	dtrace_return_probe_ptr_t	dtrace_return_probe_ptr;
 
 /* Virtual time hook function type. */
@@ -69,18 +69,9 @@ typedef	void (*dtrace_vtime_switch_func_t)(struct thread *);
 extern int			dtrace_vtime_active;
 extern dtrace_vtime_switch_func_t	dtrace_vtime_switch_func;
 
-/* The fasttrap module hooks into the fork, exit and exit. */
+/* The fasttrap module hooks into fork. */
 typedef void (*dtrace_fork_func_t)(struct proc *, struct proc *);
-typedef void (*dtrace_execexit_func_t)(struct proc *);
-
-/* Global variable in kern_fork.c */
 extern dtrace_fork_func_t	dtrace_fasttrap_fork;
-
-/* Global variable in kern_exec.c */
-extern dtrace_execexit_func_t	dtrace_fasttrap_exec;
-
-/* Global variable in kern_exit.c */
-extern dtrace_execexit_func_t	dtrace_fasttrap_exit;
 
 /* The dtmalloc provider hooks into malloc. */
 typedef	void (*dtrace_malloc_probe_func_t)(u_int32_t, uintptr_t arg0,
