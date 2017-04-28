@@ -92,11 +92,6 @@ __FBSDID("$FreeBSD$");
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
 
-#ifdef KDTRACE_HOOKS
-#include <sys/dtrace_bsd.h>
-dtrace_execexit_func_t	dtrace_fasttrap_exec;
-#endif
-
 SDT_PROVIDER_DECLARE(proc);
 SDT_PROBE_DEFINE1(proc, , , exec, "char *");
 SDT_PROBE_DEFINE1(proc, , , exec__failure, "int");
@@ -821,15 +816,6 @@ interpret:
 	 */
 	oldtextvp = p->p_textvp;
 	p->p_textvp = newtextvp;
-
-#ifdef KDTRACE_HOOKS
-	/*
-	 * Tell the DTrace fasttrap provider about the exec if it
-	 * has declared an interest.
-	 */
-	if (dtrace_fasttrap_exec)
-		dtrace_fasttrap_exec(p);
-#endif
 
 	/*
 	 * Notify others that we exec'd, and clear the P_INEXEC flag

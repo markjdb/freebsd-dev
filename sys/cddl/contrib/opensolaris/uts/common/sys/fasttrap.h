@@ -37,14 +37,8 @@
 extern "C" {
 #endif
 
-#ifdef illumos
-#define	FASTTRAPIOC		(('m' << 24) | ('r' << 16) | ('f' << 8))
-#define	FASTTRAPIOC_MAKEPROBE	(FASTTRAPIOC | 1)
-#define	FASTTRAPIOC_GETINSTR	(FASTTRAPIOC | 2)
-#else
-#define	FASTTRAPIOC_GETINSTR	_IO('f', 2)
-#define	FASTTRAPIOC_MAKEPROBE	_IO('f', 3)
-#endif
+#define	FASTTRAPIOC_GETINSTR	_IO('F', 1)
+#define	FASTTRAPIOC_MAKEPROBE	_IO('F', 2)
 
 typedef enum fasttrap_probe_type {
 	DTFTP_NONE = 0,

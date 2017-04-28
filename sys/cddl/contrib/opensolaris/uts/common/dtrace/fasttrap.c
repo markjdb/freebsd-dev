@@ -218,9 +218,7 @@ static void fasttrap_provider_free(fasttrap_provider_t *);
 static fasttrap_proc_t *fasttrap_proc_lookup(pid_t);
 static void fasttrap_proc_release(fasttrap_proc_t *);
 
-#ifndef illumos
 static void fasttrap_thread_dtor(void *, struct thread *);
-#endif
 
 #define	FASTTRAP_PROVS_INDEX(pid, name) \
 	((fasttrap_hash_str(name) + (pid)) & fasttrap_provs.fth_mask)
@@ -229,8 +227,9 @@ static void fasttrap_thread_dtor(void *, struct thread *);
 
 #ifndef illumos
 struct rmlock fasttrap_tp_lock;
-static eventhandler_tag fasttrap_thread_dtor_tag;
 #endif
+static eventhandler_tag fasttrap_thread_dtor_tag, fasttrap_process_exec_tag,
+    fasttrap_process_exit_tag;
 
 static unsigned long tpoints_hash_size = FASTTRAP_TPOINTS_DEFAULT_SIZE;
 
@@ -723,17 +722,13 @@ fasttrap_fork(proc_t *p, proc_t *cp)
  * associated with this process.
  */
 static void
-fasttrap_exec_exit(proc_t *p)
+fasttrap_exec_exit(void *arg __unused, proc_t *p)
 {
-#ifndef illumos
 	struct thread *td;
-#endif
 
-#ifdef illumos
 	ASSERT(p == curproc);
-#else
-	PROC_LOCK_ASSERT(p, MA_OWNED);
-	_PHOLD(p);
+	PROC_LOCK(p);
+
 	/*
 	 * Since struct threads may be recycled, we cannot rely on t_dtrace_sscr
 	 * fields to be zeroed by kdtrace_thread_ctor. Thus we must zero it
@@ -742,19 +737,14 @@ fasttrap_exec_exit(proc_t *p)
 	FOREACH_THREAD_IN_PROC(p, td)
 		td->t_dtrace_sscr = NULL;
 	PROC_UNLOCK(p);
-#endif
 
 	/*
 	 * We clean up the pid provider for this process here; user-land
 	 * static probes are handled by the meta-provider remove entry point.
 	 */
 	fasttrap_provider_retire(p->p_pid, FASTTRAP_PID_NAME, 0);
-#ifndef illumos
 	if (p->p_dtrace_helpers)
 		dtrace_helpers_destroy(p);
-	PROC_LOCK(p);
-	_PRELE(p);
-#endif
 }
 
 
@@ -879,6 +869,10 @@ again:
 		membar_producer();
 		mutex_exit(&bucket->ftb_mtx);
 
+		PROC_LOCK(p);
+		p->p_dtrace_count++;
+		PROC_UNLOCK(p);
+
 		/*
 		 * Activate the tracepoint in the ISA-specific manner.
 		 * If this fails, we need to report the failure, but
@@ -894,8 +888,8 @@ again:
 		 */
 #ifdef illumos
 		ASSERT(p->p_proc_flag & P_PR_LOCK);
-#endif
 		p->p_dtrace_count++;
+#endif
 
 		return (rc);
 	}
@@ -1087,14 +1081,20 @@ fasttrap_tracepoint_disable(proc_t *p, fasttrap_probe_t *probe, uint_t index)
 		if (fasttrap_tracepoint_remove(p, tp) != 0)
 			fasttrap_sigtrap(p, NULL, pc);
 
+		PROC_LOCK(p);
+		while (p->p_infork > 0)
+			mtx_sleep(&p->p_infork, &p->p_mtx, 0, "ftfork", 0);
+		p->p_dtrace_count--;
+		PROC_UNLOCK(p);
+
 		/*
 		 * Decrement the count of the number of tracepoints active
 		 * in the victim process.
 		 */
 #ifdef illumos
 		ASSERT(p->p_proc_flag & P_PR_LOCK);
-#endif
 		p->p_dtrace_count--;
+#endif
 	}
 
 	/*
@@ -1153,22 +1153,10 @@ fasttrap_disable_callbacks(void)
 	ASSERT(fasttrap_pid_count > 0);
 	fasttrap_pid_count--;
 	if (fasttrap_pid_count == 0) {
-#ifdef illumos
-		cpu_t *cur, *cpu = CPU;
-
-		for (cur = cpu->cpu_next_onln; cur != cpu;
-		    cur = cur->cpu_next_onln) {
-			rw_enter(&cur->cpu_ft_lock, RW_WRITER);
-		}
-#endif
+		/* XXX need to use an rm lock */
+		dtrace_sync();
 		dtrace_pid_probe_ptr = NULL;
 		dtrace_return_probe_ptr = NULL;
-#ifdef illumos
-		for (cur = cpu->cpu_next_onln; cur != cpu;
-		    cur = cur->cpu_next_onln) {
-			rw_exit(&cur->cpu_ft_lock);
-		}
-#endif
 	}
 	mutex_exit(&fasttrap_count_mtx);
 }
@@ -2359,7 +2347,7 @@ err:
 		int ret;
 #endif
 
-		if (copyin((void *)arg, &instr, sizeof (instr)) != 0)
+		if (copyin(*(intptr_t **)arg, &instr, sizeof (instr)) != 0)
 			return (EFAULT);
 
 #ifdef notyet
@@ -2411,7 +2399,7 @@ err:
 		    sizeof (instr.ftiq_instr));
 		mutex_exit(&fasttrap_tpoints.fth_table[index].ftb_mtx);
 
-		if (copyout(&instr, (void *)arg, sizeof (instr)) != 0)
+		if (copyout(&instr, *(intptr_t **)arg, sizeof (instr)) != 0)
 			return (EFAULT);
 
 		return (0);
@@ -2523,6 +2511,7 @@ fasttrap_load(void)
 		    "processes bucket mtx", MUTEX_DEFAULT, NULL);
 
 	rm_init(&fasttrap_tp_lock, "fasttrap tracepoint");
+#endif
 
 	/*
 	 * This event handler must run before kdtrace_thread_dtor() since it
@@ -2530,14 +2519,15 @@ fasttrap_load(void)
 	 */
 	fasttrap_thread_dtor_tag = EVENTHANDLER_REGISTER(thread_dtor,
 	    fasttrap_thread_dtor, NULL, EVENTHANDLER_PRI_FIRST);
-#endif
 
 	/*
 	 * Install our hooks into fork(2), exec(2), and exit(2).
 	 */
+	fasttrap_process_exec_tag = EVENTHANDLER_REGISTER(process_exec,
+	    fasttrap_exec_exit, NULL, EVENTHANDLER_PRI_ANY);
+	fasttrap_process_exit_tag = EVENTHANDLER_REGISTER(process_exit,
+	    fasttrap_exec_exit, NULL, EVENTHANDLER_PRI_ANY);
 	dtrace_fasttrap_fork = &fasttrap_fork;
-	dtrace_fasttrap_exit = &fasttrap_exec_exit;
-	dtrace_fasttrap_exec = &fasttrap_exec_exit;
 
 	(void) dtrace_meta_register("fasttrap", &fasttrap_mops, NULL,
 	    &fasttrap_meta_id);
@@ -2609,12 +2599,6 @@ fasttrap_unload(void)
 	ASSERT(dtrace_fasttrap_fork == &fasttrap_fork);
 	dtrace_fasttrap_fork = NULL;
 
-	ASSERT(dtrace_fasttrap_exec == &fasttrap_exec_exit);
-	dtrace_fasttrap_exec = NULL;
-
-	ASSERT(dtrace_fasttrap_exit == &fasttrap_exec_exit);
-	dtrace_fasttrap_exit = NULL;
-
 	mtx_lock(&fasttrap_cleanup_mtx);
 	fasttrap_cleanup_drain = 1;
 	/* Wait for the cleanup thread to finish up and signal us. */
@@ -2630,9 +2614,11 @@ fasttrap_unload(void)
 	mutex_exit(&fasttrap_count_mtx);
 #endif
 
-#ifndef illumos
 	EVENTHANDLER_DEREGISTER(thread_dtor, fasttrap_thread_dtor_tag);
+	EVENTHANDLER_DEREGISTER(process_exit, fasttrap_process_exit_tag);
+	EVENTHANDLER_DEREGISTER(process_exec, fasttrap_process_exec_tag);
 
+#ifndef illumos
 	for (i = 0; i < fasttrap_tpoints.fth_nent; i++)
 		mutex_destroy(&fasttrap_tpoints.fth_table[i].ftb_mtx);
 	for (i = 0; i < fasttrap_provs.fth_nent; i++)
