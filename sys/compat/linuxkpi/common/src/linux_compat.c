@@ -1637,7 +1637,7 @@ int
 linux_wbinvd_on_all_cpus(void)
 {
 
-	return (on_each_cpu(wbinvd_cb, NULL, 1));
+	return (linux_on_each_cpu(wbinvd_cb, NULL));
 }
 #endif
 

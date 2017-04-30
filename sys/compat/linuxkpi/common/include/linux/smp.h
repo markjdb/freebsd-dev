@@ -30,7 +30,7 @@
 #define	_LINUX_SMP_H_
 
 #define	on_each_cpu(cb, data, wait) ({				\
-	_Static_assert(wait, "non-blocking on_each_cpu");	\
+	CTASSERT(wait);						\
 	linux_on_each_cpu(cb, data);				\
 })
 

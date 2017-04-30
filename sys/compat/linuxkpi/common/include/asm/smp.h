@@ -31,7 +31,7 @@
 
 #if defined(__i386__) || defined(__amd64__)
 
-#define	wbinvd_on_all_cpus	linux_wbinvd_on_all_cpus
+#define	wbinvd_on_all_cpus()	linux_wbinvd_on_all_cpus()
 
 int	linux_wbinvd_on_all_cpus(void);
 
