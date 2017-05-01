@@ -38,6 +38,10 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20170427: NATM configuration support removed
+OLD_FILES+=etc/rc.d/atm1
+OLD_FILES+=etc/rc.d/atm2
+OLD_FILES+=etc/rc.d/atm3
 # 20170424: NATM support removed
 OLD_FILES+=rescue/atmconfig
 OLD_FILES+=sbin/atmconfig
@@ -72,6 +76,7 @@ OLD_FILES+=usr/share/man/man4/ng_atm.4.gz
 OLD_FILES+=usr/share/man/man4/patm.4.gz
 OLD_FILES+=usr/share/man/man4/utopia.4.gz
 OLD_FILES+=usr/share/man/man8/atmconfig.8.gz
+OLD_FILES+=usr/share/man/man9/utopia.9.gz
 OLD_FILES+=usr/share/snmp/defs/atm_freebsd.def
 OLD_FILES+=usr/share/snmp/defs/atm_tree.def
 OLD_FILES+=usr/share/snmp/mibs/BEGEMOT-ATM-FREEBSD-MIB.txt
@@ -2102,8 +2107,12 @@ OLD_FILES+=usr/share/info/am-utils.info.gz
 OLD_FILES+=usr/share/info/as.info.gz
 OLD_FILES+=usr/share/info/binutils.info.gz
 OLD_FILES+=usr/share/info/com_err.info.gz
+OLD_FILES+=usr/share/info/cpp.info.gz
+OLD_FILES+=usr/share/info/cppinternals.info.gz
 OLD_FILES+=usr/share/info/diff.info.gz
 OLD_FILES+=usr/share/info/dir
+OLD_FILES+=usr/share/info/gcc.info.gz
+OLD_FILES+=usr/share/info/gccint.info.gz
 OLD_FILES+=usr/share/info/gdb.info.gz
 OLD_FILES+=usr/share/info/gdbint.info.gz
 OLD_FILES+=usr/share/info/gperf.info.gz

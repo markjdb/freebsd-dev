@@ -1,15 +1,15 @@
 /*-
- * Copyright (c) 2001 Brian Somers <brian@Awfulhak.org>
- * All rights reserved.
+ * Copyright (c) 2017 Mark Johnston <markj@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
+ * modification, are permitted provided that the following conditions are
+ * met:
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
  * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -23,26 +23,18 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
+ * $FreeBSD$
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#ifndef _ASM_SMP_H_
+#define	_ASM_SMP_H_
 
-#include <sys/param.h>
-#include <sys/conf.h>
-#include <sys/kernel.h>
-#include <sys/module.h>
+#if defined(__i386__) || defined(__amd64__)
 
-#include <dev/digi/CX.bios.h>
-#include <dev/digi/CX.fepos.h>
-#include <dev/digi/digi_mod.h>
+#define	wbinvd_on_all_cpus()	linux_wbinvd_on_all_cpus()
 
-struct digi_mod digi_mod_CX = {
-	DIGI_MOD_VERSION,
-	{ CX_bios, sizeof(CX_bios) },
-	{ CX_fepos, sizeof(CX_fepos) },
-	{ NULL, 0 }
-};
+int	linux_wbinvd_on_all_cpus(void);
 
-MODULE_VERSION(digi_CX, 1);
-DEV_MODULE(digi_CX, 0, 0);
+#endif
+
+#endif /* _ASM_SMP_H_ */

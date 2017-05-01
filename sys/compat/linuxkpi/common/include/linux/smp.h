@@ -1,15 +1,15 @@
 /*-
- * Copyright (c) 2001 Brian Somers <brian@Awfulhak.org>
- * All rights reserved.
+ * Copyright (c) 2017 Mark Johnston <markj@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
+ * modification, are permitted provided that the following conditions are
+ * met:
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
  * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -23,26 +23,17 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
+ * $FreeBSD$
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#ifndef _LINUX_SMP_H_
+#define	_LINUX_SMP_H_
 
-#include <sys/param.h>
-#include <sys/conf.h>
-#include <sys/kernel.h>
-#include <sys/module.h>
+#define	on_each_cpu(cb, data, wait) ({				\
+	CTASSERT(wait);						\
+	linux_on_each_cpu(cb, data);				\
+})
 
-#include <dev/digi/CX_PCI.bios.h>
-#include <dev/digi/CX_PCI.fepos.h>
-#include <dev/digi/digi_mod.h>
+extern int	linux_on_each_cpu(void (*)(void *), void *);
 
-struct digi_mod digi_mod_CX_PCI = {
-	DIGI_MOD_VERSION,
-	{ CX_PCI_bios, sizeof(CX_PCI_bios) },
-	{ CX_PCI_fepos, sizeof(CX_PCI_fepos) },
-	{ NULL, 0 }
-};
-
-MODULE_VERSION(digi_CX_PCI, 1);
-DEV_MODULE(digi_CX_PCI, 0, 0);
+#endif /* _LINUX_SMP_H_ */
