@@ -708,6 +708,15 @@ void drm_send_event_locked(struct drm_device *dev, struct drm_pending_event *e)
 	list_add_tail(&e->link,
 		      &e->file_priv->event_list);
 	wake_up_interruptible(&e->file_priv->event_wait);
+#ifdef __FreeBSD__
+	struct linux_file *filp;
+
+	filp = e->file_priv->filp;
+	selwakeup(&filp->f_selinfo);
+	spin_lock(&filp->f_lock);
+	KNOTE_LOCKED(&e->file_priv->filp->f_selinfo.si_note, 1);
+	spin_unlock(&filp->f_lock);
+#endif
 }
 EXPORT_SYMBOL(drm_send_event_locked);
 
