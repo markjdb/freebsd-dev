@@ -623,13 +623,25 @@ struct {
 #endif
 }, t6_pciids[] = {
 	{0xc006, "Chelsio Terminator 6 FPGA"},	/* T6 PE10K6 FPGA (PF0) */
-	{0x6400, "Chelsio T6225-DBG"},		/* 2 x 10/25G, debug */
+	{0x6400, "Chelsio T6-DBG-25"},		/* 2 x 10/25G, debug */
 	{0x6401, "Chelsio T6225-CR"},		/* 2 x 10/25G */
 	{0x6402, "Chelsio T6225-SO-CR"},	/* 2 x 10/25G, nomem */
+	{0x6403, "Chelsio T6425-CR"},		/* 4 x 10/25G */
+	{0x6404, "Chelsio T6425-SO-CR"},	/* 4 x 10/25G, nomem */
+	{0x6405, "Chelsio T6225-OCP-SO"},	/* 2 x 10/25G, nomem */
+	{0x6406, "Chelsio T62100-OCP-SO"},	/* 2 x 40/50/100G, nomem */
 	{0x6407, "Chelsio T62100-LP-CR"},	/* 2 x 40/50/100G */
 	{0x6408, "Chelsio T62100-SO-CR"},	/* 2 x 40/50/100G, nomem */
+	{0x6409, "Chelsio T6210-BT"},		/* 2 x 10GBASE-T */
 	{0x640d, "Chelsio T62100-CR"},		/* 2 x 40/50/100G */
-	{0x6410, "Chelsio T62100-DBG"},		/* 2 x 40/50/100G, debug */
+	{0x6410, "Chelsio T6-DBG-100"},		/* 2 x 40/50/100G, debug */
+	{0x6411, "Chelsio T6225-LL-CR"},	/* 2 x 10/25G */
+	{0x6414, "Chelsio T61100-OCP-SO"},	/* 1 x 40/50/100G, nomem */
+	{0x6415, "Chelsio T6201-BT"},		/* 2 x 1000BASE-T */
+
+	/* Custom */
+	{0x6480, "Chelsio T6225 80"},
+	{0x6481, "Chelsio T62100 81"},
 };
 
 #ifdef TCP_OFFLOAD
@@ -983,6 +995,7 @@ t4_attach(device_t dev)
 			lc->autoneg = t4_autoneg ? AUTONEG_ENABLE :
 			    AUTONEG_DISABLE;
 		}
+		lc->requested_speed = port_top_speed_raw(pi);
 
 		rc = -t4_link_l1cfg(sc, sc->mbox, pi->tx_chan, lc);
 		if (rc != 0) {
@@ -1856,12 +1869,15 @@ cxgbe_qflush(struct ifnet *ifp)
 	if (vi->flags & VI_INIT_DONE) {
 		for_each_txq(vi, i, txq) {
 			TXQ_LOCK(txq);
-			txq->eq.flags &= ~EQ_ENABLED;
+			txq->eq.flags |= EQ_QFLUSH;
 			TXQ_UNLOCK(txq);
 			while (!mp_ring_is_idle(txq->r)) {
 				mp_ring_check_drainage(txq->r, 0);
 				pause("qflush", 1);
 			}
+			TXQ_LOCK(txq);
+			txq->eq.flags &= ~EQ_QFLUSH;
+			TXQ_UNLOCK(txq);
 		}
 	}
 	if_qflush(ifp);
@@ -5871,7 +5887,12 @@ sysctl_autoneg(SYSCTL_HANDLER_ARGS)
 	if ((lc->supported & FW_PORT_CAP_ANEG) == 0)
 		return (ENOTSUP);
 
-	val = val ? AUTONEG_ENABLE : AUTONEG_DISABLE;
+	if (val == 0)
+		val = AUTONEG_DISABLE;
+	else if (val == 1)
+		val = AUTONEG_ENABLE;
+	else
+		return (EINVAL);
 	if (lc->autoneg == val)
 		return (0);	/* no change */
 
@@ -5884,6 +5905,7 @@ sysctl_autoneg(SYSCTL_HANDLER_ARGS)
 	rc = -t4_link_l1cfg(sc, sc->mbox, pi->tx_chan, lc);
 	if (rc != 0)
 		lc->autoneg = old;
+	end_synchronized_op(sc, 0);
 	return (rc);
 }
 
