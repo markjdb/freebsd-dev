@@ -171,6 +171,9 @@ static enum {
 	VM_LAUNDRY_SHORTFALL
 } vm_laundry_request = VM_LAUNDRY_IDLE;
 
+/* Accumulated laundry thread wakeups. */
+u_int vm_laundry_wakeups;
+
 #if !defined(NO_SWAPPING)
 static int vm_pageout_req_swapout;	/* XXX */
 static int vm_daemon_needed;
@@ -1186,7 +1189,6 @@ vm_pageout_laundry_worker(void *arg)
 		KASSERT(shortfall_cycle >= 0,
 		    ("negative cycle %d", shortfall_cycle));
 		launder = 0;
-		wakeups = VM_CNT_FETCH(v_pdwakeups);
 
 		/*
 		 * First determine whether we need to launder pages to meet a
@@ -1297,6 +1299,7 @@ dolaundry:
 
 		if (target == 0)
 			vm_laundry_request = VM_LAUNDRY_IDLE;
+		wakeups = vm_laundry_wakeups;
 		vm_pagequeue_unlock(pq);
 	}
 }
@@ -1553,6 +1556,7 @@ drop_page:
 				VM_CNT_INC(v_pdshortfalls);
 			} else if (vm_laundry_request != VM_LAUNDRY_SHORTFALL)
 				vm_laundry_request = VM_LAUNDRY_BACKGROUND;
+			vm_laundry_wakeups++;
 			wakeup(&vm_laundry_request);
 		}
 		vm_pagequeue_unlock(pq);
