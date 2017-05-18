@@ -2724,14 +2724,6 @@ zfree_start:
 		ZONE_UNLOCK(zone);
 	}
 
-	/*
-	 * We bump the uz count when the cache size is insufficient to
-	 * handle the working set.
-	 */
-	if (lockfail && zone->uz_count < BUCKET_MAX)
-		zone->uz_count++;
-	ZONE_UNLOCK(zone);
-
 	bucket = bucket_alloc(zone, udata, M_NOWAIT);
 	CTR3(KTR_UMA, "uma_zfree: zone %s(%p) allocated bucket %p",
 	    zone->uz_name, zone, bucket);

@@ -755,24 +755,9 @@ vm_object_terminate_clean_memq(vm_object_t object)
 		 */
 		TAILQ_FOREACH_SAFE(m, &list, listq, m_next) {
 			vm_page_free_quick(m);
-			VM_CNT_INC(cnt.v_pfree);
+			VM_CNT_INC(v_pfree);
 		}
-		m->flags &= ~PG_ZERO;
-		if (!vm_page_reset(m))
-			TAILQ_REMOVE(&object->memq, m, listq);
-	}
-	if (pq != NULL) {
-		vm_pagequeue_cnt_add(pq, -count);
-		vm_pagequeue_unlock(pq);
-	}
-	mtx_unlock(page_lock);
-
-	/*
-	 * Free pages to the allocator now that we've detangled them.
-	 */
-	TAILQ_FOREACH_SAFE(m, &object->memq, listq, m_next) {
-		vm_page_free_quick(m);
-		VM_CNT_INC(cnt.v_pfree);
+		TAILQ_INIT(&list);
 	}
 }
 

@@ -2881,7 +2881,7 @@ vm_page_free_quick(vm_page_t m)
 
 	MPASS(m->object == NULL && m->queue == PQ_NONE);
 
-	VM_CNT_INC(cnt.v_tfree);
+	VM_CNT_INC(v_tfree);
 
 	/*
 	 * Insert the page into the physical memory allocator's
