@@ -571,24 +571,12 @@ vm_pageout_flush(vm_page_t *mc, int count, int flags, int mreq, int *prunlen,
 		case VM_PAGER_ERROR:
 		case VM_PAGER_FAIL:
 			/*
-			 * If the page couldn't be paged out to swap because the
-			 * pager wasn't able to find space, place the page in
-			 * the PQ_UNSWAPPABLE holding queue.  This is an
-			 * optimization that prevents the page daemon from
-			 * wasting CPU cycles on pages that cannot be reclaimed
-			 * becase no swap device is configured.
-			 *
-			 * Otherwise, reactivate the page so that it doesn't
-			 * clog the laundry and inactive queues.  (We will try
-			 * paging it out again later.)
+			 * Reactivate the page so that it doesn't clog the
+			 * laundry and inactive queues.  (We will try paging
+			 * it out again later.)
 			 */
 			vm_page_lock(mt);
-			if (object->type == OBJT_SWAP &&
-			    pageout_status[i] == VM_PAGER_FAIL) {
-				vm_page_unswappable(mt);
-				numpagedout++;
-			} else
-				vm_page_activate(mt);
+			vm_page_activate(mt);
 			vm_page_unlock(mt);
 			if (eio != NULL && i >= mreq && i - mreq < runlen)
 				*eio = TRUE;
@@ -628,6 +616,13 @@ vm_pageout_swapoff(void *arg __unused, struct swdevt *sp __unused)
 
 	if (swap_pager_nswapdev() == 1)
 		atomic_store_rel_int(&swapdev_enabled, 0);
+}
+
+static bool
+vm_pageout_swap_enabled(void)
+{
+
+	return (atomic_load_acq_int(&swapdev_enabled) != 0);
 }
 
 #if !defined(NO_SWAPPING)
@@ -913,14 +908,17 @@ static int
 vm_pageout_launder(struct vm_domain *vmd, int launder, bool in_shortfall)
 {
 	struct vm_pagequeue *pq;
+	struct vm_page eoqmarker;
 	vm_object_t object;
-	vm_page_t m, next;
-	int act_delta, error, maxscan, numpagedout, starting_target;
-	int vnodes_skipped;
+	vm_page_t first, m, next;
+	int act_delta, error, numpagedout, starting_target, vnodes_skipped;
 	bool pageout_ok, queue_locked;
 
+	pq = &vmd->vmd_pagequeues[PQ_LAUNDRY];
 	starting_target = launder;
 	vnodes_skipped = 0;
+
+	vm_pageout_init_marker(&eoqmarker, PQ_LAUNDRY);
 
 	/*
 	 * Scan the laundry queues for pages eligible to be laundered.  We stop
@@ -928,25 +926,16 @@ vm_pageout_launder(struct vm_domain *vmd, int launder, bool in_shortfall)
 	 * we've reached the end of the queue.  A single iteration of this loop
 	 * may cause more than one page to be laundered because of clustering.
 	 *
-	 * maxscan ensures that we don't re-examine requeued pages.  Any
-	 * additional pages written as part of a cluster are subtracted from
-	 * maxscan since they must be taken from the laundry queue.
-	 *
-	 * As an optimization, we avoid laundering from PQ_UNSWAPPABLE when no
-	 * swap devices are configured.
+	 * XXX eoqmarker
 	 */
-	if (atomic_load_acq_int(&swapdev_enabled))
-		pq = &vmd->vmd_pagequeues[PQ_UNSWAPPABLE];
-	else
-		pq = &vmd->vmd_pagequeues[PQ_LAUNDRY];
-
-scan:
 	vm_pagequeue_lock(pq);
-	maxscan = pq->pq_cnt;
 	queue_locked = true;
-	for (m = TAILQ_FIRST(&pq->pq_pl);
-	    m != NULL && maxscan-- > 0 && launder > 0;
-	    m = next) {
+	TAILQ_INSERT_TAIL(&pq->pq_pl, &eoqmarker, plinks.q);
+	if (vm_pageout_swap_enabled())
+		first = TAILQ_FIRST(&pq->pq_pl);
+	else
+		first = &vmd->vmd_unswappable; /* XXX */
+	for (m = first; m != NULL && m != &eoqmarker && launder > 0; m = next) {
 		vm_pagequeue_assert_locked(pq);
 		KASSERT(queue_locked, ("unlocked laundry queue"));
 		KASSERT(vm_page_in_laundry(m),
@@ -1085,10 +1074,9 @@ requeue_page:
 			 * page reactivated.
 			 */
 			error = vm_pageout_clean(m, &numpagedout);
-			if (error == 0) {
+			if (error == 0)
 				launder -= numpagedout;
-				maxscan -= numpagedout - 1;
-			} else if (error == EDEADLK) {
+			else if (error == EDEADLK) {
 				pageout_lock_miss++;
 				vnodes_skipped++;
 			}
@@ -1106,11 +1094,6 @@ relock_queue:
 		TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_laundry_marker, plinks.q);
 	}
 	vm_pagequeue_unlock(pq);
-
-	if (launder > 0 && pq == &vmd->vmd_pagequeues[PQ_UNSWAPPABLE]) {
-		pq = &vmd->vmd_pagequeues[PQ_LAUNDRY];
-		goto scan;
-	}
 
 	/*
 	 * Wakeup the sync daemon if we skipped a vnode in a writeable object
@@ -1166,6 +1149,11 @@ vm_pageout_laundry_worker(void *arg)
 	pq = &domain->vmd_pagequeues[PQ_LAUNDRY];
 	KASSERT(domain->vmd_segs != 0, ("domain without segments"));
 	vm_pageout_init_marker(&domain->vmd_laundry_marker, PQ_LAUNDRY);
+	vm_pageout_init_marker(&domain->vmd_unswappable, PQ_LAUNDRY);
+
+	vm_pagequeue_lock(pq);
+	TAILQ_INSERT_HEAD(&pq->pq_pl, &domain->vmd_unswappable, plinks.q);
+	vm_pagequeue_unlock(pq);
 
 	shortfall = 0;
 	in_shortfall = false;
@@ -1317,7 +1305,7 @@ static bool
 vm_pageout_scan(struct vm_domain *vmd, int pass)
 {
 	vm_page_t m, next;
-	struct vm_pagequeue *pq;
+	struct vm_pagequeue *pq, *laundryq;
 	vm_object_t object;
 	long min_scan;
 	int act_delta, addl_page_shortage, deficit, inactq_shortage, maxscan;
@@ -1550,7 +1538,7 @@ drop_page:
 	    starting_page_shortage > 0) {
 		pq = &vm_dom[0].vmd_pagequeues[PQ_LAUNDRY];
 		vm_pagequeue_lock(pq);
-		if (pq->pq_cnt > 0 || atomic_load_acq_int(&swapdev_enabled)) {
+		if (pq->pq_cnt > 0) {
 			if (page_shortage > 0) {
 				vm_laundry_request = VM_LAUNDRY_SHORTFALL;
 				VM_CNT_INC(v_pdshortfalls);
@@ -1662,7 +1650,8 @@ drop_page:
 		 *    This race delays the detection of a new reference.  At
 		 *    worst, we will deactivate and reactivate the page.
 		 */
-		if (m->object->ref_count != 0)
+		object = m->object;
+		if (object->ref_count != 0)
 			act_delta += pmap_ts_referenced(m);
 
 		/*
@@ -1677,9 +1666,22 @@ drop_page:
 
 		/*
 		 * Move this page to the tail of the active, inactive or laundry
-		 * queue depending on usage.
+		 * queue depending on usage. XXX
 		 */
-		if (m->act_count == 0) {
+		if ((object->type == OBJT_DEFAULT ||
+		     object->type == OBJT_SWAP) && !vm_pageout_swap_enabled()) {
+			/* Dequeue to avoid later lock recursion. */
+			vm_page_dequeue_locked(m);
+
+			if (m->act_count > 0)
+				vm_page_aflag_set(m, PGA_REFERENCED);
+			laundryq = &vm_dom[0].vmd_pagequeues[PQ_LAUNDRY];
+			vm_pagequeue_lock(laundryq);
+			TAILQ_INSERT_BEFORE(&vm_dom[0].vmd_unswappable, m,
+			    plinks.q);
+			vm_pagequeue_cnt_inc(laundryq);
+			vm_pagequeue_unlock(laundryq);
+		} else if (m->act_count == 0) {
 			/* Dequeue to avoid later lock recursion. */
 			vm_page_dequeue_locked(m);
 
