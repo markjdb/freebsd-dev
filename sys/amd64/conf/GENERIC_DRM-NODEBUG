@@ -29,4 +29,3 @@ nooptions 	DEBUG_REDZONE
 nooptions 	WITNESS
 nooptions 	WITNESS_ALL
 nooptions 	WITNESS_SKIPSPIN
-nooptions 	MALLOC_DEBUG_MAXZONES=8
