@@ -57,7 +57,6 @@
 #define	TASK_UNINTERRUPTIBLE	2
 #define	TASK_KILLABLE           3
 #define	TASK_DEAD		64
-#define	TASK_WAKEKILL		128
 #define	TASK_WAKING		256
 #define	TASK_PARKED		512
 #define	TASK_NORMAL		(TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE)
@@ -140,47 +139,19 @@ local_clock(void)
 
 #define	sched_yield()	sched_relinquish(curthread)
 
+bool linux_signal_pending(struct task_struct *task);
+bool linux_fatal_signal_pending(struct task_struct *task);
+bool linux_signal_pending_state(long state, struct task_struct *task);
+int linux_send_sig(int signo, struct task_struct *task);
 
-static inline int
-send_sig(int signo, struct task_struct *t, int priv)
-{
-	/* Only support signalling current process right now  */
-	MPASS(t == current);
-
-	PROC_LOCK(curproc);
-	tdsignal(curthread, signo);
-	PROC_UNLOCK(curproc);
-	return (0);
-}
-
-static inline int
-signal_pending(struct task_struct *p)
-{
-	return SIGPENDING(p->task_thread);
-}
-
-static inline int
-__fatal_signal_pending(struct task_struct *p)
-{
-	return (SIGISMEMBER(p->task_thread->td_siglist, SIGKILL));
-}
-
-static inline int
-fatal_signal_pending(struct task_struct *p)
-{
-	return signal_pending(p) && __fatal_signal_pending(p);
-}
-
-static inline int
-signal_pending_state(long state, struct task_struct *p)
-{
-	if (!(state & (TASK_INTERRUPTIBLE | TASK_WAKEKILL)))
-		return 0;
-	if (!signal_pending(p))
-		return 0;
-
-	return (state & TASK_INTERRUPTIBLE) || __fatal_signal_pending(p);
-}
+#define	signal_pending(task)		linux_signal_pending(task)
+#define	fatal_signal_pending(task)	linux_fatal_signal_pending(task)
+#define	signal_pending_state(state, task)	\
+	linux_signal_pending_state(state, task)
+#define	send_sig(signo, task, priv) ({		\
+	CTASSERT(priv == 0);			\
+	linux_send_sig(signo, task);		\
+})
 
 extern long schedule_timeout(long timeout);
 

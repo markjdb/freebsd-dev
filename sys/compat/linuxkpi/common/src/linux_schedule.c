@@ -1,4 +1,3 @@
-
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
@@ -35,6 +34,58 @@ __FBSDID("$FreeBSD$");
 #include <linux/wait.h>
 #include <linux/fs.h>
 #include <linux/list.h>
+
+bool
+linux_signal_pending(struct task_struct *task)
+{
+	struct thread *td;
+	sigset_t pending;
+
+	td = task->task_thread;
+	PROC_LOCK(td->td_proc);
+	pending = td->td_siglist;
+	SIGSETOR(pending, td->td_proc->p_siglist);
+	SIGSETNAND(pending, td->td_sigmask);
+	PROC_UNLOCK(td->td_proc);
+	return (!SIGISEMPTY(pending));
+}
+
+bool
+linux_fatal_signal_pending(struct task_struct *task)
+{
+	struct thread *td;
+	bool ret;
+
+	td = task->task_thread;
+	PROC_LOCK(td->td_proc);
+	ret = SIGISMEMBER(td->td_siglist, SIGKILL) ||
+	    SIGISMEMBER(td->td_proc->p_siglist, SIGKILL);
+	PROC_UNLOCK(td->td_proc);
+	return (ret);
+}
+
+bool
+linux_signal_pending_state(long state, struct task_struct *task)
+{
+
+	MPASS((state & ~TASK_NORMAL) == 0);
+
+	if ((state & TASK_INTERRUPTIBLE) == 0)
+		return (false);
+	return (linux_signal_pending(task));
+}
+
+int
+linux_send_sig(int signo, struct task_struct *task)
+{
+	struct thread *td;
+
+	td = task->task_thread;
+	PROC_LOCK(td->td_proc);
+	tdsignal(td, signo);
+	PROC_UNLOCK(td->td_proc);
+	return (0);
+}
 
 long
 schedule_timeout(long timeout)
