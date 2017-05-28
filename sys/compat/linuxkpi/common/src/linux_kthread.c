@@ -254,23 +254,8 @@ void
 linux_wake_up(wait_queue_head_t *wqh, unsigned mode,
     int nr, void *key)
 {
-#if 0
-	struct list_head *ptmp;
-	struct list_head *p;
-#endif
 
 	spin_lock(&wqh->lock);
-#if 0
-	selwakeup(&wqh->wqh_si);
-	if (__predict_false(!list_empty(&wqh->wqh_file_list))) {
-		list_for_each_safe(p, ptmp, &wqh->wqh_file_list) {
-			struct linux_file *f;
-
-			f = list_entry(p, struct linux_file, f_entry);
-			tasklet_schedule(&f->f_kevent_tasklet);
-		}
-	}
-#endif
 	linux_wake_up_locked(wqh, mode, nr, key);
 	spin_unlock(&wqh->lock);
 }
@@ -283,26 +268,9 @@ linux_wake_up_locked(wait_queue_head_t *wqh, unsigned mode,
 	wait_queue_t *next;
 
 	list_for_each_entry_safe(curr, next, &wqh->task_list, task_list) {
-		unsigned flags = curr->flags;
-
-		if (curr->func(curr, TASK_NORMAL, 0, key) &&
-		    (flags & WQ_FLAG_EXCLUSIVE) && !--nr)
+		if (curr->func(curr, TASK_NORMAL, 0, key) && !--nr)
 			break;
 	}
-}
-
-void
-linux_abort_exclusive_wait(wait_queue_head_t *wqh, wait_queue_t *wait,
-    unsigned mode, void *key)
-{
-
-	__set_current_state(TASK_RUNNING);
-	spin_lock(&wqh->lock);
-	if (!list_empty(&wait->task_list))
-		list_del_init(&wait->task_list);
-	else if (waitqueue_active(wqh))
-		linux_wake_up_locked_key(wqh, mode, key);
-	spin_unlock(&wqh->lock);
 }
 
 DECLARE_WAIT_QUEUE_HEAD(linux_bit_wait_queue_head);

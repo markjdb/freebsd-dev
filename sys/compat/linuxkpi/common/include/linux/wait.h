@@ -70,7 +70,6 @@ typedef void wake_up_func_t (wait_queue_head_t *, unsigned mode, int flags, void
 
 struct wait_queue {
 	unsigned flags;
-#define	WQ_FLAG_EXCLUSIVE	0x01
 #define	WQ_FLAG_WOKEN		0x02
 	void   *private;
 	wait_queue_func_t *func;
@@ -93,7 +92,6 @@ struct wait_queue_head {
 	spinlock_t lock;
 	struct list_head task_list;
 	struct selinfo wqh_si;
-	struct list_head wqh_file_list;
 };
 
 #define	LINUX_WAIT_BIT_KEY_INITIALIZER(word, bit, to) {	\
@@ -134,8 +132,6 @@ extern wait_queue_func_t default_wake_function;
 extern wait_queue_func_t autoremove_wake_function;
 extern wait_queue_func_t wake_bit_function;
 
-extern void linux_abort_exclusive_wait(wait_queue_head_t *, wait_queue_t *,
-    unsigned mode, void *key);
 extern wake_up_func_t linux_wake_up_locked;
 extern wake_up_func_t linux_wake_up;
 
@@ -153,10 +149,6 @@ extern wake_up_func_t linux_wake_up;
 		&(name).task_list,			\
 		&(name).task_list,			\
 	},						\
-	.wqh_file_list = {				\
-		&(name).wqh_file_list,			\
-		&(name).wqh_file_list,			\
-	},						\
 }
 
 #define	DECLARE_WAIT_QUEUE_HEAD(name)			\
@@ -171,7 +163,6 @@ extern wake_up_func_t linux_wake_up;
 	mtx_init(&__wqh->lock.m, spin_lock_name("wqhead"),	\
 	    NULL, MTX_DEF | MTX_NOWITNESS);			\
 	INIT_LIST_HEAD(&__wqh->task_list);			\
-	INIT_LIST_HEAD(&__wqh->wqh_file_list);			\
 } while (0)
 
 static inline void
@@ -206,8 +197,6 @@ init_waitqueue_func_entry(wait_queue_t *wq, wait_queue_func_t *func)
 	linux_wake_up(q, TASK_INTERRUPTIBLE, nr, NULL)
 #define	wake_up_interruptible_all(q) \
 	linux_wake_up(q, TASK_INTERRUPTIBLE, 0, NULL)
-#define	linux_wake_up_locked_key(q, mode, key)	\
-	linux_wake_up_locked(q, mode, 0, key)
 
 #define	might_sleep() \
 	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL, "might_sleep()")
@@ -225,16 +214,12 @@ init_waitqueue_func_entry(wait_queue_t *wq, wait_queue_func_t *func)
 	(state) == TASK_KILLABLE		\
 )
 
-#define	___wait_event(wq, condition, state, exclusive, ret, cmd) ({	\
-	__label__ __out;						\
+#define	___wait_event(wq, condition, state, ret, cmd) ({		\
 	wait_queue_t __wait;						\
 	int __ret = (ret);						\
 									\
 	INIT_LIST_HEAD(&__wait.task_list);				\
-	if (exclusive)							\
-		__wait.flags = WQ_FLAG_EXCLUSIVE;			\
-	else								\
-		__wait.flags = 0;					\
+	__wait.flags = 0;						\
 									\
 	for (;;) {							\
 		int __int = prepare_to_wait_event(&wq, &__wait, state); \
@@ -244,21 +229,16 @@ init_waitqueue_func_entry(wait_queue_t *wq, wait_queue_func_t *func)
 									\
 		if (___wait_is_interruptible(state) && __int) {		\
 			__ret = __int;					\
-			if (exclusive) {				\
-				linux_abort_exclusive_wait(		\
-				    &wq, &__wait, state, NULL);		\
-				goto __out;				\
-			}						\
 			break;						\
 		}							\
 		cmd;							\
 	}								\
 	finish_wait(&wq, &__wait);					\
-__out:	__ret;								\
+	__ret;								\
 })
 
 #define	__wait_event(wq, condition)					\
-	(void)___wait_event(wq, condition, TASK_UNINTERRUPTIBLE, 0, 0,	\
+	(void)___wait_event(wq, condition, TASK_UNINTERRUPTIBLE, 0,	\
 			    schedule())
 
 #define	wait_event(wq, condition)					\
@@ -269,19 +249,9 @@ do {									\
 	__wait_event(wq, condition);					\
 } while (0)
 
-
-#define	io_wait_event(wq, condition)					\
-do {									\
-	might_sleep();							\
-	if (condition)							\
-		break;							\
-	__io_wait_event(wq, condition);					\
-} while (0)
-
-
 #define	__wait_event_timeout(wq, condition, timeout)			\
 	___wait_event(wq, ___wait_cond_timeout(__ret, condition),	\
-	    TASK_UNINTERRUPTIBLE, 0, timeout,				\
+	    TASK_UNINTERRUPTIBLE, timeout,				\
 	    __ret = schedule_timeout(__ret))
 
 #define	wait_event_timeout(wq, condition, timeout) ({			\
@@ -293,7 +263,7 @@ do {									\
 })
 
 #define	__wait_event_interruptible(wq, condition)			\
-	___wait_event(wq, condition, TASK_INTERRUPTIBLE, 0, 0,		\
+	___wait_event(wq, condition, TASK_INTERRUPTIBLE, 0,		\
 		      schedule())
 
 #define	wait_event_interruptible(wq, condition) ({			\
@@ -306,7 +276,7 @@ do {									\
 
 #define	__wait_event_interruptible_timeout(wq, condition, timeout)	\
 	___wait_event(wq, ___wait_cond_timeout(__ret, condition),	\
-		      TASK_INTERRUPTIBLE, 0, timeout,			\
+		      TASK_INTERRUPTIBLE, timeout,			\
 		      __ret = schedule_timeout(__ret))
 
 #define	wait_event_interruptible_timeout(wq, condition, timeout) ({	\
@@ -319,11 +289,9 @@ do {									\
 	__ret;								\
 })
 
-#define	__wait_event_interruptible_locked(wq, cond, exclusive, irq) ({	\
+#define	__wait_event_interruptible_locked(wq, cond, irq) ({		\
 	int __ret = 0;							\
 	DEFINE_WAIT(__wait);						\
-	if (exclusive)							\
-		__wait.flags |= WQ_FLAG_EXCLUSIVE;			\
 	do {								\
 		if (likely(list_empty(&__wait.task_list)))		\
 			__add_wait_queue_tail(&(wq), &__wait);		\
@@ -348,10 +316,10 @@ do {									\
 })
 
 #define	wait_event_interruptible_locked(wq, cond)			\
-	((cond) ? 0 : __wait_event_interruptible_locked(wq, cond, 0, 0))
+	((cond) ? 0 : __wait_event_interruptible_locked(wq, cond, 0))
 
 #define	__wait_event_interruptible_lock_irq(wq, condition, lock, cmd)	\
-	___wait_event(wq, condition, TASK_INTERRUPTIBLE, 0, 0,		\
+	___wait_event(wq, condition, TASK_INTERRUPTIBLE, 0,		\
 	    spin_unlock_irq(&lock);					\
 	    cmd;							\
 	    schedule();							\
@@ -376,7 +344,6 @@ static inline void
 add_wait_queue(wait_queue_head_t *wqh, wait_queue_t *wait)
 {
 
-	wait->flags &= ~WQ_FLAG_EXCLUSIVE;
 	spin_lock(&wqh->lock);
 	__add_wait_queue(wqh, wait);
 	spin_unlock(&wqh->lock);
@@ -409,18 +376,6 @@ waitqueue_active(wait_queue_head_t *wqh)
 	return (!list_empty(&wqh->task_list));
 }
 
-static inline void
-prepare_to_wait_exclusive(wait_queue_head_t *wqh, wait_queue_t *wait, int state)
-{
-
-	wait->flags |= WQ_FLAG_EXCLUSIVE;
-	spin_lock(&wqh->lock);
-	if (list_empty(&wait->task_list))
-		__add_wait_queue_tail(wqh, wait);
-	set_current_state(state);
-	spin_unlock(&wqh->lock);
-}
-
 static inline long
 prepare_to_wait_event(wait_queue_head_t *wqh, wait_queue_t *wait, int state)
 {
@@ -434,12 +389,8 @@ prepare_to_wait_event(wait_queue_head_t *wqh, wait_queue_t *wait, int state)
 	wait->func = autoremove_wake_function;
 
 	spin_lock(&wqh->lock);
-	if (list_empty(&wait->task_list)) {
-		if (wait->flags & WQ_FLAG_EXCLUSIVE)
-			__add_wait_queue_tail(wqh, wait);
-		else
-			__add_wait_queue(wqh, wait);
-	}
+	if (list_empty(&wait->task_list))
+		__add_wait_queue(wqh, wait);
 	set_task_state(task, state);
 	spin_unlock(&wqh->lock);
 
