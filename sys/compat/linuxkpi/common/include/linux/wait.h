@@ -139,11 +139,8 @@ long linux_wait_event_common(wait_queue_head_t *wqh, wait_queue_t *wq,
 		}							\
 		__ret = linux_wait_event_common(&(wqh), &__wq, timeout,	\
 		    state, lock);					\
-		if (__ret != 0) {					\
-			if (__ret == EAGAIN || __ret == EINTR)		\
-				__ret = -ERESTARTSYS;			\
+		if (__ret != 0)						\
 			break;						\
-		}							\
 	}								\
 	linux_finish_wait(&(wqh), &__wq);				\
 	if ((int)(timeout) != MAX_SCHEDULE_TIMEOUT) {			\
@@ -245,13 +242,18 @@ void linux_finish_wait(wait_queue_head_t *, wait_queue_t *);
 void linux_wake_up_bit(void *, int);
 int linux_wait_on_bit_timeout(unsigned long *, int, unsigned int, long);
 void linux_wake_up_atomic_t(atomic_t *);
-int linux_wait_on_atomic_t(atomic_t *, int (*)(atomic_t *), unsigned int);
+int linux_wait_on_atomic_t(atomic_t *, unsigned int);
 
 #define	wake_up_bit(word, bit)		linux_wake_up_bit(word, bit)
 #define	wait_on_bit_timeout(word, bit, state, timeout)			\
 	linux_wait_on_bit_timeout(word, bit, state, timeout)
 #define	wake_up_atomic_t(a)		linux_wake_up_atomic_t(a)
-#define	wait_on_atomic_t(a, cb, state)	linux_wait_on_atomic_t(a, cb, state)
+/*
+ * All existing callers have a cb that just schedule()s. To avoid adding
+ * complexity, just emulate internally. The prototype is different so that
+ * callers must be manually modified.
+ */
+#define	wait_on_atomic_t(a, state)	linux_wait_on_atomic_t(a, state)
 
 struct task_struct;
 bool linux_wake_up_state(struct task_struct *, unsigned int);

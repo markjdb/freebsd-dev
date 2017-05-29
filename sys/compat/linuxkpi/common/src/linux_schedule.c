@@ -33,6 +33,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/signalvar.h>
 #include <sys/sleepqueue.h>
 
+#include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/sched.h>
@@ -64,6 +65,10 @@ add_to_sleepqueue(void *wchan, const char *wmesg, int timeout, int state)
 		} else
 			ret = sleepq_timedwait(wchan, 0);
 	}
+	if (ret == EINTR || ret == EAGAIN)
+		ret = -ERESTARTSYS;
+	if (ret == EWOULDBLOCK)
+		ret = -ret;
 	return (ret);
 }
 
@@ -287,8 +292,8 @@ linux_wait_on_bit_timeout(unsigned long *word, int bit, unsigned int state,
 	if (timeout == MAX_SCHEDULE_TIMEOUT)
 		timeout = 0;
 
-	wchan = bit_to_wchan(word, bit);
 	task = current;
+	wchan = bit_to_wchan(word, bit);
 	for (;;) {
 		sleepq_lock(wchan);
 		if ((*word & (1 << bit)) == 0) {
@@ -308,15 +313,37 @@ linux_wait_on_bit_timeout(unsigned long *word, int bit, unsigned int state,
 void
 linux_wake_up_atomic_t(atomic_t *a)
 {
+	void *wchan;
 
-	panic("%s: unimplemented", __func__);
+	wchan = a;
+	sleepq_lock(wchan);
+	sleepq_signal(wchan, SLEEPQ_SLEEP, 0, 0);
+	sleepq_release(wchan);
 }
 
 int
-linux_wait_on_atomic_t(atomic_t *a, int (*cb)(atomic_t *), unsigned int state)
+linux_wait_on_atomic_t(atomic_t *a, unsigned int state)
 {
+	struct task_struct *task;
+	void *wchan;
+	int ret;
 
-	panic("%s: unimplemented", __func__);
+	task = current;
+	wchan = a;
+	for (;;) {
+		sleepq_lock(wchan);
+		if (atomic_read(a) == 0) {
+			sleepq_release(wchan);
+			ret = 0;
+			break;
+		}
+		set_task_state(task, state);
+		ret = add_to_sleepqueue(wchan, "watomic", 0, state);
+		if (ret != 0)
+			break;
+	}
+	set_task_state(task, TASK_RUNNING);
+	return (ret);
 }
 
 bool
