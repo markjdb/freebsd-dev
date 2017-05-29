@@ -97,7 +97,7 @@ extern wait_queue_func_t autoremove_wake_function;
 
 #define	init_waitqueue_head(wqh) do {					\
 	mtx_init(&(wqh)->lock.m, spin_lock_name("wqhead"),		\
-	    NULL, MTX_DEF | MTX_NOWITNESS);				\
+	    NULL, MTX_DEF | MTX_NEW | MTX_NOWITNESS);			\
 	INIT_LIST_HEAD(&(wqh)->task_list);				\
 } while (0)
 
