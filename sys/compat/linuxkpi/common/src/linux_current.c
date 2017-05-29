@@ -67,7 +67,9 @@ linux_alloc_current(struct thread *td, int flags)
 	ts->comm = td->td_name;
 	ts->pid = td->td_tid;
 	atomic_set(&ts->usage, 1);
+#if 0
 	mtx_init(&ts->sleep_lock, "lkpislplock", NULL, MTX_DEF);
+#endif
 	atomic_set(&ts->state, TASK_RUNNING);
 
 	proc = td->td_proc;
@@ -139,7 +141,9 @@ void
 linux_free_current(struct task_struct *ts)
 {
 	mmput(ts->mm);
+#if 0
 	mtx_destroy(&ts->sleep_lock);
+#endif
 	free(ts, M_LINUX_CURRENT);
 }
 

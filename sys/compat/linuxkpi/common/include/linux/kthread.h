@@ -48,14 +48,6 @@
 	__task;								\
 })
 
-#define	wake_up_process(task) ({			\
-	linux_try_to_wake_up(task, TASK_NORMAL);	\
-})
-
-#define	wake_up_state(task, state) ({		\
-	linux_try_to_wake_up(task, state);	\
-})
-
 extern int in_atomic(void);
 extern int kthread_stop(struct task_struct *);
 extern bool kthread_should_stop_task(struct task_struct *);
@@ -66,6 +58,5 @@ extern void kthread_unpark(struct task_struct *);
 extern void kthread_parkme(void);
 extern void linux_kthread_fn(void *);
 extern struct task_struct *linux_kthread_setup_and_run(struct thread *, linux_task_fn_t *, void *arg);
-extern int linux_try_to_wake_up(struct task_struct *, unsigned state);
 
 #endif	/* _LINUX_KTHREAD_H_ */
