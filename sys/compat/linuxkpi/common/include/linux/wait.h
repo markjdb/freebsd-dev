@@ -126,7 +126,7 @@ long linux_wait_event_common(wait_queue_head_t *wqh, wait_queue_t *wq,
  * cond is true after timeout, remaining jiffies (> 0) if cond is true before
  * timeout.
  */
-#define	__wait_event_common(wqh, cond, timeout, state, lock, locked) ({	\
+#define	__wait_event_common(wqh, cond, timeout, state, lock) ({		\
 	DEFINE_WAIT(__wq);						\
 	int __ret, __end;						\
 									\
@@ -155,22 +155,22 @@ long linux_wait_event_common(wait_queue_head_t *wqh, wait_queue_t *wq,
 
 #define	wait_event(wqh, cond) ({					\
 	__wait_event_common(wqh, cond, MAX_SCHEDULE_TIMEOUT,		\
-	    TASK_UNINTERRUPTIBLE, NULL,	false);				\
+	    TASK_UNINTERRUPTIBLE, NULL);				\
 })
 
 #define	wait_event_timeout(wqh, cond, timeout) ({			\
 	__wait_event_common(wqh, cond, timeout, TASK_UNINTERRUPTIBLE,	\
-	    NULL, false);						\
+	    NULL);							\
 })
 
 #define	wait_event_interruptible(wqh, cond) ({				\
 	__wait_event_common(wqh, cond, MAX_SCHEDULE_TIMEOUT,		\
-	    TASK_INTERRUPTIBLE, NULL, false);				\
+	    TASK_INTERRUPTIBLE, NULL);					\
 })
 
 #define	wait_event_interruptible_timeout(wqh, cond, timeout) ({		\
 	__wait_event_common(wqh, cond, timeout, TASK_INTERRUPTIBLE,	\
-	    NULL, false);						\
+	    NULL);							\
 })
 
 /*
@@ -181,7 +181,7 @@ long linux_wait_event_common(wait_queue_head_t *wqh, wait_queue_t *wq,
 									\
 	spin_unlock(&(wqh).lock);					\
 	__ret = __wait_event_common(wqh, cond, MAX_SCHEDULE_TIMEOUT,	\
-	    TASK_INTERRUPTIBLE, NULL, true);				\
+	    TASK_INTERRUPTIBLE, NULL);					\
 	spin_lock(&(wqh).lock);						\
 	__ret;								\
 })
@@ -191,7 +191,7 @@ long linux_wait_event_common(wait_queue_head_t *wqh, wait_queue_t *wq,
  */
 #define	wait_event_interruptible_lock_irq(wqh, cond, lock) ({		\
 	__wait_event_common(wqh, cond, MAX_SCHEDULE_TIMEOUT,		\
-	    TASK_INTERRUPTIBLE, &(lock), false);			\
+	    TASK_INTERRUPTIBLE, &(lock));				\
 })
 
 static inline void

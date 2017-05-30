@@ -75,16 +75,18 @@ add_to_sleepqueue(void *wchan, const char *wmesg, int timeout, int state)
 static int
 wake_up_task(struct task_struct *task, unsigned int state)
 {
-	int ret;
+	int ret, wakeup_swapper;
 
-	ret = 0;
+	ret = wakeup_swapper = 0;
 	sleepq_lock(task);
 	if ((atomic_load_acq_int(&task->state) & state) != 0) {
 		set_task_state(task, TASK_WAKING);
-		sleepq_signal(task, SLEEPQ_SLEEP, 0, 0);
+		wakeup_swapper = sleepq_signal(task, SLEEPQ_SLEEP, 0, 0);
 		ret = 1;
 	}
 	sleepq_release(task);
+	if (wakeup_swapper)
+		kick_proc0();
 	return (ret);
 }
 
@@ -139,6 +141,7 @@ linux_send_sig(int signo, struct task_struct *task)
 	PROC_UNLOCK(td->td_proc);
 }
 
+/* See the comment in wait.h. */
 int
 autoremove_wake_function(wait_queue_t *wq, unsigned int state, int flags,
     void *key __unused)
@@ -267,17 +270,25 @@ linux_schedule_timeout(long timeoutl)
 	    (start + timeout - ticks));
 }
 
+static void
+wake_up_sleepers(void *wchan)
+{
+	int wakeup_swapper;
+
+	sleepq_lock(wchan);
+	wakeup_swapper = sleepq_signal(wchan, SLEEPQ_SLEEP, 0, 0);
+	sleepq_release(wchan);
+	if (wakeup_swapper)
+		kick_proc0();
+}
+
 #define	bit_to_wchan(word, bit)	((void *)(((uintptr_t)(word) << 6) | (bit)))
 
 void
 linux_wake_up_bit(void *word, int bit)
 {
-	void *wchan;
 
-	wchan = bit_to_wchan(word, bit);
-	sleepq_lock(wchan);
-	sleepq_signal(wchan, SLEEPQ_SLEEP, 0, 0);
-	sleepq_release(wchan);
+	wake_up_sleepers(bit_to_wchan(word, bit));
 }
 
 int
@@ -313,12 +324,8 @@ linux_wait_on_bit_timeout(unsigned long *word, int bit, unsigned int state,
 void
 linux_wake_up_atomic_t(atomic_t *a)
 {
-	void *wchan;
 
-	wchan = a;
-	sleepq_lock(wchan);
-	sleepq_signal(wchan, SLEEPQ_SLEEP, 0, 0);
-	sleepq_release(wchan);
+	wake_up_sleepers(a);
 }
 
 int
