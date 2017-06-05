@@ -488,6 +488,7 @@ contrib/dev/acpica/components/utilities/utobject.c	optional acpi
 contrib/dev/acpica/components/utilities/utosi.c		optional acpi
 contrib/dev/acpica/components/utilities/utownerid.c	optional acpi
 contrib/dev/acpica/components/utilities/utpredef.c	optional acpi
+contrib/dev/acpica/components/utilities/utresdecode.c	optional acpi acpi_debug
 contrib/dev/acpica/components/utilities/utresrc.c	optional acpi
 contrib/dev/acpica/components/utilities/utstate.c	optional acpi
 contrib/dev/acpica/components/utilities/utstring.c	optional acpi
@@ -1863,6 +1864,7 @@ dev/iwm/if_iwm_phy_ctxt.c	optional iwm
 dev/iwm/if_iwm_phy_db.c		optional iwm
 dev/iwm/if_iwm_power.c		optional iwm
 dev/iwm/if_iwm_scan.c		optional iwm
+dev/iwm/if_iwm_sf.c		optional iwm
 dev/iwm/if_iwm_sta.c		optional iwm
 dev/iwm/if_iwm_time_event.c	optional iwm
 dev/iwm/if_iwm_util.c		optional iwm
