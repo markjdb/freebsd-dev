@@ -22,6 +22,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  usb/usb usb/run usb/umass usb/ucom usb/ums   \
 				    usb/runfw usb/uether usb/axe usb/axge      \
 				    usb/uplcom usb/uslcom                      \
+				  rtwn rtwn_usb rtwnfw                         \
 				  vmm"
 
 options 	SCHED_ULE		# ULE scheduler
