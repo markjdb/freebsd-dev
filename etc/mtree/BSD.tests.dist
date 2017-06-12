@@ -404,6 +404,10 @@
         ..
         aio
         ..
+        dev
+            md
+            ..
+        ..
         fifo
         ..
         file
