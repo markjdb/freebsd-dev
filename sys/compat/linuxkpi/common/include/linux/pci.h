@@ -189,6 +189,11 @@ struct pci_driver {
 	const struct pci_error_handlers       *err_handler;
 };
 
+struct pci_bus {
+	struct pci_dev	*self;
+	int		number;
+};
+
 extern struct list_head pci_drivers;
 extern struct list_head pci_devices;
 extern spinlock_t pci_lock;
@@ -199,6 +204,7 @@ struct pci_dev {
 	struct device		dev;
 	struct list_head	links;
 	struct pci_driver	*pdrv;
+	struct pci_bus		*bus;
 	uint64_t		dma_mask;
 	uint16_t		device;
 	uint16_t		vendor;
