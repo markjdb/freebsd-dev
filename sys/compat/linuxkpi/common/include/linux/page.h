@@ -93,4 +93,10 @@ pgprot2cachemode(pgprot_t prot)
 #undef	trunc_page
 #define	trunc_page(x)	((uintptr_t)(x) & ~(PAGE_SIZE - 1))
 
+void	*linux_kmap(struct page *);
+void	linux_kunmap(struct page *);
+
+#define	kmap(page)	linux_kmap(page)
+#define	kunmap(page)	linux_kunmap(page)
+
 #endif	/* _LINUX_PAGE_H_ */

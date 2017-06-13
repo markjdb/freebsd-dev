@@ -63,6 +63,13 @@ struct pci_device_id {
 };
 
 #define	MODULE_DEVICE_TABLE(bus, table)
+
+#define	PCI_BASE_CLASS_DISPLAY		0x03
+#define	PCI_CLASS_DISPLAY_VGA		0x0300
+#define	PCI_CLASS_DISPLAY_OTHER		0x0380
+#define	PCI_BASE_CLASS_BRIDGE		0x06
+#define	PCI_CLASS_BRIDGE_ISA		0x0601
+
 #define	PCI_ANY_ID		(-1)
 #define	PCI_VENDOR_ID_APPLE		0x106b
 #define	PCI_VENDOR_ID_ASUSTEK		0x1043
@@ -180,6 +187,11 @@ struct pci_driver {
         const struct pci_error_handlers       *err_handler;
 };
 
+struct pci_bus {
+	struct pci_dev	*self;
+	int		number;
+};
+
 extern struct list_head pci_drivers;
 extern struct list_head pci_devices;
 extern spinlock_t pci_lock;
@@ -190,6 +202,7 @@ struct pci_dev {
 	struct device		dev;
 	struct list_head	links;
 	struct pci_driver	*pdrv;
+	struct pci_bus		*bus;
 	uint64_t		dma_mask;
 	uint16_t		device;
 	uint16_t		vendor;
