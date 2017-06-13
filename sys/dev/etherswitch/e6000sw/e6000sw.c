@@ -69,11 +69,12 @@ typedef struct e6000sw_softc {
 	struct ifnet		*ifp[E6000SW_MAX_PORTS];
 	char			*ifname[E6000SW_MAX_PORTS];
 	device_t		miibus[E6000SW_MAX_PORTS];
-	struct mii_data		*mii[E6000SW_MAX_PORTS];
 	struct proc		*kproc;
 
 	uint32_t		cpuports_mask;
 	uint32_t		fixed_mask;
+	uint32_t		ports_mask;
+	int			phy_base;
 	int			sw_addr;
 	int			num_ports;
 	boolean_t		multi_chip;
@@ -86,6 +87,7 @@ typedef struct e6000sw_softc {
 static etherswitch_info_t etherswitch_info = {
 	.es_nports =		0,
 	.es_nvlangroups =	E6000SW_NUM_VGROUPS,
+	.es_vlan_caps =		ETHERSWITCH_VLAN_PORT,
 	.es_name =		"Marvell 6000 series switch"
 };
 
@@ -96,6 +98,7 @@ static int e6000sw_detach(device_t);
 static int e6000sw_readphy(device_t, int, int);
 static int e6000sw_writephy(device_t, int, int, int);
 static etherswitch_info_t* e6000sw_getinfo(device_t);
+static int e6000sw_getconf(device_t, etherswitch_conf_t *);
 static void e6000sw_lock(device_t);
 static void e6000sw_unlock(device_t);
 static int e6000sw_getport(device_t, etherswitch_port_t *);
@@ -121,9 +124,10 @@ static int e6000sw_atu_mac_table(device_t, e6000sw_softc_t *, struct atu_opt *,
     int);
 static int e6000sw_get_pvid(e6000sw_softc_t *, int, int *);
 static int e6000sw_set_pvid(e6000sw_softc_t *, int, int);
-static __inline int e6000sw_is_cpuport(e6000sw_softc_t *, int);
-static __inline int e6000sw_is_fixedport(e6000sw_softc_t *, int);
-static __inline int e6000sw_is_phyport(e6000sw_softc_t *, int);
+static __inline bool e6000sw_is_cpuport(e6000sw_softc_t *, int);
+static __inline bool e6000sw_is_fixedport(e6000sw_softc_t *, int);
+static __inline bool e6000sw_is_phyport(e6000sw_softc_t *, int);
+static __inline bool e6000sw_is_portenabled(e6000sw_softc_t *, int);
 static __inline struct mii_data *e6000sw_miiforphy(e6000sw_softc_t *,
     unsigned int);
 
@@ -143,6 +147,7 @@ static device_method_t e6000sw_methods[] = {
 
 	/* etherswitch interface */
 	DEVMETHOD(etherswitch_getinfo,		e6000sw_getinfo),
+	DEVMETHOD(etherswitch_getconf,		e6000sw_getconf),
 	DEVMETHOD(etherswitch_lock,		e6000sw_lock),
 	DEVMETHOD(etherswitch_unlock,		e6000sw_unlock),
 	DEVMETHOD(etherswitch_getport,		e6000sw_getport),
@@ -203,7 +208,6 @@ e6000sw_probe(device_t dev)
 		return (ENXIO);
 
 	sc = device_get_softc(dev);
-	bzero(sc, sizeof(e6000sw_softc_t));
 	sc->dev = dev;
 	sc->node = switch_node;
 
@@ -220,14 +224,27 @@ e6000sw_probe(device_t dev)
 	E6000SW_UNLOCK(sc);
 
 	switch (id & 0xfff0) {
+	case 0x3400:
+		description = "Marvell 88E6141";
+		sc->phy_base = 0x10;
+		sc->num_ports = 6;
+		break;
+	case 0x3410:
+		description = "Marvell 88E6341";
+		sc->phy_base = 0x10;
+		sc->num_ports = 6;
+		break;
 	case 0x3520:
 		description = "Marvell 88E6352";
+		sc->num_ports = 7;
 		break;
 	case 0x1720:
 		description = "Marvell 88E6172";
+		sc->num_ports = 7;
 		break;
 	case 0x1760:
 		description = "Marvell 88E6176";
+		sc->num_ports = 7;
 		break;
 	default:
 		sx_destroy(&sc->sx);
@@ -241,17 +258,17 @@ e6000sw_probe(device_t dev)
 }
 
 static int
-e6000sw_parse_child_fdt(device_t dev, phandle_t child, uint32_t *fixed_mask,
-    uint32_t *cpu_mask, int *pport, int *pvlangroup)
+e6000sw_parse_child_fdt(e6000sw_softc_t *sc, phandle_t child,
+    uint32_t *fixed_mask, uint32_t *cpu_mask, int *pport, int *pvlangroup)
 {
+	boolean_t fixed_link;
 	char portlabel[100];
 	uint32_t port, vlangroup;
-	boolean_t fixed_link;
 
 	if (fixed_mask == NULL || cpu_mask == NULL || pport == NULL)
 		return (ENXIO);
 
-	OF_getprop(child, "label", (void *)portlabel, 100);
+	OF_getprop(child, "label", (void *)portlabel, sizeof(portlabel));
 	OF_getencprop(child, "reg", (void *)&port, sizeof(port));
 
 	if (OF_getencprop(child, "vlangroup", (void *)&vlangroup,
@@ -263,22 +280,21 @@ e6000sw_parse_child_fdt(device_t dev, phandle_t child, uint32_t *fixed_mask,
 		*pvlangroup = -1;
 	}
 
-	if (port >= E6000SW_MAX_PORTS)
+	if (port >= sc->num_ports)
 		return (ENXIO);
 	*pport = port;
 
 	if (strncmp(portlabel, "cpu", 3) == 0) {
-		device_printf(dev, "CPU port at %d\n", port);
+		device_printf(sc->dev, "CPU port at %d\n", port);
 		*cpu_mask |= (1 << port);
-		return (0);
 	}
 
 	fixed_link = OF_child(child);
 	if (fixed_link) {
 		*fixed_mask |= (1 << port);
-		device_printf(dev, "fixed port at %d\n", port);
+		device_printf(sc->dev, "fixed port at %d\n", port);
 	} else {
-		device_printf(dev, "PHY at %d\n", port);
+		device_printf(sc->dev, "PHY at port %d\n", port);
 	}
 
 	return (0);
@@ -315,11 +331,10 @@ e6000sw_attach_miibus(e6000sw_softc_t *sc, int port)
 
 	err = mii_attach(sc->dev, &sc->miibus[port], sc->ifp[port],
 	    e6000sw_ifmedia_upd, e6000sw_ifmedia_sts, BMSR_DEFCAPMASK,
-	    port, MII_OFFSET_ANY, 0);
+	    port + sc->phy_base, MII_OFFSET_ANY, 0);
 	if (err != 0)
 		return (err);
 
-	sc->mii[port] = device_get_softc(sc->miibus[port]);
 	return (0);
 }
 
@@ -345,7 +360,7 @@ e6000sw_attach(device_t dev)
 	bzero(member_ports, sizeof(member_ports));
 
 	for (child = OF_child(sc->node); child != 0; child = OF_peer(child)) {
-		err = e6000sw_parse_child_fdt(dev, child, &sc->fixed_mask,
+		err = e6000sw_parse_child_fdt(sc, child, &sc->fixed_mask,
 		    &sc->cpuports_mask, &port, &vlangroup);
 		if (err != 0) {
 			device_printf(sc->dev, "failed to parse DTS\n");
@@ -355,7 +370,8 @@ e6000sw_attach(device_t dev)
 		if (vlangroup != -1)
 			member_ports[vlangroup] |= (1 << port);
 
-		sc->num_ports++;
+		/* Port is in use. */
+		sc->ports_mask |= (1 << port);
 
 		err = e6000sw_init_interface(sc, port);
 		if (err != 0) {
@@ -413,8 +429,8 @@ e6000sw_poll_done(e6000sw_softc_t *sc)
 
 	for (i = 0; i < E6000SW_SMI_TIMEOUT; i++) {
 
-		if (!(e6000sw_readreg(sc, REG_GLOBAL2, SMI_PHY_CMD_REG) &
-		    (1 << PHY_CMD_SMI_BUSY)))
+		if ((e6000sw_readreg(sc, REG_GLOBAL2, SMI_PHY_CMD_REG) &
+		    (1 << PHY_CMD_SMI_BUSY)) == 0)
 			return (0);
 
 		pause("e6000sw PHY poll", hz/1000);
@@ -531,6 +547,17 @@ e6000sw_getinfo(device_t dev)
 	return (&etherswitch_info);
 }
 
+static int
+e6000sw_getconf(device_t dev __unused, etherswitch_conf_t *conf)
+{
+
+	/* Return the VLAN mode. */
+	conf->cmd = ETHERSWITCH_CONF_VLAN_MODE;
+	conf->vlan_mode = ETHERSWITCH_VLAN_PORT;
+
+	return (0);
+}
+
 static void
 e6000sw_lock(device_t dev)
 {
@@ -565,6 +592,8 @@ e6000sw_getport(device_t dev, etherswitch_port_t *p)
 
 	if (p->es_port >= sc->num_ports || p->es_port < 0)
 		return (EINVAL);
+	if (!e6000sw_is_portenabled(sc, p->es_port))
+		return (0);
 
 	err = 0;
 	E6000SW_LOCK(sc);
@@ -607,12 +636,15 @@ e6000sw_setport(device_t dev, etherswitch_port_t *p)
 
 	if (p->es_port >= sc->num_ports || p->es_port < 0)
 		return (EINVAL);
+	if (!e6000sw_is_portenabled(sc, p->es_port))
+		return (0);
 
 	err = 0;
 	E6000SW_LOCK(sc);
 	if (p->es_pvid != 0)
 		e6000sw_set_pvid(sc, p->es_port, p->es_pvid);
-	if (!e6000sw_is_cpuport(sc, p->es_port)) {
+	if (!e6000sw_is_cpuport(sc, p->es_port)  &&
+	    !e6000sw_is_fixedport(sc, p->es_port)) {
 		mii = e6000sw_miiforphy(sc, p->es_port);
 		err = ifmedia_ioctl(mii->mii_ifp, &p->es_ifr, &mii->mii_media,
 		    SIOCSIFMEDIA);
@@ -782,8 +814,7 @@ e6000sw_setvgroup(device_t dev, etherswitch_vlangroup_t *vg)
 	vg->es_untagged_ports &= PORT_VLAN_MAP_TABLE_MASK;
 	fid = vg->es_vlangroup + 1;
 	for (port = 0; port < sc->num_ports; port++) {
-		if ((sc->members[vg->es_vlangroup] & (1 << port)) ||
-		    (vg->es_untagged_ports & (1 << port)))
+		if ((sc->members[sc->vgroup[port]] & (1 << port)))
 			e6000sw_flush_port(sc, port);
 		if (vg->es_untagged_ports & (1 << port))
 			e6000sw_port_assign_vgroup(sc, port, fid,
@@ -807,7 +838,8 @@ e6000sw_getvgroup(device_t dev, etherswitch_vlangroup_t *vg)
 		return (EINVAL);
 	vg->es_untagged_ports = vg->es_member_ports =
 	    sc->members[vg->es_vlangroup];
-	vg->es_vid = ETHERSWITCH_VID_VALID;
+	if (vg->es_untagged_ports != 0)
+		vg->es_vid = ETHERSWITCH_VID_VALID;
 
 	return (0);
 }
@@ -915,27 +947,34 @@ e6000sw_writereg(e6000sw_softc_t *sc, int addr, int reg, int val)
 	}
 }
 
-static __inline int
+static __inline bool
 e6000sw_is_cpuport(e6000sw_softc_t *sc, int port)
 {
 
-	return (sc->cpuports_mask & (1 << port));
+	return ((sc->cpuports_mask & (1 << port)) ? true : false);
 }
 
-static __inline int
+static __inline bool
 e6000sw_is_fixedport(e6000sw_softc_t *sc, int port)
 {
 
-	return (sc->fixed_mask & (1 << port));
+	return ((sc->fixed_mask & (1 << port)) ? true : false);
 }
 
-static __inline int
+static __inline bool
 e6000sw_is_phyport(e6000sw_softc_t *sc, int port)
 {
 	uint32_t phy_mask;
 	phy_mask = ~(sc->fixed_mask | sc->cpuports_mask);
 
-	return (phy_mask & (1 << port));
+	return ((phy_mask & (1 << port)) ? true : false);
+}
+
+static __inline bool
+e6000sw_is_portenabled(e6000sw_softc_t *sc, int port)
+{
+
+	return ((sc->ports_mask & (1 << port)) ? true : false);
 }
 
 static __inline int
@@ -999,6 +1038,7 @@ static void
 e6000sw_tick (void *arg)
 {
 	e6000sw_softc_t *sc;
+	struct mii_data *mii;
 	struct mii_softc *miisc;
 	uint16_t portstatus;
 	int port;
@@ -1011,17 +1051,22 @@ e6000sw_tick (void *arg)
 		E6000SW_LOCK(sc);
 		for (port = 0; port < sc->num_ports; port++) {
 			/* Tick only on PHY ports */
-			if (!e6000sw_is_phyport(sc, port))
+			if (!e6000sw_is_portenabled(sc, port) ||
+			    !e6000sw_is_phyport(sc, port))
 				continue;
 
-			portstatus = e6000sw_readreg(sc, REG_PORT(port), PORT_STATUS);
+			mii = e6000sw_miiforphy(sc, port);
+			if (mii == NULL)
+				continue;
+
+			portstatus = e6000sw_readreg(sc, REG_PORT(port),
+			    PORT_STATUS);
 
 			e6000sw_update_ifmedia(portstatus,
-			    &sc->mii[port]->mii_media_status,
-			    &sc->mii[port]->mii_media_active);
+			    &mii->mii_media_status, &mii->mii_media_active);
 
-			LIST_FOREACH(miisc, &sc->mii[port]->mii_phys, mii_list) {
-				if (IFM_INST(sc->mii[port]->mii_media.ifm_cur->ifm_media)
+			LIST_FOREACH(miisc, &mii->mii_phys, mii_list) {
+				if (IFM_INST(mii->mii_media.ifm_cur->ifm_media)
 				    != miisc->mii_inst)
 					continue;
 				mii_phy_update(miisc, MII_POLLSTAT);
@@ -1087,6 +1132,8 @@ e6000sw_port_vlan_conf(e6000sw_softc_t *sc)
 
 	/* Set port priority */
 	for (port = 0; port < sc->num_ports; port++) {
+		if (!e6000sw_is_portenabled(sc, port))
+			continue;
 		ret = e6000sw_readreg(sc, REG_PORT(port), PORT_VID);
 		ret &= ~PORT_VID_PRIORITY_MASK;
 		e6000sw_writereg(sc, REG_PORT(port), PORT_VID, ret);
@@ -1094,6 +1141,8 @@ e6000sw_port_vlan_conf(e6000sw_softc_t *sc)
 
 	/* Set VID map */
 	for (port = 0; port < sc->num_ports; port++) {
+		if (!e6000sw_is_portenabled(sc, port))
+			continue;
 		ret = e6000sw_readreg(sc, REG_PORT(port), PORT_VID);
 		ret &= ~PORT_VID_DEF_VID_MASK;
 		ret |= (port + 1);
@@ -1102,6 +1151,8 @@ e6000sw_port_vlan_conf(e6000sw_softc_t *sc)
 
 	/* Enable all ports */
 	for (port = 0; port < sc->num_ports; port++) {
+		if (!e6000sw_is_portenabled(sc, port))
+			continue;
 		ret = e6000sw_readreg(sc, REG_PORT(port), PORT_CONTROL);
 		e6000sw_writereg(sc, REG_PORT(port), PORT_CONTROL, (ret |
 		    PORT_CONTROL_ENABLE));
