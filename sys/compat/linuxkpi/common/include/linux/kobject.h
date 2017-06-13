@@ -41,6 +41,10 @@
 struct kobject;
 struct sysctl_oid;
 
+enum kobject_action {
+	KOBJ_CHANGE,
+};
+
 struct kobj_type {
 	void (*release)(struct kobject *kobj);
 	const struct sysfs_ops *sysfs_ops;
@@ -145,5 +149,10 @@ kobject_name(const struct kobject *kobj)
 int	kobject_set_name(struct kobject *kobj, const char *fmt, ...);
 int	kobject_init_and_add(struct kobject *kobj, const struct kobj_type *ktype,
 	    struct kobject *parent, const char *fmt, ...);
+
+static inline void
+kobject_uevent_env(struct kobject *kobj, enum kobject_action action, char *envp[])
+{
+}
 
 #endif /* _LINUX_KOBJECT_H_ */
