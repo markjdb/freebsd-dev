@@ -56,6 +56,7 @@ struct files_struct;
 
 #define	inode	vnode
 #define	i_cdev	v_rdev
+#define	i_private v_data
 
 #define	S_IRUGO	(S_IRUSR | S_IRGRP | S_IROTH)
 #define	S_IWUGO	(S_IWUSR | S_IWGRP | S_IWOTH)
@@ -81,6 +82,9 @@ struct linux_file {
 	struct sigio	*f_sigio;
 	struct vnode	*f_vnode;
 	volatile u_int	f_count;
+
+	/* anonymous shmem object */
+	vm_object_t	_shmem;
 
 	/* kqfilter support */
 	int		f_kqflags;
