@@ -51,6 +51,7 @@ typedef enum irqreturn	irqreturn_t;
 
 struct device;
 struct dev_pm_ops;
+struct fwnode_handle;
 
 struct class {
 	const char	*name;
@@ -115,6 +116,8 @@ struct device {
 	unsigned int	msix;
 	unsigned int	msix_max;
 	const struct attribute_group **groups;
+
+	struct fwnode_handle *fwnode;
 
 	spinlock_t	devres_lock;
 	struct list_head devres_head;

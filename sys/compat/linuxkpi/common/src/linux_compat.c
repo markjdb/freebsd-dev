@@ -463,6 +463,8 @@ void
 linux_file_free(struct linux_file *filp)
 {
 	if (filp->_file == NULL) {
+		if (filp->_shmem != NULL)
+			vm_object_deallocate(filp->_shmem);
 		kfree(filp);
 	} else {
 		/*
