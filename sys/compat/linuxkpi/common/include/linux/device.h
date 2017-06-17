@@ -51,6 +51,10 @@ typedef enum irqreturn	irqreturn_t;
 
 struct device;
 struct dev_pm_ops;
+struct fwnode_handle;
+
+struct bus_type {
+};
 
 struct class {
 	const char	*name;
@@ -78,9 +82,6 @@ struct dev_pm_ops {
 	int (*runtime_suspend)(struct device *dev);
 	int (*runtime_resume)(struct device *dev);
 	int (*runtime_idle)(struct device *dev);
-};
-
-struct bus_type {
 };
 
 struct device_driver {
@@ -112,9 +113,24 @@ struct device {
 	unsigned int	msix_max;
 	const struct attribute_group **groups;
 
+	struct fwnode_handle *fwnode;
+
 	spinlock_t	devres_lock;
 	struct list_head devres_head;
 };
+
+#if 0
+enum fwnode_type {
+	FWNODE_INVALID,
+	FWNODE_OF,
+	FWNODE_ACPI,
+	FWNODE_ACPI_DATA,
+};
+
+struct fwnode_handle {
+	enum fwnode_type type;
+};
+#endif
 
 extern struct device linux_root_device;
 extern struct kobject linux_class_root;
