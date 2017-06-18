@@ -1,5 +1,5 @@
-/*-
- * Copyright (c) 2015 Andrew Turner
+/*
+ * Copyright (c) 2016 Maxim Sobolev <sobomax@FreeBSD.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -23,26 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
+ * $FreeBSD$
  */
 
-#include <machine/asm.h>
-__FBSDID("$FreeBSD$");
-
-.arch_extension sec	/* For smc */
-.arch_extension virt	/* For hvc */
-
-/*
- * int psci_hvc_despatch(register_t psci_fnid, register_t...)
- */
-ENTRY(psci_hvc_despatch)
-	hvc	#0
-	RET
-END(psci_hvc_despatch)
-
-/*
- * int psci_smc_despatch(register_t psci_fnid, register_t...)
- */
-ENTRY(psci_smc_despatch)
-	smc	#0
-	RET
-END(psci_hvc_despatch)
+off_t mkuz_get_insize(struct mkuz_cfg *);
