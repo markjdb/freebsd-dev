@@ -129,8 +129,11 @@ linux_pci_attach(device_t dev)
 	pdev->dev.parent = &linux_root_device;
 	pdev->dev.bsddev = dev;
 	INIT_LIST_HEAD(&pdev->dev.irqents);
+	pdev->devfn = PCI_DEVFN(pci_get_slot(dev), pci_get_function(dev));
 	pdev->device = id->device;
 	pdev->vendor = id->vendor;
+	pdev->revision = pci_get_revid(dev);
+	pdev->class = pci_get_class(dev);
 	pdev->dev.dma_mask = &pdev->dma_mask;
 	pdev->pdrv = pdrv;
 	kobject_init(&pdev->dev.kobj, &linux_dev_ktype);
@@ -260,4 +263,3 @@ pci_unregister_driver(struct pci_driver *pdrv)
 		devclass_delete_driver(bus, &pdrv->driver);
 	mtx_unlock(&Giant);
 }
-

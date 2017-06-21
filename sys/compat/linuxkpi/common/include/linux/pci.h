@@ -208,7 +208,8 @@ struct pci_dev {
 	uint16_t		vendor;
 	unsigned int		irq;
 	unsigned int		devfn;
-	u8			revision;
+	unsigned int		class;
+	uint8_t			revision;
 };
 
 static inline struct resource_list_entry *
