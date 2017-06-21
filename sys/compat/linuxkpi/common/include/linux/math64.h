@@ -26,6 +26,7 @@
  *
  * $FreeBSD$
  */
+
 #ifndef _LINUX_MATH64_H
 #define	_LINUX_MATH64_H
 
@@ -42,14 +43,31 @@
 static inline uint64_t
 div_u64_rem(uint64_t dividend, uint32_t divisor, uint32_t *remainder)
 {
+
 	*remainder = dividend % divisor;
+	return (dividend / divisor);
+}
+
+static inline uint64_t
+div64_u64_rem(uint64_t dividend, uint64_t divisor, uint64_t *remained)
+{
+
+	*remained = dividend % divisor;
 	return (dividend / divisor);
 }
 
 static inline uint64_t
 div_u64(uint64_t dividend, uint32_t divisor)
 {
+
 	return (dividend / divisor);
 }
 
-#endif					/* _LINUX_MATH64_H */
+static inline int64_t
+div64_s64(int64_t dividend, int32_t divisor)
+{
+
+	return (dividend / divisor);
+}
+
+#endif /* _LINUX_MATH64_H */
