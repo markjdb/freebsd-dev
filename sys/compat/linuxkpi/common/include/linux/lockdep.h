@@ -38,4 +38,7 @@ struct lock_class_key {
 
 #define lockdep_set_class_and_name(lock, key, name)
 
+#define	lockdep_assert_held_once(m)			\
+	sx_assert(&(m)->sx, SA_XLOCKED | SA_NOTRECURSED)
+
 #endif  /* _LINUX_LOCKDEP_H_ */
