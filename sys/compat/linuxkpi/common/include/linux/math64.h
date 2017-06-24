@@ -41,6 +41,21 @@
 })
 
 static inline uint64_t
+div64_u64_rem(uint64_t dividend, uint64_t divisor, uint64_t *remained)
+{
+
+	*remained = dividend % divisor;
+	return (dividend / divisor);
+}
+
+static inline uint64_t
+div64_u64(uint64_t dividend, uint64_t divisor)
+{
+
+	return (dividend / divisor);
+}
+
+static inline uint64_t
 div_u64_rem(uint64_t dividend, uint32_t divisor, uint32_t *remainder)
 {
 
@@ -48,11 +63,10 @@ div_u64_rem(uint64_t dividend, uint32_t divisor, uint32_t *remainder)
 	return (dividend / divisor);
 }
 
-static inline uint64_t
-div64_u64_rem(uint64_t dividend, uint64_t divisor, uint64_t *remained)
+static inline int64_t
+div_s64(int64_t dividend, int32_t divisor)
 {
 
-	*remained = dividend % divisor;
 	return (dividend / divisor);
 }
 
