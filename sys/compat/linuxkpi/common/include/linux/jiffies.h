@@ -68,11 +68,11 @@ timespec_to_jiffies(const struct timespec *ts)
 }
 
 static inline int
-msecs_to_jiffies(const u64 msec)
+msecs_to_jiffies(const uint64_t msec)
 {
-	u64 result;
+	uint64_t result;
 
-	result = howmany(msec * (u64)hz, 1000ULL);
+	result = howmany(msec * (uint64_t)hz, 1000ULL);
 	if (result > MAX_JIFFY_OFFSET)
 		result = MAX_JIFFY_OFFSET;
 
@@ -80,15 +80,27 @@ msecs_to_jiffies(const u64 msec)
 }
 
 static inline int
-usecs_to_jiffies(const u64 u)
+usecs_to_jiffies(const uint64_t usec)
 {
-	u64 result;
+	uint64_t result;
 
-	result = howmany(u * (u64)hz, 1000000ULL);
+	result = howmany(usec * (uint64_t)hz, 1000000ULL);
 	if (result > MAX_JIFFY_OFFSET)
 		result = MAX_JIFFY_OFFSET;
 
 	return ((int)result);
+}
+
+static inline uint64_t
+nsecs_to_jiffies64(uint64_t nsec)
+{
+	uint64_t result;
+
+	result = howmany(nsec * (uint64_t)hz, 1000000000ULL);
+	if (result > MAX_JIFFY_OFFSET)
+		result = MAX_JIFFY_OFFSET;
+
+	return (result);
 }
 
 static inline u64
