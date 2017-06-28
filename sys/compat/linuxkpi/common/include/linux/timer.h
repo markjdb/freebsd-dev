@@ -71,5 +71,8 @@ extern void add_timer_on(struct timer_list *, int cpu);
 	((unsigned long)(((j) + linux_timer_hz_mask) & ~linux_timer_hz_mask))
 #define	round_jiffies_relative(j) \
 	round_jiffies(j)
+#define	round_jiffies_up(j)	round_jiffies(j + 1)
+#define	round_jiffies_up_relative(j) \
+	round_jiffies_up(j)
 
 #endif					/* _LINUX_TIMER_H_ */
