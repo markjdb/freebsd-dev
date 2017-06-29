@@ -46,15 +46,20 @@ struct timer_list {
 
 extern unsigned long linux_timer_hz_mask;
 
-#define	setup_timer(timer, func, dat)					\
-do {									\
+#define	TIMER_IRQSAFE	0x0001
+
+#define	setup_timer(timer, func, dat) do {				\
 	(timer)->function = (func);					\
 	(timer)->data = (dat);						\
 	callout_init(&(timer)->timer_callout, 1);			\
 } while (0)
 
-#define	init_timer(timer)						\
-do {									\
+#define	__setup_timer(timer, func, dat, flags) do {			\
+	CTASSERT(((flags) & ~TIMER_IRQSAFE) == 0);			\
+	setup_timer(timer, func, dat);					\
+} while (0)
+
+#define	init_timer(timer) do {						\
 	(timer)->function = NULL;					\
 	(timer)->data = 0;						\
 	callout_init(&(timer)->timer_callout, 1);			\
