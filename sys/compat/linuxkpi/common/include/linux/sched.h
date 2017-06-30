@@ -43,6 +43,7 @@
 #include <linux/slab.h>
 #include <linux/mm_types.h>
 #include <linux/string.h>
+#include <linux/time.h>
 #include <linux/bitmap.h>
 
 #include <asm/atomic.h>
@@ -115,6 +116,15 @@ put_task_struct(struct task_struct *task)
 #define	sched_yield()	sched_relinquish(curthread)
 
 #define	need_resched() (curthread->td_flags & TDF_NEEDRESCHED)
+
+static inline uint64_t
+local_clock(void)
+{
+	struct timespec ts;
+
+	nanotime(&ts);
+	return (ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec);
+}
 
 bool linux_signal_pending(struct task_struct *task);
 bool linux_fatal_signal_pending(struct task_struct *task);
