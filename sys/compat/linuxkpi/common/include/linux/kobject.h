@@ -84,6 +84,11 @@ kobject_init(struct kobject *kobj, const struct kobj_type *ktype)
 	kobj->oidp = NULL;
 }
 
+static inline void
+kobject_del(struct kobject *kobj)
+{
+}
+
 void linux_kobject_release(struct kref *kref);
 
 static inline void
