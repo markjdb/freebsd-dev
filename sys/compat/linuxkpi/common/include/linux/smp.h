@@ -29,6 +29,8 @@
 #ifndef _LINUX_SMP_H_
 #define	_LINUX_SMP_H_
 
+#include <asm/smp.h>
+
 #define	on_each_cpu(cb, data, wait) ({				\
 	CTASSERT(wait);						\
 	linux_on_each_cpu(cb, data);				\
