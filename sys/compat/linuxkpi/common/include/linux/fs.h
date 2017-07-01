@@ -63,11 +63,13 @@ struct files_struct;
 #define	S_IRUGO	(S_IRUSR | S_IRGRP | S_IROTH)
 #define	S_IWUGO	(S_IWUSR | S_IWGRP | S_IWOTH)
 
+struct pfs_node;
 
 typedef struct files_struct *fl_owner_t;
 
 struct dentry {
 	struct inode	*d_inode;
+	struct pfs_node *d_pfs_node;
 };
 
 struct file_operations;
