@@ -103,16 +103,30 @@ nsecs_to_jiffies64(uint64_t nsec)
 	return (result);
 }
 
-static inline u64
-nsecs_to_jiffies(const u64 n)
+static inline uint64_t
+nsecs_to_jiffies(uint64_t n)
 {
 	return (usecs_to_jiffies(howmany(n, 1000ULL)));
 }
 
-static inline u64
+static inline uint64_t
+jiffies_to_nsecs(unsigned long j)
+{
+
+	return ((1000000000ULL / hz) * j);
+}
+
+static inline uint64_t
+jiffies_to_usecs(unsigned long j)
+{
+
+	return ((1000000ULL / hz) * j);
+}
+
+static inline uint64_t
 get_jiffies_64(void)
 {
-	return ((u64)(unsigned)ticks);
+	return ((uint64_t)(unsigned int)ticks);
 }
 
 static inline int
