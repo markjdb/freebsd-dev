@@ -54,6 +54,8 @@ struct vm_area_struct;
 struct poll_table_struct;
 struct files_struct;
 
+#define	f_inode	f_vnode
+
 #define	inode	vnode
 #define	i_cdev	v_rdev
 #define	i_private v_data
@@ -161,6 +163,7 @@ struct file_operations {
 #endif
 };
 #define	fops_get(fops)	(fops)
+#define	replace_fops(f, fops)	((f)->f_op = (fops))
 
 #define	FMODE_READ	FREAD
 #define	FMODE_WRITE	FWRITE
