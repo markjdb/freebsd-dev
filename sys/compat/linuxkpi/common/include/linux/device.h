@@ -377,13 +377,20 @@ device_create_with_groups(struct class *class,
 	return dev;
 }
 
+static inline bool
+device_is_registered(struct device *dev)
+{
+
+	return (dev->bsddev != NULL);
+}
+
 static inline int
 device_register(struct device *dev)
 {
 	device_t bsddev = NULL;
 	int unit = -1;
 
-	if (dev->bsddev != NULL)
+	if (device_is_registered(dev))
 		goto done;
 
 	if (dev->devt) {
@@ -418,10 +425,9 @@ device_unregister(struct device *dev)
 {
 	device_t bsddev;
 
-	bsddev = dev->bsddev;
-	dev->bsddev = NULL;
-
-	if (bsddev != NULL && dev->bsddev_attached_here) {
+	if (device_is_registered(dev) && dev->bsddev_attached_here) {
+		bsddev = dev->bsddev;
+		dev->bsddev = NULL;
 		mtx_lock(&Giant);
 		device_delete_child(device_get_parent(bsddev), bsddev);
 		mtx_unlock(&Giant);
@@ -434,10 +440,9 @@ device_del(struct device *dev)
 {
 	device_t bsddev;
 
-	bsddev = dev->bsddev;
-	dev->bsddev = NULL;
-
-	if (bsddev != NULL && dev->bsddev_attached_here) {
+	if (device_is_registered(dev) && dev->bsddev_attached_here) {
+		bsddev = dev->bsddev;
+		dev->bsddev = NULL;
 		mtx_lock(&Giant);
 		device_delete_child(device_get_parent(bsddev), bsddev);
 		mtx_unlock(&Giant);
