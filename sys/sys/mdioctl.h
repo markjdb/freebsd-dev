@@ -58,7 +58,7 @@ struct md_ioctl {
 	off_t		md_mediasize;	/* size of disk in bytes */
 	unsigned	md_sectorsize;	/* sectorsize */
 	unsigned	md_options;	/* options */
-	u_int64_t	md_base;	/* base address */
+	int		md_pad0[2];	/* unused padding */
 	int		md_fwheads;	/* firmware heads */
 	int		md_fwsectors;	/* firmware sectors */
 	int		md_pad[MDNPAD];	/* padding for future ideas */
