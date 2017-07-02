@@ -187,6 +187,7 @@ struct pci_driver {
 	devclass_t			bsdclass;
 	struct device_driver		driver;
 	const struct pci_error_handlers       *err_handler;
+	bool				isdrm;
 };
 
 struct pci_bus {
@@ -208,6 +209,8 @@ struct pci_dev {
 	uint64_t		dma_mask;
 	uint16_t		device;
 	uint16_t		vendor;
+	uint16_t		subsystem_vendor;
+	uint16_t		subsystem_device;
 	unsigned int		irq;
 	unsigned int		devfn;
 	uint32_t		class;
@@ -506,8 +509,12 @@ pci_write_config_dword(struct pci_dev *pdev, int where, u32 val)
 	return (0);
 }
 
-extern int pci_register_driver(struct pci_driver *pdrv);
-extern void pci_unregister_driver(struct pci_driver *pdrv);
+int	linux_pci_register_driver(struct pci_driver *pdrv);
+int	linux_pci_register_drm_driver(struct pci_driver *pdrv);
+void	linux_pci_unregister_driver(struct pci_driver *pdrv);
+
+#define	pci_register_driver(pdrv)	linux_pci_register_driver(pdrv)
+#define	pci_unregister_driver(pdrv)	linux_pci_unregister_driver(pdrv)
 
 struct msix_entry {
 	int entry;
