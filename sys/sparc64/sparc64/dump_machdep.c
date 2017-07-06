@@ -95,7 +95,7 @@ dumpsys(struct dumperinfo *di)
 	size += hdrsize;
 
 	mkdumpheader(&kdh, KERNELDUMPMAGIC, KERNELDUMP_SPARC64_VERSION, size,
-	    kerneldumpcrypto_dumpkeysize(di->kdc), di->blocksize);
+	    di->blocksize);
 
 	printf("Dumping %lu MB (%d chunks)\n", (u_long)(size >> 20), nreg);
 
