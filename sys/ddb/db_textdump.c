@@ -463,7 +463,7 @@ textdump_dumpsys(struct dumperinfo *di)
 	 */
 	textdump_offset = di->mediasize - sizeof(kdh);
 	textdump_saveoff(&trailer_offset);
-	mkdumpheader(&kdh, TEXTDUMPMAGIC, KERNELDUMP_TEXT_VERSION, 0, 0,
+	mkdumpheader(&kdh, TEXTDUMPMAGIC, KERNELDUMP_TEXT_VERSION, 0,
 	    TEXTDUMP_BLOCKSIZE);
 	(void)textdump_writenextblock(di, (char *)&kdh);
 
@@ -489,7 +489,7 @@ textdump_dumpsys(struct dumperinfo *di)
 	 * size.
 	 */
 	dumplen = trailer_offset - (textdump_offset + TEXTDUMP_BLOCKSIZE);
-	mkdumpheader(&kdh, TEXTDUMPMAGIC, KERNELDUMP_TEXT_VERSION, dumplen, 0,
+	mkdumpheader(&kdh, TEXTDUMPMAGIC, KERNELDUMP_TEXT_VERSION, dumplen,
 	    TEXTDUMP_BLOCKSIZE);
 	(void)textdump_writenextblock(di, (char *)&kdh);
 	textdump_restoreoff(trailer_offset);
