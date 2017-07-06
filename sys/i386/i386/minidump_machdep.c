@@ -253,7 +253,7 @@ minidumpsys(struct dumperinfo *di)
 #endif
 
 	mkdumpheader(&kdh, KERNELDUMPMAGIC, KERNELDUMP_I386_VERSION, dumpsize,
-	    kerneldumpcrypto_dumpkeysize(di->kdc), di->blocksize);
+	    di->blocksize);
 
 	printf("Physical memory: %ju MB\n", ptoa((uintmax_t)physmem) / 1048576);
 	printf("Dumping %llu MB:", (long long)dumpsize >> 20);

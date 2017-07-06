@@ -131,10 +131,8 @@ struct dump_pa {
 	vm_paddr_t pa_size;
 };
 
-uint32_t kerneldumpcrypto_dumpkeysize(const struct kerneldumpcrypto *kdc);
-
 void mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
-    uint64_t dumplen, uint32_t dumpkeysize, uint32_t blksz);
+    uint64_t dumplen, uint32_t blksz);
 
 int dumpsys_generic(struct dumperinfo *);
 

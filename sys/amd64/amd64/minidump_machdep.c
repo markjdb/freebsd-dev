@@ -328,7 +328,7 @@ minidumpsys(struct dumperinfo *di)
 	mdhdr.dmapend = DMAP_MAX_ADDRESS;
 
 	mkdumpheader(&kdh, KERNELDUMPMAGIC, KERNELDUMP_AMD64_VERSION, dumpsize,
-	    kerneldumpcrypto_dumpkeysize(di->kdc), di->blocksize);
+	    di->blocksize);
 
 	printf("Dumping %llu out of %ju MB:", (long long)dumpsize >> 20,
 	    ptoa((uintmax_t)physmem) / 1048576);
