@@ -895,14 +895,10 @@ failed:
 	free(kdc, M_EKCD);
 	return (NULL);
 }
-#endif /* EKCD */
 
 static int
 kerneldumpcrypto_init(struct kerneldumpcrypto *kdc)
 {
-#ifndef EKCD
-	return (0);
-#else
 	uint8_t hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX ctx;
 	struct kerneldumpkey *kdk;
@@ -942,8 +938,8 @@ kerneldumpcrypto_init(struct kerneldumpcrypto *kdc)
 out:
 	explicit_bzero(hash, sizeof(hash));
 	return (error);
-#endif
 }
+#endif /* EKCD */
 
 uint32_t
 kerneldumpcrypto_dumpkeysize(const struct kerneldumpcrypto *kdc)
@@ -1115,6 +1111,19 @@ dump_encrypted_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
 
 	return (0);
 }
+
+static int
+dump_write_key(struct dumperinfo *di, vm_offset_t physical, off_t offset)
+{
+	struct kerneldumpcrypto *kdc;
+
+	kdc = di->kdc;
+	if (kdc == NULL)
+		return (0);
+
+	return (dump_raw_write(di, kdc->kdc_dumpkey, physical, offset,
+	    kdc->kdc_dumpkeysize));
+}
 #endif /* EKCD */
 
 /* Call dumper with bounds checking. */
@@ -1194,32 +1203,17 @@ dump_write_header(struct dumperinfo *di, struct kerneldumpheader *kdh,
 	return (ret);
 }
 
-static int
-dump_write_key(struct dumperinfo *di, vm_offset_t physical, off_t offset)
-{
-#ifndef EKCD
-	return (0);
-#else /* EKCD */
-	struct kerneldumpcrypto *kdc;
-
-	kdc = di->kdc;
-	if (kdc == NULL)
-		return (0);
-
-	return (dump_raw_write(di, kdc->kdc_dumpkey, physical, offset,
-	    kdc->kdc_dumpkeysize));
-#endif /* !EKCD */
-}
-
 int
 dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t *dumplop)
 {
 	uint64_t dumpsize;
 	int error;
 
+#ifdef EKCD
 	error = kerneldumpcrypto_init(di->kdc);
 	if (error != 0)
 		return (error);
+#endif
 
 	dumpsize = dtoh64(kdh->dumplength) + 2 * di->blocksize +
 	    kerneldumpcrypto_dumpkeysize(di->kdc);
@@ -1233,10 +1227,12 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t *dumplop)
 		return (error);
 	*dumplop += di->blocksize;
 
+#ifdef EKCD
 	error = dump_write_key(di, 0, *dumplop);
 	if (error != 0)
 		return (error);
 	*dumplop += kerneldumpcrypto_dumpkeysize(di->kdc);
+#endif
 
 	return (0);
 }
