@@ -172,6 +172,7 @@ const char *panicstr;
 int dumping;				/* system is dumping */
 int rebooting;				/* system is rebooting */
 static struct dumperinfo dumper;	/* our selected dumper */
+static off_t dumpoff;			/* current dump offset */
 
 /* Context information for dump-debuggers. */
 static struct pcb dumppcb;		/* Registers. */
@@ -1028,20 +1029,6 @@ dump_check_bounds(struct dumperinfo *di, off_t offset, size_t length)
 	return (0);
 }
 
-/* Call dumper with bounds checking. */
-static int
-dump_raw_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
-    off_t offset, size_t length)
-{
-	int error;
-
-	error = dump_check_bounds(di, offset, length);
-	if (error != 0)
-		return (error);
-
-	return (di->dumper(di->priv, virtual, physical, offset, length));
-}
-
 #ifdef EKCD
 static int
 dump_encrypt(struct kerneldumpcrypto *kdc, uint8_t *buf, size_t size)
@@ -1136,21 +1123,6 @@ dump_write_key(struct dumperinfo *di, vm_offset_t physical, off_t offset)
 }
 #endif /* EKCD */
 
-int
-dump_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
-    off_t offset, size_t length)
-{
-
-#ifdef EKCD
-	if (di->kdc != NULL) {
-		return (dump_encrypted_write(di, virtual, physical, offset,
-		    length));
-	}
-#endif
-
-	return (dump_raw_write(di, virtual, physical, offset, length));
-}
-
 static int
 dump_write_header(struct dumperinfo *di, struct kerneldumpheader *kdh,
     vm_offset_t physical, off_t offset)
@@ -1185,7 +1157,7 @@ dump_write_header(struct dumperinfo *di, struct kerneldumpheader *kdh,
  * key.
  */
 int
-dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t *dumplop)
+dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
 {
 	uint64_t dumpsize;
 	uint32_t keysize;
@@ -1204,18 +1176,18 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t *dumplop)
 	if (di->mediasize < SIZEOF_METADATA + dumpsize)
 		return (ENOSPC);
 
-	*dumplop = di->mediaoffset + di->mediasize - dumpsize;
+	dumpoff = di->mediaoffset + di->mediasize - dumpsize;
 
-	error = dump_write_header(di, kdh, 0, *dumplop);
+	error = dump_write_header(di, kdh, 0, dumpoff);
 	if (error != 0)
 		return (error);
-	*dumplop += di->blocksize;
+	dumpoff += di->blocksize;
 
 #ifdef EKCD
-	error = dump_write_key(di, 0, *dumplop);
+	error = dump_write_key(di, 0, dumpoff);
 	if (error != 0)
 		return (error);
-	*dumplop += keysize;
+	dumpoff += keysize;
 #endif
 
 	return (0);
@@ -1226,15 +1198,50 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t *dumplop)
  * dump has completed.
  */
 int
-dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t dumplo)
+dump_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
+    size_t length)
 {
 	int error;
 
-	error = dump_write_header(di, kdh, 0, dumplo);
+#ifdef EKCD
+	if (di->kdc != NULL) {
+		error = dump_encrypted_write(di, virtual, physical, dumpoff,
+		    length);
+		if (error == 0)
+			dumpoff += length;
+		return (error);
+	}
+#endif
+
+	error = dump_raw_write(di, virtual, physical, dumpoff, length);
+	if (error == 0)
+		dumpoff += length;
+	return (error);
+}
+
+int
+dump_raw_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
+    off_t offset, size_t length)
+{
+	int error;
+
+	error = dump_check_bounds(di, offset, length);
 	if (error != 0)
 		return (error);
 
-	(void)dump_write(di, NULL, 0, 0, 0);
+	return (di->dumper(di->priv, virtual, physical, offset, length));
+}
+
+int
+dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh)
+{
+	int error;
+
+	error = dump_write_header(di, kdh, 0, dumpoff);
+	if (error != 0)
+		return (error);
+
+	(void)dump_raw_write(di, NULL, 0, 0, 0);
 	return (0);
 }
 
