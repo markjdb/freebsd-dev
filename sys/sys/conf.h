@@ -344,10 +344,9 @@ int set_dumper(struct dumperinfo *di, const char *devname, struct thread *td,
     const uint8_t *encryptedkey);
 void dump_init_header(const struct dumperinfo *di, struct kerneldumpheader *kdh,
     char *magic, uint32_t archver, uint64_t dumplen);
-int dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh,
-    off_t *dumplop);
-int dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh,
-    off_t dumplo);
+int dump_append(struct dumperinfo *, void *, vm_offset_t, size_t);
+int dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh);
+int dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh);
 int dump_write(struct dumperinfo *, void *, vm_offset_t, off_t, size_t);
 int doadump(boolean_t);
 extern int dumping;		/* system is dumping */
