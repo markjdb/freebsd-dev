@@ -39,6 +39,7 @@ __FBSDID("$FreeBSD$");
 
 #include "opt_ddb.h"
 #include "opt_ekcd.h"
+#include "opt_gzio.h"
 #include "opt_kdb.h"
 #include "opt_panic.h"
 #include "opt_sched.h"
@@ -52,6 +53,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/cons.h>
 #include <sys/eventhandler.h>
 #include <sys/filedesc.h>
+#include <sys/gzio.h>
 #include <sys/jail.h>
 #include <sys/kdb.h>
 #include <sys/kernel.h>
@@ -162,6 +164,27 @@ struct kerneldumpcrypto {
 	struct kerneldumpkey	kdc_dumpkey[];
 };
 #endif
+
+static int compress_kernel_dumps = 0;
+
+#ifdef GZIO
+static struct gzio_stream *gzs;
+static uint8_t *gzbuffer;
+
+static int	kerneldump_gz_configure(struct dumperinfo *di);
+static void	kerneldump_gz_disable(void);
+static int	kerneldump_gz_write_cb(void *cb, size_t len, off_t off, void *arg);
+static int	sysctl_kerneldump_gz_toggle(SYSCTL_HANDLER_ARGS);
+
+static int kerneldump_gz_level = 6;
+SYSCTL_INT(_kern, OID_AUTO, kerneldump_gz_level, CTLFLAG_RW,
+    &kerneldump_gz_level, 0,
+    "Kernel crash dump compression level");
+
+SYSCTL_PROC(_kern, OID_AUTO, compress_kernel_dumps, CTLFLAG_RW | CTLTYPE_INT,
+    &compress_kernel_dumps, 0, sysctl_kerneldump_gz_toggle, "I",
+    "Enable compressed kernel crash dumps");
+#endif /* GZIO */
 
 /*
  * Variable panicstr contains argument to first call to panic; used as flag
@@ -859,6 +882,9 @@ static char dumpdevname[sizeof(((struct cdev*)NULL)->si_name)];
 SYSCTL_STRING(_kern_shutdown, OID_AUTO, dumpdevname, CTLFLAG_RD,
     dumpdevname, 0, "Device for kernel dumps");
 
+static int	_dump_write(struct dumperinfo *di, void *virtual,
+		    vm_offset_t physical, size_t length);
+
 #ifdef EKCD
 static struct kerneldumpcrypto *
 kerneldumpcrypto_create(size_t blocksize, uint8_t encryption,
@@ -955,6 +981,55 @@ kerneldumpcrypto_dumpkeysize(const struct kerneldumpcrypto *kdc)
 #endif
 }
 
+#ifdef GZIO
+static int
+kerneldump_gz_configure(struct dumperinfo *di)
+{
+
+	gzs = gzio_init(kerneldump_gz_write_cb, GZIO_DEFLATE, di->maxiosize,
+	    kerneldump_gz_level, di);
+	if (gzs == NULL)
+		return (EINVAL);
+	gzbuffer = malloc(di->maxiosize, M_DUMPER, M_WAITOK | M_NODUMP);
+	return (0);
+}
+
+static void
+kerneldump_gz_disable(void)
+{
+
+	if (gzs != NULL) {
+		gzio_fini(gzs);
+		gzs = NULL;
+	}
+	free(gzbuffer, M_DUMPER);
+	gzbuffer = NULL;
+}
+
+static int
+sysctl_kerneldump_gz_toggle(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = *(int *)arg1;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+
+	if (value == 0) {
+		compress_kernel_dumps = 0;
+		kerneldump_gz_disable();
+	} else if (strlen(dumpdevname) > 0) {
+		error = kerneldump_gz_configure(&dumper);
+		if (error == 0)
+			compress_kernel_dumps = 1;
+	} else
+		error = ENXIO;
+
+	return (error);
+}
+#endif /* GZIO */
+
 /* Registration of dumpers */
 int
 set_dumper(struct dumperinfo *di, const char *devname, struct thread *td,
@@ -998,6 +1073,14 @@ set_dumper(struct dumperinfo *di, const char *devname, struct thread *td,
 			devname, dumpdevname);
 	}
 
+#ifdef GZIO
+	if (compress_kernel_dumps) {
+		error = kerneldump_gz_configure(di);
+		if (error != 0)
+			goto cleanup;
+	}
+#endif
+
 	dumper.blockbuf = malloc(di->blocksize, M_DUMPER, M_WAITOK | M_ZERO);
 	return (0);
 cleanup:
@@ -1008,6 +1091,11 @@ cleanup:
 		free(dumper.kdc, M_EKCD);
 	}
 #endif
+
+#ifdef GZIO
+	kerneldump_gz_disable();
+#endif
+
 	if (dumper.blockbuf != NULL) {
 		explicit_bzero(dumper.blockbuf, dumper.blocksize);
 		free(dumper.blockbuf, M_DUMPER);
@@ -1127,6 +1215,30 @@ dump_write_key(struct dumperinfo *di, vm_offset_t physical, off_t offset)
 }
 #endif /* EKCD */
 
+#ifdef GZIO
+static int
+kerneldump_gz_write_cb(void *base, size_t length, off_t offset, void *arg)
+{
+	struct dumperinfo *di;
+
+	di = arg;
+
+	if (dumpoff % di->blocksize != 0)
+		/*
+		 * A previous write caused us to end up at an unaligned offset.
+		 * Only the final gzio flush should cause that, in which case
+		 * we shouldn't be here.
+		 */
+		return (EINVAL);
+
+	return (_dump_write(di, base, 0, roundup(length, di->blocksize)));
+}
+#endif /* GZIO */
+
+/*
+ * Write a kerneldumpheader at the specified offset. The header structure is 512
+ * bytes in size, but we must pad to the device sector size.
+ */
 static int
 dump_write_header(struct dumperinfo *di, struct kerneldumpheader *kdh,
     vm_offset_t physical, off_t offset)
@@ -1159,32 +1271,39 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
 	error = kerneldumpcrypto_init(di->kdc);
 	if (error != 0)
 		return (error);
+#else
+	(void)error;
 #endif
 
-	dumpsize = dtoh64(kdh->dumplength) + 2 * di->blocksize +
-	    kerneldumpcrypto_dumpkeysize(di->kdc);
-	if (di->mediasize < 64 * 1024 + dumpsize)
-		return (E2BIG);
+	dumpsize = dtoh64(kdh->dumplength);
+	if (di->mediasize < 64 * 1024 + dumpsize + 2 * di->blocksize +
+	    kerneldumpcrypto_dumpkeysize(di->kdc)) {
+		if (compress_kernel_dumps) {
+			/*
+			 * We don't yet know how much space the compressed dump
+			 * will occupy, so try to use the whole swap partition
+			 * (minus the first 64KB). If that doesn't turn out to
+			 * be enouch, the bounds checking in dump_raw_write()
+			 * will catch us and fail the dump.
+			 */
+			dumpsize = di->mediasize - 64 * 1024 - 2 * di->blocksize -
+			    kerneldumpcrypto_dumpkeysize(di->kdc);
+			kdh->dumpextent = htod64(dumpsize);
+		} else
+			return (E2BIG);
+	}
 
-	dumpoff = di->mediaoffset + di->mediasize - dumpsize;
-
-	error = dump_write_header(di, kdh, 0, dumpoff);
-	if (error != 0)
-		return (error);
-	dumpoff += di->blocksize;
-
-#ifdef EKCD
-	error = dump_write_key(di, 0, dumpoff);
-	if (error != 0)
-		return (error);
-	dumpoff += kerneldumpcrypto_dumpkeysize(di->kdc);
-#endif
+	/*
+	 * Set the initial offset at which to begin writing the dump.
+	 * This excludes the leading header, and the (optional) key.
+	 */
+	dumpoff = di->mediaoffset + di->mediasize - dumpsize - di->blocksize;
 
 	return (0);
 }
 
-int
-dump_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
+static int
+_dump_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
     size_t length)
 {
 	int error;
@@ -1206,6 +1325,24 @@ dump_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
 }
 
 int
+dump_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
+    size_t length)
+{
+
+#ifdef GZIO
+	if (compress_kernel_dumps) {
+		/*
+		 * Bounce through a buffer to avoid gzip CRC errors. The buffer
+		 * itself was allocated with M_NODUMP.
+		 */
+		memmove(gzbuffer, virtual, length);
+		return (gzio_write(gzs, gzbuffer, length));
+	}
+#endif
+	return (_dump_write(di, virtual, physical, length));
+}
+
+int
 dump_raw_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
     off_t offset, size_t length)
 {
@@ -1221,9 +1358,49 @@ dump_raw_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
 int
 dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh)
 {
+	uint64_t extent;
 	int error;
 
-	error = dump_write_header(di, kdh, 0, dumpoff);
+	extent = dtoh64(kdh->dumpextent);
+
+#ifdef GZIO
+	if (compress_kernel_dumps) {
+		error = gzio_flush(gzs);
+		if (error != 0)
+			return (error);
+
+		/*
+		 * We now know the size of the compressed dump, so update the
+		 * header accordingly and recompute parity.
+		 */
+		kdh->dumplength = htod64(dumpoff -
+		    (di->mediaoffset + di->mediasize - extent - di->blocksize -
+		    kerneldumpcrypto_dumpkeysize(di->kdc)));
+		kdh->parity = 0;
+		kdh->parity = kerneldump_parity(kdh);
+	}
+#endif
+
+	/*
+	 * Write kerneldump headers at the beginning and end of the dump extent.
+	 * Write the key after the leading header.
+	 */
+	error = dump_write_header(di, kdh, 0,
+	    di->mediaoffset + di->mediasize - 2 * di->blocksize - extent -
+	    kerneldumpcrypto_dumpkeysize(di->kdc));
+	if (error != 0)
+		return (error);
+
+#ifdef EKCD
+	error = dump_write_key(di, 0,
+	    di->mediaoffset + di->mediasize - di->blocksize - extent -
+	    kerneldumpcrypto_dumpkeysize(di->kdc));
+	if (error != 0)
+		return (error);
+#endif
+
+	error = dump_write_header(di, kdh, 0,
+	    di->mediaoffset + di->mediasize - di->blocksize);
 	if (error != 0)
 		return (error);
 
@@ -1243,6 +1420,7 @@ mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
 	kdh->version = htod32(KERNELDUMPVERSION);
 	kdh->architectureversion = htod32(archver);
 	kdh->dumplength = htod64(dumplen);
+	kdh->dumpextent = kdh->dumplength;
 	kdh->dumptime = htod64(time_second);
 	kdh->dumpkeysize = htod32(dumpkeysize);
 	kdh->blocksize = htod32(blksz);
@@ -1250,6 +1428,9 @@ mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
 	strlcpy(kdh->versionstring, version, sizeof(kdh->versionstring));
 	if (panicstr != NULL)
 		strlcpy(kdh->panicstring, panicstr, sizeof(kdh->panicstring));
+	kdh->flags = 0;
+	if (compress_kernel_dumps)
+		kdh->flags |= KERNELDUMP_FLAG_COMPRESSED;
 	kdh->parity = kerneldump_parity(kdh);
 }
 
