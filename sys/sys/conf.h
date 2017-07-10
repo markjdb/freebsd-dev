@@ -340,8 +340,8 @@ struct dumperinfo {
 };
 
 int set_dumper(struct dumperinfo *di, const char *devname, struct thread *td,
-    uint8_t encrypt, const uint8_t *key, uint32_t encryptedkeysize,
-    const uint8_t *encryptedkey);
+    bool compress, uint8_t encrypt, const uint8_t *key,
+    uint32_t encryptedkeysize, const uint8_t *encryptedkey);
 int dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh);
 int dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh);
 int dump_write(struct dumperinfo *, void *, vm_offset_t, size_t);
