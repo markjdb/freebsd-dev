@@ -109,22 +109,31 @@ printheader(xo_handle_t *xo, const struct kerneldumpheader *h, const char *devic
 	const char *stat_str;
 
 	xo_flush_h(xo);
-	xo_emit_h(xo, "{Lwc:Dump header from device}{:dump_device/%s}\n", device);
-	xo_emit_h(xo, "{P:  }{Lwc:Architecture}{:architecture/%s}\n", h->architecture);
-	xo_emit_h(xo, "{P:  }{Lwc:Architecture Version}{:architecture_version/%u}\n", dtoh32(h->architectureversion));
+	xo_emit_h(xo, "{Lwc:Dump header from device}{:dump_device/%s}\n",
+	    device);
+	xo_emit_h(xo, "{P:  }{Lwc:Architecture}{:architecture/%s}\n",
+	    h->architecture);
+	xo_emit_h(xo,
+	    "{P:  }{Lwc:Architecture Version}{:architecture_version/%u}\n",
+	    dtoh32(h->architectureversion));
 	dumplen = dtoh64(h->dumplength);
-	xo_emit_h(xo, "{P:  }{Lwc:Dump Length}{:dump_length_bytes/%lld}\n", (long long)dumplen);
-	xo_emit_h(xo, "{P:  }{Lwc:Blocksize}{:blocksize/%d}\n", dtoh32(h->blocksize));
+	xo_emit_h(xo, "{P:  }{Lwc:Dump Length}{:dump_length_bytes/%lld}\n",
+	    (long long)dumplen);
+	xo_emit_h(xo, "{P:  }{Lwc:Blocksize}{:blocksize/%d}\n",
+	    dtoh32(h->blocksize));
+
 	t = dtoh64(h->dumptime);
 	xo_emit_h(xo, "{P:  }{Lwc:Dumptime}{:dumptime/%s}", ctime(&t));
 	xo_emit_h(xo, "{P:  }{Lwc:Hostname}{:hostname/%s}\n", h->hostname);
 	xo_emit_h(xo, "{P:  }{Lwc:Magic}{:magic/%s}\n", h->magic);
-	xo_emit_h(xo, "{P:  }{Lwc:Version String}{:version_string/%s}", h->versionstring);
-	xo_emit_h(xo, "{P:  }{Lwc:Panic String}{:panic_string/%s}\n", h->panicstring);
+	xo_emit_h(xo, "{P:  }{Lwc:Version String}{:version_string/%s}",
+	    h->versionstring);
+	xo_emit_h(xo, "{P:  }{Lwc:Panic String}{:panic_string/%s}\n",
+	    h->panicstring);
 	xo_emit_h(xo, "{P:  }{Lwc:Dump Parity}{:dump_parity/%u}\n", h->parity);
 	xo_emit_h(xo, "{P:  }{Lwc:Bounds}{:bounds/%d}\n", bounds);
 
-	switch(status) {
+	switch (status) {
 	case STATUS_BAD:
 		stat_str = "bad";
 		break;
@@ -133,13 +142,15 @@ printheader(xo_handle_t *xo, const struct kerneldumpheader *h, const char *devic
 		break;
 	default:
 		stat_str = "unknown";
+		break;
 	}
 	xo_emit_h(xo, "{P:  }{Lwc:Dump Status}{:dump_status/%s}\n", stat_str);
 	xo_flush_h(xo);
 }
 
 static int
-getbounds(void) {
+getbounds(void)
+{
 	FILE *fp;
 	char buf[6];
 	int ret;
@@ -170,7 +181,8 @@ getbounds(void) {
 }
 
 static void
-writebounds(int bounds) {
+writebounds(int bounds)
+{
 	FILE *fp;
 
 	if ((fp = fopen("bounds", "w")) == NULL) {
@@ -332,6 +344,13 @@ check_space(const char *savedir, off_t dumpsize, int bounds)
 		syslog(LOG_WARNING,
 		    "dump performed, but free space threshold crossed");
 	return (1);
+}
+
+static bool
+compare_magic(struct kerneldumpheader *kdh, const char *magic)
+{
+
+	return (strncmp(magic, kdh->magic, sizeof(kdh->magic)) == 0);
 }
 
 #define BLOCKSIZE (1<<12)
@@ -564,7 +583,7 @@ DoFile(const char *savedir, const char *device)
 	}
 	memcpy(&kdhl, temp, sizeof(kdhl));
 	istextdump = 0;
-	if (strncmp(kdhl.magic, TEXTDUMPMAGIC, sizeof kdhl) == 0) {
+	if (compare_magic(&kdhl, TEXTDUMPMAGIC)) {
 		if (verbose)
 			printf("textdump magic on last dump header on %s\n",
 			    device);
@@ -578,8 +597,7 @@ DoFile(const char *savedir, const char *device)
 			if (force == 0)
 				goto closefd;
 		}
-	} else if (memcmp(kdhl.magic, KERNELDUMPMAGIC, sizeof kdhl.magic) ==
-	    0) {
+	} else if (compare_magic(&kdhl, KERNELDUMPMAGIC)) {
 		if (dtoh32(kdhl.version) != KERNELDUMPVERSION) {
 			syslog(LOG_ERR,
 			    "unknown version (%d) in last dump header on %s",
@@ -598,8 +616,7 @@ DoFile(const char *savedir, const char *device)
 		if (force == 0)
 			goto closefd;
 
-		if (memcmp(kdhl.magic, KERNELDUMPMAGIC_CLEARED,
-			    sizeof kdhl.magic) == 0) {
+		if (compare_magic(&kdhl, KERNELDUMPMAGIC_CLEARED)) {
 			if (verbose)
 				printf("forcing magic on %s\n", device);
 			memcpy(kdhl.magic, KERNELDUMPMAGIC,
