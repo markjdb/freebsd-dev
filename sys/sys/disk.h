@@ -143,6 +143,7 @@ struct diocgattr_arg {
 
 struct diocskerneldump_arg {
 	uint8_t		 kda_enable;
+	uint8_t		 kda_compress;
 	uint8_t		 kda_encryption;
 	uint8_t		 kda_key[KERNELDUMP_KEY_MAX_SIZE];
 	uint32_t	 kda_encryptedkeysize;

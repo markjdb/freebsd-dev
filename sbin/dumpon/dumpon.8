@@ -37,6 +37,7 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl v
+.Op Fl c
 .Op Fl k Ar public_key_file
 .Ar special_file
 .Nm
@@ -83,6 +84,15 @@ total amount of physical memory as reported by the
 .Va hw.physmem
 .Xr sysctl 8
 variable.
+.Pp
+The
+.Op c
+option configures the kernel to write a compressed dump to the dump device.
+This reduces the amount of space required for the dump.
+When compression is enabled, the
+.Nm
+utility will not verify that the dump device is sufficiently large for a full
+dump.
 .Pp
 The
 .Op Fl k Ar public_key_file

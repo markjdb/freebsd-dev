@@ -3412,6 +3412,16 @@ to decrypt a crash dump after reboot.
 See
 .Xr dumpon 8
 for more details.
+.It Va dumpcompress
+Set to
+.Dq Li YES
+to enable compression of crash dumps before they are written to the
+dump device.
+This allows larger crash dumps to be saved to the dump device, and
+speeds up recovery of crash dumps following a reboot.
+This feature depends on the
+.Dv GZIO
+kernel option.
 .It Va savecore_enable
 .Pq Vt bool
 If set to
