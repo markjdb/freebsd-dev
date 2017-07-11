@@ -76,7 +76,7 @@ struct kerneldumpheader {
 	char		architecture[12];
 	uint32_t	version;
 #define	KERNELDUMPVERSION		3
-#define	KERNELDUMP_TEXT_VERSION		2
+#define	KERNELDUMP_TEXT_VERSION		3
 	uint32_t	architectureversion;
 #define	KERNELDUMP_AARCH64_VERSION	1
 #define	KERNELDUMP_AMD64_VERSION	2
