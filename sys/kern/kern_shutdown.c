@@ -1075,7 +1075,7 @@ set_dumper(struct dumperinfo *di, const char *devname, struct thread *td,
 
 #ifdef GZIO
 	if (compress_kernel_dumps) {
-		error = kerneldump_gz_configure(di);
+		error = kerneldump_gz_configure(&dumper);
 		if (error != 0)
 			goto cleanup;
 	}
