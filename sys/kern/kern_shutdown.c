@@ -1251,6 +1251,7 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
 	dumpsize = dtoh64(kdh->dumplength);
 	if (di->mediasize < 64 * 1024 + dumpsize + 2 * di->blocksize +
 	    kerneldumpcrypto_dumpkeysize(di->kdc)) {
+#ifdef GZIO
 		if (gzs != NULL) {
 			/*
 			 * We don't yet know how much space the compressed dump
@@ -1263,6 +1264,7 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
 			    kerneldumpcrypto_dumpkeysize(di->kdc);
 			kdh->dumpextent = htod64(dumpsize);
 		} else
+#endif
 			return (E2BIG);
 	}
 
