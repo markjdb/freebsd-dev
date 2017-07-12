@@ -165,8 +165,6 @@ struct kerneldumpcrypto {
 };
 #endif
 
-static int compress_kernel_dumps = 0;
-
 #ifdef GZIO
 static struct gzio_stream *gzs;
 static uint8_t *gzbuffer;
@@ -174,16 +172,11 @@ static uint8_t *gzbuffer;
 static int	kerneldump_gz_configure(struct dumperinfo *di);
 static void	kerneldump_gz_disable(void);
 static int	kerneldump_gz_write_cb(void *cb, size_t len, off_t off, void *arg);
-static int	sysctl_kerneldump_gz_toggle(SYSCTL_HANDLER_ARGS);
 
 static int kerneldump_gz_level = 6;
 SYSCTL_INT(_kern, OID_AUTO, kerneldump_gz_level, CTLFLAG_RW,
     &kerneldump_gz_level, 0,
     "Kernel crash dump compression level");
-
-SYSCTL_PROC(_kern, OID_AUTO, compress_kernel_dumps, CTLFLAG_RW | CTLTYPE_INT,
-    &compress_kernel_dumps, 0, sysctl_kerneldump_gz_toggle, "I",
-    "Enable compressed kernel crash dumps");
 #endif /* GZIO */
 
 /*
@@ -1005,36 +998,13 @@ kerneldump_gz_disable(void)
 	free(gzbuffer, M_DUMPER);
 	gzbuffer = NULL;
 }
-
-static int
-sysctl_kerneldump_gz_toggle(SYSCTL_HANDLER_ARGS)
-{
-	int error, value;
-
-	value = *(int *)arg1;
-	error = sysctl_handle_int(oidp, &value, 0, req);
-	if (error != 0 || req->newptr == NULL)
-		return (error);
-
-	if (value == 0) {
-		compress_kernel_dumps = 0;
-		kerneldump_gz_disable();
-	} else if (strlen(dumpdevname) > 0) {
-		error = kerneldump_gz_configure(&dumper);
-		if (error == 0)
-			compress_kernel_dumps = 1;
-	} else
-		error = ENXIO;
-
-	return (error);
-}
 #endif /* GZIO */
 
 /* Registration of dumpers */
 int
 set_dumper(struct dumperinfo *di, const char *devname, struct thread *td,
-    uint8_t encryption, const uint8_t *key, uint32_t encryptedkeysize,
-    const uint8_t *encryptedkey)
+    bool compress, uint8_t encryption, const uint8_t *key,
+    uint32_t encryptedkeysize, const uint8_t *encryptedkey)
 {
 	size_t wantcopy;
 	int error;
@@ -1073,13 +1043,16 @@ set_dumper(struct dumperinfo *di, const char *devname, struct thread *td,
 			devname, dumpdevname);
 	}
 
+	if (compress) {
 #ifdef GZIO
-	if (compress_kernel_dumps) {
 		error = kerneldump_gz_configure(&dumper);
 		if (error != 0)
 			goto cleanup;
-	}
+#else
+		error = EOPNOTSUPP;
+		goto cleanup;
 #endif
+	}
 
 	dumper.blockbuf = malloc(di->blocksize, M_DUMPER, M_WAITOK | M_ZERO);
 	return (0);
@@ -1278,7 +1251,7 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
 	dumpsize = dtoh64(kdh->dumplength);
 	if (di->mediasize < 64 * 1024 + dumpsize + 2 * di->blocksize +
 	    kerneldumpcrypto_dumpkeysize(di->kdc)) {
-		if (compress_kernel_dumps) {
+		if (gzs != NULL) {
 			/*
 			 * We don't yet know how much space the compressed dump
 			 * will occupy, so try to use the whole swap partition
@@ -1330,7 +1303,7 @@ dump_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
 {
 
 #ifdef GZIO
-	if (compress_kernel_dumps) {
+	if (gzs != NULL) {
 		/*
 		 * Bounce through a buffer to avoid gzip CRC errors. The buffer
 		 * itself was allocated with M_NODUMP.
@@ -1364,7 +1337,7 @@ dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh)
 	extent = dtoh64(kdh->dumpextent);
 
 #ifdef GZIO
-	if (compress_kernel_dumps) {
+	if (gzs != NULL) {
 		error = gzio_flush(gzs);
 		if (error != 0)
 			return (error);
@@ -1429,7 +1402,7 @@ mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
 	if (panicstr != NULL)
 		strlcpy(kdh->panicstring, panicstr, sizeof(kdh->panicstring));
 	kdh->flags = 0;
-	if (compress_kernel_dumps)
+	if (gzs != NULL)
 		kdh->flags |= KERNELDUMP_FLAG_COMPRESSED;
 	kdh->parity = kerneldump_parity(kdh);
 }
