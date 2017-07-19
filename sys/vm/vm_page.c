@@ -2726,9 +2726,7 @@ vm_page_activate(vm_page_t m)
 			if (queue != PQ_NONE)
 				vm_page_dequeue(m);
 			vm_page_enqueue(PQ_ACTIVE, m);
-		} else
-			KASSERT(queue == PQ_NONE,
-			    ("vm_page_activate: wired page %p is queued", m));
+		}
 	} else {
 		if (m->act_count < ACT_INIT)
 			m->act_count = ACT_INIT;
@@ -2846,9 +2844,7 @@ vm_page_free_toq(vm_page_t m)
 /*
  *	vm_page_wire:
  *
- *	Mark this page as wired down by yet
- *	another map, removing it from paging queues
- *	as necessary.
+ *	Mark this page as wired down by yet another map.
  *
  *	If the page is fictitious, then its wire count must remain one.
  *
@@ -2858,11 +2854,6 @@ void
 vm_page_wire(vm_page_t m)
 {
 
-	/*
-	 * Only bump the wire statistics if the page is not already wired,
-	 * and only unqueue the page if it is on some queue (if it is unmanaged
-	 * it is already off the queues).
-	 */
 	vm_page_lock_assert(m, MA_OWNED);
 	if ((m->flags & PG_FICTITIOUS) != 0) {
 		KASSERT(m->wire_count == 1,
@@ -2874,11 +2865,11 @@ vm_page_wire(vm_page_t m)
 		KASSERT((m->oflags & VPO_UNMANAGED) == 0 ||
 		    m->queue == PQ_NONE,
 		    ("vm_page_wire: unmanaged page %p is queued", m));
-		vm_page_remque(m);
 		atomic_add_int(&vm_cnt.v_wire_count, 1);
 	}
 	m->wire_count++;
-	KASSERT(m->wire_count != 0, ("vm_page_wire: wire_count overflow m=%p", m));
+	if (m->wire_count == 0)
+		panic("vm_page_wire: wire_count overflow m=%p", m);
 }
 
 /*
@@ -2911,18 +2902,24 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 	    ("vm_page_unwire: fictitious page %p's wire count isn't one", m));
 		return (FALSE);
 	}
-	if (m->wire_count > 0) {
-		m->wire_count--;
-		if (m->wire_count == 0) {
-			atomic_subtract_int(&vm_cnt.v_wire_count, 1);
-			if ((m->oflags & VPO_UNMANAGED) == 0 &&
-			    m->object != NULL && queue != PQ_NONE)
-				vm_page_enqueue(queue, m);
-			return (TRUE);
-		} else
-			return (FALSE);
-	} else
+	if (m->wire_count == 0)
 		panic("vm_page_unwire: page %p's wire count is zero", m);
+
+	m->wire_count--;
+	if (m->wire_count == 0) {
+		atomic_subtract_int(&vm_cnt.v_wire_count, 1);
+		if ((m->oflags & VPO_UNMANAGED) == 0 && m->object != NULL &&
+		    queue != PQ_NONE) {
+			if (m->queue == queue)
+				vm_page_requeue(m);
+			else {
+				vm_page_remque(m);
+				vm_page_enqueue(queue, m);
+			}
+		}
+		return (TRUE);
+	} else
+		return (FALSE);
 }
 
 /*
