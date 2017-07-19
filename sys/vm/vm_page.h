@@ -109,6 +109,22 @@
  *	contains the dirty field.  In the machine-independent layer,
  *	the implementation of read-modify-write operations on the
  *	field is encapsulated in vm_page_clear_dirty_mask().
+ *
+ *	Two types of page structure references exist: holds and wires.
+ *	Holds are short-term references which prevent the page from being freed
+ *	and reused for another purpose.  However, it is legal to call
+ *	vm_page_free() on a held page, in which case the page will be removed
+ *	from its paging queue (if any) and its object (if any).  Wires are
+ *	stronger references which indicate that the page's contents are in use.
+ *	It is not legal to call vm_page_free() on a wired page.  When releasing
+ *	the last wiring of a page, that page may optionally be inserted at the
+ *	tail of a paging queue.  If the page already belongs to that queue, it
+ *	is requeued to preserve LRU.  Both holds and wires prevent pages from
+ *	being examined by the page daemon.
+ *
+ *	The wire count field of the page structure has a different meaning for
+ *	page table pages on some architectures: it records the number of valid
+ *	entries in the page.
  */
 
 #if PAGE_SIZE == 4096
