@@ -340,7 +340,7 @@ struct uma_zone {
 	uint16_t	uz_count;	/* Amount of items in full bucket */
 	uint16_t	uz_count_min;	/* Minimal amount of items there */
 
-	struct vm_domain_policy *uz_sel; /* Domain memory selector. */ /* XXX */
+	struct vm_domain_iterator *uz_sel; /* Domain selector. */
 
 	/* The next two fields are used to print a rate-limited warnings. */
 	const char	*uz_warning;	/* Warning to print on failure */

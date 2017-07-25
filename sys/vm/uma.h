@@ -45,7 +45,7 @@
 /* Types and type defs */
 
 struct uma_zone;
-struct vm_domain_policy;
+struct vm_domain_iterator;
 /* Opaque type used as a handle to the zone */
 typedef struct uma_zone * uma_zone_t;
 
@@ -604,7 +604,7 @@ void uma_zone_set_freef(uma_zone_t zone, uma_free freef);
  *	Nothing
  */
 void uma_zone_set_domain_selector(uma_zone_t zone,
-    struct vm_domain_policy *sel);
+    struct vm_domain_iterator *sel);
 
 /*
  * These flags are setable in the allocf and visible in the freef.

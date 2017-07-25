@@ -1540,7 +1540,24 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 vm_page_t
 vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 {
-#if VM_NUMA_ALLOC
+#ifdef VM_NUMA_ALLOC
+	struct vm_domain_iterator vi, *vip;
+	vm_page_t m;
+	int domain, i;
+
+	if (object != NULL)
+		vip = &object->selector;
+	else {
+		vip = &vi;
+		vm_domain_iterator_set_policy(vip, vm_default_policy);
+	}
+
+	for (i = 0, domain = vm_domain_select_first(vip);
+	    i < vm_ndomains && domain != -1;
+	    i++, domain = vm_domain_select_next(vip, domain))
+		if ((m = vm_page_alloc_domain(object, pindex, domain,
+		    req)) != NULL)
+			return (m);
 	return (NULL);
 #else
 	return (vm_page_alloc_domain(object, pindex, 0, req));
@@ -1736,6 +1753,24 @@ vm_page_alloc_contig(vm_object_t object, vm_pindex_t pindex, int req,
     vm_paddr_t boundary, vm_memattr_t memattr)
 {
 #ifdef VM_NUMA_ALLOC
+	struct vm_domain_iterator vi, *vip;
+	vm_page_t m;
+	int domain, i;
+
+	if (object != NULL)
+		vip = &object->selector;
+	else {
+		vip = &vi;
+		vm_domain_iterator_set_policy(vip, vm_default_policy);
+	}
+
+	for (i = 0, domain = vm_domain_select_first(vip);
+	    i < vm_ndomains && domain != -1;
+	    i++, domain = vm_domain_select_next(vip, domain))
+		if ((m = vm_page_alloc_contig_domain(object, pindex, domain,
+		    req, npages, low, high, alignment, boundary,
+		    memattr)) != NULL)
+			return (m);
 	return (NULL);
 #else
 	return (vm_page_alloc_contig_domain(object, pindex, 0, req, npages,

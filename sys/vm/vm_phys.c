@@ -156,13 +156,15 @@ static struct mtx vm_default_policy_mtx;
 MTX_SYSINIT(vm_default_policy, &vm_default_policy_mtx, "default policy mutex",
     MTX_DEF);
 #ifdef VM_NUMA_ALLOC
-static struct vm_domain_policy vm_default_policy =
+static struct vm_domain_policy vm_default_policy_storage =
     VM_DOMAIN_POLICY_STATIC_INITIALISER(VM_POLICY_FIRST_TOUCH_ROUND_ROBIN, 0);
 #else
 /* Use round-robin so the domain policy code will only try once per allocation */
-static struct vm_domain_policy vm_default_policy =
+static struct vm_domain_policy vm_default_policy_storage =
     VM_DOMAIN_POLICY_STATIC_INITIALISER(VM_POLICY_ROUND_ROBIN, 0);
 #endif
+
+struct vm_domain_policy *vm_default_policy = &vm_default_policy_storage;
 
 static vm_page_t vm_phys_alloc_seg_contig(struct vm_phys_seg *seg,
     u_long npages, vm_paddr_t low, vm_paddr_t high, u_long alignment,
@@ -182,7 +184,7 @@ sysctl_vm_default_policy(SYSCTL_HANDLER_ARGS)
 	mtx_lock(&vm_default_policy_mtx);
 
 	/* Map policy to output string */
-	switch (vm_default_policy.p.policy) {
+	switch (vm_default_policy->p.policy) {
 	case VM_POLICY_FIRST_TOUCH:
 		strcpy(policy_name, "first-touch");
 		break;
@@ -204,13 +206,13 @@ sysctl_vm_default_policy(SYSCTL_HANDLER_ARGS)
 	mtx_lock(&vm_default_policy_mtx);
 	/* Set: match on the subset of policies that make sense as a default */
 	if (strcmp("first-touch-rr", policy_name) == 0) {
-		vm_domain_policy_set(&vm_default_policy,
+		vm_domain_policy_set(vm_default_policy,
 		    VM_POLICY_FIRST_TOUCH_ROUND_ROBIN, 0);
 	} else if (strcmp("first-touch", policy_name) == 0) {
-		vm_domain_policy_set(&vm_default_policy,
+		vm_domain_policy_set(vm_default_policy,
 		    VM_POLICY_FIRST_TOUCH, 0);
 	} else if (strcmp("rr", policy_name) == 0) {
-		vm_domain_policy_set(&vm_default_policy,
+		vm_domain_policy_set(vm_default_policy,
 		    VM_POLICY_ROUND_ROBIN, 0);
 	} else {
 		error = EINVAL;
@@ -306,7 +308,7 @@ vm_policy_iterator_init(struct vm_domain_iterator *vi)
 	}
 #endif
 	/* Use system default policy */
-	vm_domain_iterator_set_policy(vi, &vm_default_policy);
+	vm_domain_iterator_set_policy(vi, vm_default_policy);
 }
 
 static void
