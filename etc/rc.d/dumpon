@@ -18,11 +18,10 @@ dumpon_try()
 {
 	local flags
 
+	flags=${dumpon_flags}
 	if [ -n "${dumppubkey}" ]; then
+		warn "The dumppubkey variable is deprecated.  Use dumpon_flags."
 		flags="${flags} -k ${dumppubkey}"
-	fi
-	if checkyesno dumpcompress; then
-		flags="${flags} -c"
 	fi
 	/sbin/dumpon ${flags} "${1}"
 	if [ $? -eq 0 ]; then
