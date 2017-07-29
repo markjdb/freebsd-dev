@@ -86,8 +86,8 @@ struct kerneldumpheader {
 #define	KERNELDUMP_POWERPC_VERSION	1
 #define	KERNELDUMP_RISCV_VERSION	1
 #define	KERNELDUMP_SPARC64_VERSION	1
-	uint64_t	dumplength;		/* excl headers; compressed */
-	uint64_t	dumpextent;		/* space between headers */
+	uint64_t	dumplength;
+	uint64_t	dumpextent;
 	uint64_t	dumptime;
 	uint32_t	dumpkeysize;
 	uint32_t	blocksize;

@@ -28,7 +28,7 @@
 .\"     From: @(#)swapon.8	8.1 (Berkeley) 6/5/93
 .\" $FreeBSD$
 .\"
-.Dd December 10, 2016
+.Dd July 29, 2017
 .Dt DUMPON 8
 .Os
 .Sh NAME
@@ -93,6 +93,14 @@ When compression is enabled, the
 .Nm
 utility will not verify that the dump device is sufficiently large for a full
 dump.
+Currently the
+.Op c
+and
+.Op k
+options can not be combined.
+This feature depends on the
+.Dv GZIO
+kernel option.
 .Pp
 The
 .Op Fl k Ar public_key_file

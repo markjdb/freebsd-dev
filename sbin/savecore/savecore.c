@@ -732,7 +732,6 @@ DoFile(const char *savedir, const char *device)
 		    (isencrypted ? "vmcore_encrypted" : "vmcore"), bounds);
 		fp = zopen(corename, "w");
 	} else if (iscompressed && !isencrypted) {
-		/* We compress before encrypting. */
 		snprintf(corename, sizeof(corename), "vmcore.%d.gz", bounds);
 		fp = fopen(corename, "w");
 	} else {
@@ -834,7 +833,7 @@ DoFile(const char *savedir, const char *device)
 			    "key.last");
 		}
 	}
-	if (compress || (iscompressed && !isencrypted)) {
+	if (compress || iscompressed) {
 		snprintf(linkname, sizeof(linkname), "%s.last.gz",
 		    istextdump ? "textdump.tar" :
 		    (isencrypted ? "vmcore_encrypted" : "vmcore"));

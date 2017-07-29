@@ -173,7 +173,7 @@ static void	kerneldump_gz_disable(void);
 static int	kerneldump_gz_write_cb(void *cb, size_t len, off_t off, void *arg);
 
 static int kerneldump_gz_level = 6;
-SYSCTL_INT(_kern, OID_AUTO, kerneldump_gz_level, CTLFLAG_RW,
+SYSCTL_INT(_kern, OID_AUTO, kerneldump_gz_level, CTLFLAG_RWTUN,
     &kerneldump_gz_level, 0,
     "Kernel crash dump compression level");
 #endif /* GZIO */
@@ -1238,6 +1238,18 @@ dump_write_header(struct dumperinfo *di, struct kerneldumpheader *kdh,
 /*
  * Do some preliminary setup for a kernel dump: initialize state for encryption,
  * if requested, and make sure that we have enough space on the dump device.
+ *
+ * We set things up so that the dump ends before the last sector of the dump
+ * device, at which the trailing header is written.
+ *
+ *     +-----------+------+-----+----------------------------+------+
+ *     |           | lhdr | key |    ... kernel dump ...     | thdr |
+ *     +-----------+------+-----+----------------------------+------+
+ *                   1 blk  opt <------- dump extent --------> 1 blk
+ *
+ * Dumps are written starting at the beginning of the extent. Uncompressed
+ * dumps will use the entire extent, but compressed dumps typically will not.
+ * The true length of the dump is recorded in the leading and trailing headers.
  */
 int
 dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
@@ -1275,11 +1287,9 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
 			return (E2BIG);
 	}
 
-	/*
-	 * Set the initial offset at which to begin writing the dump.
-	 * This excludes the leading header, and the (optional) key.
-	 */
-	di->dumpoff = di->mediaoffset + di->mediasize - dumpextent - di->blocksize;
+	/* The offset at which to begin writing the dump. */
+	di->dumpoff = di->mediaoffset + di->mediasize - di->blocksize -
+	    dumpextent;
 
 	di->resid = 0;
 
@@ -1380,7 +1390,7 @@ dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh)
 		 * header accordingly and recompute parity.
 		 */
 		kdh->dumplength = htod64(di->dumpoff -
-		    (di->mediaoffset + di->mediasize - extent - di->blocksize));
+		    (di->mediaoffset + di->mediasize - di->blocksize - extent));
 		kdh->parity = 0;
 		kdh->parity = kerneldump_parity(kdh);
 	}
