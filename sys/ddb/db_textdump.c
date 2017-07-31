@@ -78,12 +78,6 @@ static SYSCTL_NODE(_debug_ddb, OID_AUTO, textdump, CTLFLAG_RW, 0,
     "DDB textdump options");
 
 /*
- * Don't touch the first SIZEOF_METADATA bytes on the dump device.  This is
- * to protect us from metadata and metadata from us.
- */
-#define	SIZEOF_METADATA		(64*1024)
-
-/*
  * Data is written out as a series of files in the ustar tar format.  ustar
  * is a simple streamed format consiting of a series of files prefixed with
  * headers, and all padded to 512-byte block boundaries, which maps
@@ -243,7 +237,7 @@ textdump_writeblock(struct dumperinfo *di, off_t offset, char *buffer)
 		return (textdump_error);
 	if (offset + TEXTDUMP_BLOCKSIZE > di->mediasize)
 		return (EIO);
-	if (offset < SIZEOF_METADATA)
+	if (offset < KERNELDUMP_METADATA_SIZE)
 		return (ENOSPC);
 	textdump_error = dump_write(di, buffer, 0, offset + di->mediaoffset,
 	    TEXTDUMP_BLOCKSIZE);
@@ -443,7 +437,7 @@ textdump_dumpsys(struct dumperinfo *di)
 	 * dump headers.  Also leave room for one ustar header and one block
 	 * of data.
 	 */
-	if (di->mediasize < SIZEOF_METADATA + 2 * sizeof(kdh)) {
+	if (di->mediasize < KERNELDUMP_METADATA_SIZE + 2 * sizeof(kdh)) {
 		printf("Insufficient space on dump partition for minimal textdump.\n");
 		return;
 	}

@@ -1212,12 +1212,6 @@ dump_write_key(struct dumperinfo *di, vm_offset_t physical, off_t offset)
 }
 
 /*
- * Don't touch the first SIZEOF_METADATA bytes on the dump device.  This is to
- * protect us from metadata and metadata from us.
- */
-#define	SIZEOF_METADATA		(64 * 1024)
-
-/*
  * Do some preliminary setup for a kernel dump: verify that we have enough space
  * on the dump device, write the leading header, and optionally write the crypto
  * key.
@@ -1226,6 +1220,7 @@ int
 dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t *dumplop)
 {
 	uint64_t dumpsize;
+	off_t dumplo;
 	int error;
 
 	error = kerneldumpcrypto_init(di->kdc);
@@ -1234,20 +1229,22 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t *dumplop)
 
 	dumpsize = dtoh64(kdh->dumplength) + 2 * di->blocksize +
 	    kerneldumpcrypto_dumpkeysize(di->kdc);
-	if (di->mediasize < SIZEOF_METADATA + dumpsize)
-		return (ENOSPC);
+	if (di->mediasize < KERNELDUMP_METADATA_SIZE + dumpsize)
+		return (E2BIG);
 
-	*dumplop = di->mediaoffset + di->mediasize - dumpsize;
+	dumplo = di->mediaoffset + di->mediasize - dumpsize;
 
-	error = dump_write_header(di, kdh, 0, *dumplop);
+	error = dump_write_header(di, kdh, 0, dumplo);
 	if (error != 0)
 		return (error);
-	*dumplop += di->blocksize;
+	dumplo += di->blocksize;
 
-	error = dump_write_key(di, 0, *dumplop);
+	error = dump_write_key(di, 0, dumplo);
 	if (error != 0)
 		return (error);
-	*dumplop += kerneldumpcrypto_dumpkeysize(di->kdc);
+	dumplo += kerneldumpcrypto_dumpkeysize(di->kdc);
+
+	*dumplop = dumplo;
 
 	return (0);
 }
