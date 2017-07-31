@@ -1235,7 +1235,7 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t *dumplop)
 	dumpsize = dtoh64(kdh->dumplength) + 2 * di->blocksize +
 	    kerneldumpcrypto_dumpkeysize(di->kdc);
 	if (di->mediasize < SIZEOF_METADATA + dumpsize)
-		return (ENOSPC);
+		return (E2BIG);
 
 	*dumplop = di->mediaoffset + di->mediasize - dumpsize;
 
