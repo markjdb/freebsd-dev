@@ -1709,12 +1709,14 @@ static __inline void
 pmap_free_zero_pages(struct spglist *free)
 {
 	vm_page_t m;
+	int count;
 
-	while ((m = SLIST_FIRST(free)) != NULL) {
+	for (count = 0; (m = SLIST_FIRST(free)) != NULL; count++) {
 		SLIST_REMOVE_HEAD(free, plinks.s.ss);
 		/* Preserve the page's PG_ZERO setting. */
 		vm_page_free_toq(m);
 	}
+	atomic_subtract_int(&vm_cnt.v_wire_count, count);
 }
 
 /*
@@ -1790,12 +1792,6 @@ _pmap_unwire_ptp(pmap_t pmap, vm_page_t m, struct spglist *free)
 	 */
 	pmap->pm_pdir[m->pindex] = 0;
 	--pmap->pm_stats.resident_count;
-
-	/*
-	 * Ensure that the ordinary store unmapping the page table page is
-	 * globally visible before TLB shootdown is begun.
-	 */
-	atomic_thread_fence_rel();
 
 	/*
 	 * Do an invltlb to make the invalidated mapping

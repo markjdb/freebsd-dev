@@ -2211,12 +2211,10 @@ pmap_free_zero_pages(struct spglist *free)
 	vm_page_t m;
 	int count;
 
-	count = 0;
-	while ((m = SLIST_FIRST(free)) != NULL) {
+	for (count = 0; (m = SLIST_FIRST(free)) != NULL; count++) {
 		SLIST_REMOVE_HEAD(free, plinks.s.ss);
 		/* Preserve the page's PG_ZERO setting. */
 		vm_page_free_toq(m);
-		count++;
 	}
 	atomic_subtract_int(&vm_cnt.v_wire_count, count);
 }
@@ -2323,12 +2321,6 @@ _pmap_unwire_ptp(pmap_t pmap, vm_offset_t va, vm_page_t m, struct spglist *free)
 		pdppg = PHYS_TO_VM_PAGE(*pmap_pml4e(pmap, va) & PG_FRAME);
 		pmap_unwire_ptp(pmap, va, pdppg, free);
 	}
-
-	/*
-	 * Ensure that the ordinary store unmapping the page table page is
-	 * globally visible before TLB shootdown is begun.
-	 */
-	atomic_thread_fence_rel();
 
 	/* 
 	 * Put page on a list so that it is released after
