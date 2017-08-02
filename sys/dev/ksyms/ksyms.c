@@ -68,14 +68,12 @@
 
 static d_open_t ksyms_open;
 static d_read_t ksyms_read;
-static d_close_t ksyms_close;
 static d_mmap_single_t ksyms_mmap_single;
 
 static struct cdevsw ksyms_cdevsw = {
 	.d_version =	D_VERSION,
 	.d_flags =	D_TRACKCLOSE,
 	.d_open =	ksyms_open,
-	.d_close =	ksyms_close,
 	.d_read =	ksyms_read,
 	.d_mmap_single = ksyms_mmap_single,
 	.d_name =	KSYMS_DNAME
@@ -160,9 +158,6 @@ ksyms_emit(struct ksyms_softc *sc, void *buf, off_t off, size_t sz)
 {
 	struct iovec iov;
 	struct uio uio;
-
-	if (sz > SSIZE_MAX)
-		return (EINVAL);
 
 	iov.iov_base = buf;
 	iov.iov_len = sz;
@@ -495,14 +490,6 @@ ksyms_mmap_single(struct cdev *dev, vm_ooffset_t *offset, vm_size_t size,
 	obj = sc->sc_obj;
 	vm_object_reference(obj);
 	*objp = obj;
-	return (0);
-}
-
-static int
-ksyms_close(struct cdev *dev, int flags __unused, int fmt __unused,
-    struct thread *td)
-{
-
 	return (0);
 }
 
