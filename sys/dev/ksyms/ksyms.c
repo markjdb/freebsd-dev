@@ -32,7 +32,6 @@
 
 #include <sys/conf.h>
 #include <sys/elf.h>
-#include <sys/ksyms.h>
 #include <sys/linker.h>
 #include <sys/malloc.h>
 #include <sys/mman.h>
@@ -70,7 +69,6 @@
 static d_open_t ksyms_open;
 static d_read_t ksyms_read;
 static d_close_t ksyms_close;
-static d_ioctl_t ksyms_ioctl;
 static d_mmap_single_t ksyms_mmap_single;
 
 static struct cdevsw ksyms_cdevsw = {
@@ -79,7 +77,6 @@ static struct cdevsw ksyms_cdevsw = {
 	.d_open =	ksyms_open,
 	.d_close =	ksyms_close,
 	.d_read =	ksyms_read,
-	.d_ioctl =	ksyms_ioctl,
 	.d_mmap_single = ksyms_mmap_single,
 	.d_name =	KSYMS_DNAME
 };
@@ -89,6 +86,7 @@ struct ksyms_softc {
 	vm_offset_t		sc_uaddr;
 	size_t			sc_usize;
 	vm_object_t		sc_obj;
+	vm_size_t		sc_objsz;
 	struct proc	       *sc_proc;
 };
 
@@ -113,6 +111,7 @@ struct tsizes {
 };
 
 struct toffsets {
+	struct ksyms_softc *to_sc;
 	vm_offset_t	to_symoff;
 	vm_offset_t	to_stroff;
 	unsigned	to_stridx;
@@ -156,10 +155,27 @@ ksyms_size_calc(struct tsizes *ts)
 	(void)linker_file_foreach(ksyms_size_permod, ts);
 }
 
-#define KSYMS_EMIT(src, des, sz) do {			\
-	error = copyout(src, (void *)des, sz);		\
-	des += sz;					\
-} while (0)
+static int
+ksyms_emit(struct ksyms_softc *sc, void *buf, off_t off, size_t sz)
+{
+	struct iovec iov;
+	struct uio uio;
+
+	if (sz > SSIZE_MAX)
+		return (EINVAL);
+
+	iov.iov_base = buf;
+	iov.iov_len = sz;
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_offset = off;
+	uio.uio_resid = (ssize_t)sz;
+	uio.uio_segflg = UIO_SYSSPACE;
+	uio.uio_rw = UIO_WRITE;
+	uio.uio_td = curthread;
+
+	return (uiomove_object(sc->sc_obj, sc->sc_objsz, &uio));
+}
 
 #define SYMBLKSZ	(256 * sizeof(Elf_Sym))
 
@@ -171,24 +187,23 @@ static int
 ksyms_add(linker_file_t lf, void *arg)
 {
 	char *buf;
+	struct ksyms_softc *sc;
 	struct toffsets *to;
 	const Elf_Sym *symtab;
 	Elf_Sym *symp;
 	caddr_t strtab;
-	long symsz;
-	size_t strsz, numsyms;
+	size_t len, numsyms, strsz, symsz;
 	linker_symval_t symval;
-	int error, i, nsyms, len;
+	int error, i, nsyms;
 
-	error = 0;
+	buf = malloc(SYMBLKSZ, M_KSYMS, M_WAITOK);
 	to = arg;
+	sc = to->to_sc;
 
 	MOD_SLOCK;
 	numsyms =  LINKER_SYMTAB_GET(lf, &symtab);
 	strsz = LINKER_STRTAB_GET(lf, &strtab);
 	symsz = numsyms * sizeof(Elf_Sym);
-
-	buf = malloc(SYMBLKSZ, M_KSYMS, M_WAITOK);
 
 	while (symsz > 0) {
 		len = min(SYMBLKSZ, symsz);
@@ -215,7 +230,8 @@ ksyms_add(linker_file_t lf, void *arg)
 			return (ENXIO);
 		}
 		to->to_resid -= len;
-		KSYMS_EMIT(buf, to->to_symoff, len);
+		error = ksyms_emit(sc, buf, to->to_symoff, len);
+		to->to_symoff += len;
 		if (error != 0) {
 			MOD_SUNLOCK;
 			free(buf, M_KSYMS);
@@ -231,7 +247,8 @@ ksyms_add(linker_file_t lf, void *arg)
 	if (strsz > to->to_resid)
 		return (ENXIO);
 	to->to_resid -= strsz;
-	KSYMS_EMIT(strtab, to->to_stroff, strsz);
+	error = ksyms_emit(sc, strtab, to->to_stroff, strsz);
+	to->to_stroff += strsz;
 	to->to_stridx += strsz;
 
 	return (error);
@@ -243,11 +260,13 @@ ksyms_add(linker_file_t lf, void *arg)
  * 0 on success, otherwise error.
  */
 static int
-ksyms_snapshot(struct tsizes *ts, vm_offset_t uaddr, size_t resid)
+ksyms_snapshot(struct ksyms_softc *sc, struct tsizes *ts)
 {
-	struct ksyms_hdr *hdr;
+	struct iovec iov;
 	struct toffsets	to;
-	int error = 0;
+	struct uio uio;
+	struct ksyms_hdr *hdr;
+	int error;
 
 	hdr = malloc(sizeof(*hdr), M_KSYMS, M_WAITOK | M_ZERO);
 
@@ -341,28 +360,34 @@ ksyms_snapshot(struct tsizes *ts, vm_offset_t uaddr, size_t resid)
 	/* Copy shstrtab into the header. */
 	bcopy(ksyms_shstrtab, hdr->kh_shstrtab, sizeof(ksyms_shstrtab));
 
-	to.to_symoff = uaddr + hdr->kh_shdr[SHDR_SYMTAB].sh_offset;
-	to.to_stroff = uaddr + hdr->kh_shdr[SHDR_STRTAB].sh_offset;
+	to.to_sc = sc;
+	to.to_symoff = hdr->kh_shdr[SHDR_SYMTAB].sh_offset;
+	to.to_stroff = hdr->kh_shdr[SHDR_STRTAB].sh_offset;
 	to.to_stridx = 0;
-	if (sizeof(struct ksyms_hdr) > resid) {
-		free(hdr, M_KSYMS);
-		return (ENXIO);
-	}
-	to.to_resid = resid - sizeof(struct ksyms_hdr);
+	to.to_resid = sc->sc_objsz - sizeof(struct ksyms_hdr);
 
 	/* emit header */
-	error = copyout(hdr, (void *)uaddr, sizeof(struct ksyms_hdr));
+	iov.iov_base = hdr;
+	iov.iov_len = sizeof(*hdr);
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_offset = 0;
+	uio.uio_resid = sizeof(*hdr);
+	uio.uio_segflg = UIO_SYSSPACE;
+	uio.uio_rw = UIO_WRITE;
+	uio.uio_td = curthread;
+	error = uiomove_object(sc->sc_obj, sc->sc_objsz, &uio);
 	free(hdr, M_KSYMS);
 	if (error != 0)
 		return (error);
 
 	/* Add symbol and string tables for each kernel module. */
 	error = linker_file_foreach(ksyms_add, &to);
-
+	if (error != 0)
+		return (error);
 	if (to.to_resid != 0)
 		return (ENXIO);
-
-	return (error);
+	return (0);
 }
 
 static void
@@ -387,8 +412,7 @@ ksyms_open(struct cdev *dev, int flags, int fmt __unused, struct thread *td)
 {
 	struct tsizes ts;
 	struct ksyms_softc *sc;
-	vm_map_t map;
-	size_t total_elf_sz;
+	vm_size_t elfsz;
 	int error, try;
 
 	/*
@@ -414,8 +438,6 @@ ksyms_open(struct cdev *dev, int flags, int fmt __unused, struct thread *td)
 		return (error);
 	}
 
-	map = &td->td_proc->p_vmspace->vm_map;
-
 	/*
 	 * MOD_SLOCK doesn't work here (because of a lock reversal with
 	 * KLD_SLOCK).  Therefore, simply try up to 3 times to get a "clean"
@@ -424,39 +446,19 @@ ksyms_open(struct cdev *dev, int flags, int fmt __unused, struct thread *td)
 	 * time.
 	 */
 	for (try = 0; try < 3; try++) {
-		/*
-		 * Map a buffer in the calling process memory space and
-		 * create a snapshot of the kernel symbol table in it.
-		 */
-
-		/* Compute the size of buffer needed. */
 		ksyms_size_calc(&ts);
-		total_elf_sz = sizeof(struct ksyms_hdr) + ts.ts_symsz +
-		    ts.ts_strsz;
+		elfsz = sizeof(struct ksyms_hdr) + ts.ts_symsz + ts.ts_strsz;
 
 		sc->sc_obj = vm_object_allocate(OBJT_DEFAULT,
-		    OFF_TO_IDX(round_page(total_elf_sz)));
-		vm_object_reference(sc->sc_obj);
-		error = vm_mmap_object(map, &sc->sc_uaddr,
-		    round_page(total_elf_sz), PROT_READ | PROT_WRITE,
-		    PROT_READ | PROT_WRITE, MAP_SHARED, sc->sc_obj, 0, FALSE,
-		    td);
-		if (error != 0)
-			break;
-		sc->sc_usize = total_elf_sz;
+		    OFF_TO_IDX(round_page(elfsz)));
+		sc->sc_objsz = elfsz;
 
-		error = ksyms_snapshot(&ts, sc->sc_uaddr, total_elf_sz);
+		error = ksyms_snapshot(sc, &ts);
 		if (error == 0)
-			/* successful snapshot */
-			return (0);
+			break;
 
-		/* Snapshot failed, unmap the memory and try again. */
-		error = vm_map_remove(map, sc->sc_uaddr,
-		    sc->sc_uaddr + round_page(sc->sc_usize));
 		vm_object_deallocate(sc->sc_obj);
 		sc->sc_obj = NULL;
-		if (error != 0)
-			break;
 	}
 	return (error);
 }
@@ -465,84 +467,12 @@ static int
 ksyms_read(struct cdev *dev, struct uio *uio, int flags __unused)
 {
 	struct ksyms_softc *sc;
-	char *buf;
-	off_t off;
-	size_t len, sz;
-	vm_size_t ubase;
 	int error;
 
 	error = devfs_get_cdevpriv((void **)&sc);
 	if (error != 0)
 		return (error);
-
-	off = uio->uio_offset;
-	len = uio->uio_resid;
-
-	if (off < 0 || off > sc->sc_usize)
-		return (EFAULT);
-
-	if (len > sc->sc_usize - off)
-		len = sc->sc_usize - off;
-	if (len == 0)
-		return (0);
-
-	/*
-	 * Since the snapshot buffer is in the user space we have to copy it
-	 * in to the kernel and then back out.  The extra copy saves valuable
-	 * kernel memory.
-	 */
-	buf = malloc(PAGE_SIZE, M_KSYMS, M_WAITOK);
-	ubase = sc->sc_uaddr + off;
-
-	while (len) {
-		sz = min(PAGE_SIZE, len);
-		if (copyin((void *)ubase, buf, sz) != 0)
-			error = EFAULT;
-		else
-			error = uiomove(buf, sz, uio);
-		if (error != 0)
-			break;
-
-		len -= sz;
-		ubase += sz;
-	}
-	free(buf, M_KSYMS);
-
-	return (error);
-}
-
-static int
-ksyms_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int32_t flag __unused,
-    struct thread *td __unused)
-{
-	struct ksyms_softc *sc;
-	int error;
-
-	error = devfs_get_cdevpriv((void **)&sc);
-	if (error != 0)
-		return (error);
-
-	switch (cmd) {
-	case KIOCGSIZE:
-		/*
-		 * Return the size (in bytes) of the symbol table
-		 * snapshot.
-		 */
-		*(size_t *)data = sc->sc_usize;
-		break;
-	case KIOCGADDR:
-		/*
-		 * Return the address of the symbol table snapshot.
-		 * XXX - compat32 version of this?
-		 */
-		*(void **)data = (void *)sc->sc_uaddr;
-		break;
-	default:
-		error = ENOTTY;
-		break;
-	}
-
-	return (error);
+	return (uiomove_object(sc->sc_obj, sc->sc_objsz, uio));
 }
 
 static int
@@ -557,7 +487,8 @@ ksyms_mmap_single(struct cdev *dev, vm_ooffset_t *offset, vm_size_t size,
 	if (error != 0)
 		return (error);
 
-	if (*offset < 0 || *offset + size > round_page(sc->sc_usize) ||
+	if (*offset < 0 || *offset >= round_page(sc->sc_objsz) ||
+	    size > round_page(sc->sc_objsz) - *offset ||
 	    (nprot & ~PROT_READ) != 0)
 		return (EINVAL);
 
@@ -571,15 +502,7 @@ static int
 ksyms_close(struct cdev *dev, int flags __unused, int fmt __unused,
     struct thread *td)
 {
-	struct ksyms_softc *sc;
-	int error;
-	
-	error = devfs_get_cdevpriv((void **)&sc);
-	if (error != 0)
-		return (error);
 
-	(void)vm_map_remove(&td->td_proc->p_vmspace->vm_map,
-	    sc->sc_uaddr, sc->sc_uaddr + round_page(sc->sc_usize));
 	return (0);
 }
 
