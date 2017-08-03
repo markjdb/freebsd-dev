@@ -190,6 +190,8 @@ procstat_kstack(struct procstat *procstat, struct kinfo_proc *kipp, int kflag)
 	}
 
 	kinfo_kstack_sort(kkstp, kstk_count);
+
+	xo_open_container("threads");
 	for (i = 0; i < kstk_count; i++) {
 		kkstp = &kkstp_free[i];
 
@@ -206,6 +208,7 @@ procstat_kstack(struct procstat *procstat, struct kinfo_proc *kipp, int kflag)
 		if (kipp == NULL)
 			continue;
 
+		xo_open_container("thread");
 		xo_emit("{k:process_id/%5d/%d} ", kipp->ki_pid);
 		xo_emit("{:thread_id/%6d/%d} ", kkstp->kkst_tid);
 		xo_emit("{:command/%-19s/%s} ", kipp->ki_comm);
@@ -215,18 +218,18 @@ procstat_kstack(struct procstat *procstat, struct kinfo_proc *kipp, int kflag)
 		switch (kkstp->kkst_state) {
 		case KKST_STATE_RUNNING:
 			xo_emit("{:state/%-29s/%s}\n", "<running>");
-			continue;
+			goto next;
 
 		case KKST_STATE_SWAPPED:
 			xo_emit("{:state/%-29s/%s}\n", "<swapped>");
-			continue;
+			goto next;
 
 		case KKST_STATE_STACKOK:
 			break;
 
 		default:
 			xo_emit("{:state/%-29s/%s}\n", "<unknown>");
-			continue;
+			goto next;
 		}
 
 		/*
@@ -239,7 +242,11 @@ procstat_kstack(struct procstat *procstat, struct kinfo_proc *kipp, int kflag)
 		kstack_cleanup_encoded(kkstp->kkst_trace, encoded_trace, kflag);
 		xo_close_list("trace");
 		xo_emit("{d:trace/%-29s}\n", trace);
+next:
+		xo_close_container("thread");
 	}
+	xo_close_container("threads");
+
 	procstat_freekstack(procstat, kkstp_free);
 	procstat_freeprocs(procstat, kip_free);
 }
