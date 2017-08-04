@@ -417,7 +417,7 @@ fail:
 	}
 	else if (error == ECANCELED)
 		printf("Dump aborted\n");
-	else if (error == E2BIG)
+	else if (error == E2BIG || error == ENOSPC)
 		printf("Dump failed. Partition too small.\n");
 	else
 		printf("** DUMP FAILED (ERROR %d) **\n", error);

@@ -394,7 +394,7 @@ dumpsys_generic(struct dumperinfo *di)
 
 	if (error == ECANCELED)
 		printf("\nDump aborted\n");
-	else if (error == E2BIG)
+	else if (error == E2BIG || error == ENOSPC)
 		printf("\nDump failed. Partition too small.\n");
 	else
 		printf("\n** DUMP FAILED (ERROR %d) **\n", error);
