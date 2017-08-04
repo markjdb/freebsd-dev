@@ -171,7 +171,6 @@ const char *panicstr;
 int dumping;				/* system is dumping */
 int rebooting;				/* system is rebooting */
 static struct dumperinfo dumper;	/* our selected dumper */
-static off_t dumpoff;			/* current dump offset */
 
 /* Context information for dump-debuggers. */
 static struct pcb dumppcb;		/* Registers. */
@@ -1061,8 +1060,8 @@ dump_encrypt(struct kerneldumpcrypto *kdc, uint8_t *buf, size_t size)
 
 /* Encrypt data and call dumper. */
 static int
-dump_encrypted_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
-    off_t offset, size_t length)
+dump_encrypted_append(struct dumperinfo *di, void *virtual,
+    vm_offset_t physical, size_t length)
 {
 	static uint8_t buf[KERNELDUMP_BUFFER_SIZE];
 	struct kerneldumpcrypto *kdc;
@@ -1078,11 +1077,10 @@ dump_encrypted_write(struct dumperinfo *di, void *virtual, vm_offset_t physical,
 		if (dump_encrypt(kdc, buf, nbytes) != 0)
 			return (EIO);
 
-		error = dump_write(di, buf, physical, offset, nbytes);
+		error = dump_append(di, buf, physical, nbytes);
 		if (error != 0)
 			return (error);
 
-		offset += nbytes;
 		virtual = (void *)((uint8_t *)virtual + nbytes);
 		length -= nbytes;
 	}
@@ -1151,18 +1149,18 @@ dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
 	if (di->mediasize < KERNELDUMP_METADATA_SIZE + dumpsize)
 		return (E2BIG);
 
-	dumpoff = di->mediaoffset + di->mediasize - dumpsize;
+	di->dumpoff = di->mediaoffset + di->mediasize - dumpsize;
 
-	error = dump_write_header(di, kdh, 0, dumpoff);
+	error = dump_write_header(di, kdh, 0, di->dumpoff);
 	if (error != 0)
 		return (error);
-	dumpoff += di->blocksize;
+	di->dumpoff += di->blocksize;
 
 #ifdef EKCD
-	error = dump_write_key(di, 0, dumpoff);
+	error = dump_write_key(di, 0, di->dumpoff);
 	if (error != 0)
 		return (error);
-	dumpoff += keysize;
+	di->dumpoff += keysize;
 #endif
 
 	return (0);
@@ -1176,13 +1174,12 @@ dump_append(struct dumperinfo *di, void *virtual, vm_offset_t physical,
 
 #ifdef EKCD
 	if (di->kdc != NULL)
-		error = dump_encrypted_write(di, virtual, physical, dumpoff,
-		    length);
+		error = dump_encrypted_append(di, virtual, physical, length);
 	else
 #endif
-		error = dump_write(di, virtual, physical, dumpoff, length);
+		error = dump_write(di, virtual, physical, di->dumpoff, length);
 	if (error == 0)
-		dumpoff += length;
+		di->dumpoff += length;
 	return (error);
 }
 
@@ -1207,7 +1204,7 @@ dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh)
 {
 	int error;
 
-	error = dump_write_header(di, kdh, 0, dumpoff);
+	error = dump_write_header(di, kdh, 0, di->dumpoff);
 	if (error != 0)
 		return (error);
 
