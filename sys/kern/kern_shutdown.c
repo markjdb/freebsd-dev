@@ -1262,8 +1262,8 @@ dump_finish(struct dumperinfo *di, struct kerneldumpheader *kdh, off_t dumplo)
 }
 
 void
-mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
-    uint64_t dumplen, uint32_t blksz)
+dump_init_header(const struct dumperinfo *di, struct kerneldumpheader *kdh,
+    char *magic, uint32_t archver, uint64_t dumplen)
 {
 	size_t dstsize;
 
@@ -1275,9 +1275,11 @@ mkdumpheader(struct kerneldumpheader *kdh, char *magic, uint32_t archver,
 	kdh->dumplength = htod64(dumplen);
 	kdh->dumptime = htod64(time_second);
 #ifdef EKCD
-	kdh->dumpkeysize = htod32(kerneldumpcrypto_dumpkeysize(dumper.kdc));
+	kdh->dumpkeysize = htod32(kerneldumpcrypto_dumpkeysize(di->kdc));
+#else
+	kdh->dumpkeysize = 0;
 #endif
-	kdh->blocksize = htod32(blksz);
+	kdh->blocksize = htod32(di->blocksize);
 	strlcpy(kdh->hostname, prison0.pr_hostname, sizeof(kdh->hostname));
 	dstsize = sizeof(kdh->versionstring);
 	if (strlcpy(kdh->versionstring, version, dstsize) >= dstsize)
