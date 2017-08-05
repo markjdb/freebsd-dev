@@ -36,6 +36,7 @@
 #include <sys/proc.h>
 #include <sys/sched.h>
 #include <sys/sleepqueue.h>
+#include <sys/time.h>
 
 #include <linux/compat.h>
 #include <linux/completion.h>
@@ -149,5 +150,14 @@ int linux_schedule_timeout(int timeout);
 
 #define	io_schedule()			schedule()
 #define	io_schedule_timeout(timeout)	schedule_timeout(timeout)
+
+static inline uint64_t
+local_clock(void)
+{
+	struct timespec ts;
+
+	nanotime(&ts);
+	return (ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec);
+}
 
 #endif	/* _LINUX_SCHED_H_ */
