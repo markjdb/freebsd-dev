@@ -38,13 +38,14 @@
 #include <sys/sleepqueue.h>
 #include <sys/time.h>
 
+#include <linux/bitmap.h>
 #include <linux/compat.h>
 #include <linux/completion.h>
+#include <linux/mm_types.h>
 #include <linux/pid.h>
 #include <linux/slab.h>
-#include <linux/mm_types.h>
 #include <linux/string.h>
-#include <linux/bitmap.h>
+#include <linux/time.h>
 
 #include <asm/atomic.h>
 
@@ -157,7 +158,7 @@ local_clock(void)
 	struct timespec ts;
 
 	nanotime(&ts);
-	return (ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec);
+	return ((uint64_t)ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec);
 }
 
 #endif	/* _LINUX_SCHED_H_ */
