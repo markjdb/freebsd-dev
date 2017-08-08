@@ -386,19 +386,22 @@ retry:
 void
 kmem_unback(vm_object_t object, vm_offset_t addr, vm_size_t size)
 {
-	vm_page_t m;
-	vm_offset_t i, offset;
+	vm_page_t m, next;
+	vm_pindex_t end, pindex;
 
 	KASSERT(object == kmem_object || object == kernel_object,
 	    ("kmem_unback: only supports kernel objects."));
 
 	pmap_remove(kernel_pmap, addr, addr + size);
-	offset = addr - VM_MIN_KERNEL_ADDRESS;
+	pindex = UOFF_TO_IDX(addr - VM_MIN_KERNEL_ADDRESS);
+	end = pindex + UOFF_TO_IDX(size);
 	VM_OBJECT_WLOCK(object);
-	for (i = 0; i < size; i += PAGE_SIZE) {
-		m = vm_page_lookup(object, atop(offset + i));
+	m = vm_page_lookup(object, pindex);
+	while (pindex++ < end) {
+		next = vm_page_next(m);
 		vm_page_unwire(m, PQ_NONE);
 		vm_page_free(m);
+		m = next;
 	}
 	VM_OBJECT_WUNLOCK(object);
 }
