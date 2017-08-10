@@ -134,10 +134,12 @@ linux_pci_attach(device_t dev)
 
 	parent = device_get_parent(dev);
 	devclass = device_get_devclass(parent);
-	if (pdrv->isdrm)
-		device_set_ivars(dev, device_get_ivars(parent));
-
-	dinfo = device_get_ivars(dev);
+	if (pdrv->isdrm) {
+		dinfo = device_get_ivars(parent);
+		device_set_ivars(dev, dinfo);
+	} else {
+		dinfo = device_get_ivars(dev);
+	}
 
 	pdev->dev.parent = &linux_root_device;
 	pdev->dev.bsddev = dev;
@@ -289,6 +291,8 @@ linux_pci_register_driver(struct pci_driver *pdrv)
 	devclass_t dc;
 
 	dc = devclass_find("pci");
+	if (dc == NULL)
+		return (-ENXIO);
 	pdrv->isdrm = false;
 	return (_linux_pci_register_driver(pdrv, dc));
 }
