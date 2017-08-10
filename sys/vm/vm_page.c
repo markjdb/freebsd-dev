@@ -3178,7 +3178,7 @@ retrylookup:
  *	VM_ALLOC_ZERO		zero and validate any invalid pages
  *
  * If VM_ALLOC_NOWAIT is not specified, this routine may sleep.  Otherwise, it
- * may return a partial subrange of the requested range.
+ * may return a partial prefix of the requested range.
  */
 int
 vm_page_grab_pages(vm_object_t object, vm_pindex_t pindex, int allocflags,
