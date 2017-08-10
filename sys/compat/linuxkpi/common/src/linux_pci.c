@@ -304,6 +304,8 @@ linux_pci_register_drm_driver(struct pci_driver *pdrv)
 	devclass_t dc;
 
 	dc = devclass_create("vgapci");
+	if (dc == NULL)
+		return (-ENXIO);
 	pdrv->bsdclass = drm_devclass;
 	pdrv->isdrm = true;
 	pdrv->name = "drmn";
