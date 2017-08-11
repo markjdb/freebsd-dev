@@ -2847,8 +2847,7 @@ vm_page_wire(vm_page_t m)
 		atomic_add_int(&vm_cnt.v_wire_count, 1);
 	}
 	m->wire_count++;
-	if (m->wire_count == 0)
-		panic("vm_page_wire: wire_count overflow m=%p", m);
+	KASSERT(m->wire_count != 0, ("vm_page_wire: wire_count overflow m=%p", m));
 }
 
 /*
