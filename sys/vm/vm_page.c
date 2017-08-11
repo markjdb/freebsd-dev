@@ -1545,6 +1545,12 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 	    vm_radix_lookup_le(&object->rtree, pindex) : NULL, pindex, req));
 }
 
+/*
+ * Allocate a page in the specified object with the given page index.  To
+ * optimize insertion of the page into the object, the caller must also specifiy
+ * the resident page in the object with largest index smaller than the given
+ * page index, or NULL if no such page exists.
+ */
 vm_page_t
 vm_page_alloc_after(vm_object_t object, vm_page_t mpred, vm_pindex_t pindex,
     int req)

@@ -332,7 +332,7 @@ int
 kmem_back(vm_object_t object, vm_offset_t addr, vm_size_t size, int flags)
 {
 	vm_offset_t offset, i;
-	vm_page_t m;
+	vm_page_t m, mpred;
 	int pflags;
 
 	KASSERT(object == kmem_object || object == kernel_object,
@@ -341,10 +341,15 @@ kmem_back(vm_object_t object, vm_offset_t addr, vm_size_t size, int flags)
 	offset = addr - VM_MIN_KERNEL_ADDRESS;
 	pflags = malloc2vm_flags(flags) | VM_ALLOC_NOBUSY | VM_ALLOC_WIRED;
 
-	VM_OBJECT_WLOCK(object);
-	for (i = 0; i < size; i += PAGE_SIZE) {
+	i = 0;
 retry:
-		m = vm_page_alloc(object, atop(offset + i), pflags);
+	VM_OBJECT_WLOCK(object);
+	for (mpred = NULL; i < size; i += PAGE_SIZE, mpred = m) {
+		if (mpred != NULL)
+			m = vm_page_alloc_after(object, mpred, atop(offset + i),
+			    pflags);
+		else
+			m = vm_page_alloc(object, atop(offset + i), pflags);
 
 		/*
 		 * Ran out of space, free everything up and return. Don't need
@@ -355,7 +360,6 @@ retry:
 			VM_OBJECT_WUNLOCK(object);
 			if ((flags & M_NOWAIT) == 0) {
 				VM_WAIT;
-				VM_OBJECT_WLOCK(object);
 				goto retry;
 			}
 			kmem_unback(object, addr, i);
