@@ -1541,8 +1541,8 @@ vm_page_t
 vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
 {
 
-	return (vm_page_alloc_after(object, object != NULL ?
-	    vm_radix_lookup_le(&object->rtree, pindex) : NULL, pindex, req));
+	return (vm_page_alloc_after(object, pindex, req, object != NULL ?
+	    vm_radix_lookup_le(&object->rtree, pindex) : NULL));
 }
 
 /*
@@ -1552,8 +1552,8 @@ vm_page_alloc(vm_object_t object, vm_pindex_t pindex, int req)
  * page index, or NULL if no such page exists.
  */
 vm_page_t
-vm_page_alloc_after(vm_object_t object, vm_page_t mpred, vm_pindex_t pindex,
-    int req)
+vm_page_alloc_after(vm_object_t object, vm_pindex_t pindex, int req,
+    vm_page_t mpred)
 {
 	vm_page_t m;
 	int flags, req_class;
@@ -3191,8 +3191,8 @@ void
 vm_page_grab_pages(vm_object_t object, vm_pindex_t pindex, int allocflags,
     vm_page_t *ma, int count)
 {
-	vm_page_t m;
-	int i, newflags;
+	vm_page_t m, mpred;
+	int i;
 	bool sleep;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
@@ -3208,7 +3208,12 @@ vm_page_grab_pages(vm_object_t object, vm_pindex_t pindex, int allocflags,
 		return;
 	i = 0;
 retrylookup:
-	m = vm_page_lookup(object, pindex + i);
+	m = vm_radix_lookup_le(&object->rtree, pindex + i);
+	if (m == NULL || m->pindex != pindex + i) {
+		mpred = m;
+		m = NULL;
+	} else
+		mpred = TAILQ_PREV(m, pglist, listq);
 	for (; i < count; i++) {
 		if (m != NULL) {
 			sleep = (allocflags & VM_ALLOC_IGN_SBUSY) != 0 ?
@@ -3238,13 +3243,9 @@ retrylookup:
 			if ((allocflags & VM_ALLOC_SBUSY) != 0)
 				vm_page_sbusy(m);
 		} else {
-			newflags = (allocflags & ~VM_ALLOC_IGN_SBUSY) |
-			    VM_ALLOC_COUNT(count - i);
-			if (i > 0)
-				m = vm_page_alloc_after(object, ma[i - 1],
-				    pindex + i, newflags);
-			else
-				m = vm_page_alloc(object, pindex + i, newflags);
+			m = vm_page_alloc_after(object, pindex + i,
+			    (allocflags & ~VM_ALLOC_IGN_SBUSY) |
+			    VM_ALLOC_COUNT(count - i), mpred);
 			if (m == NULL) {
 				VM_OBJECT_WUNLOCK(object);
 				VM_WAIT;
@@ -3257,7 +3258,7 @@ retrylookup:
 				pmap_zero_page(m);
 			m->valid = VM_PAGE_BITS_ALL;
 		}
-		ma[i] = m;
+		ma[i] = mpred = m;
 		m = vm_page_next(m);
 	}
 }

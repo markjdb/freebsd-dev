@@ -84,6 +84,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_object.h>
 #include <vm/vm_page.h>
 #include <vm/vm_pageout.h>
+#include <vm/vm_radix.h>
 #include <vm/vm_extern.h>
 #include <vm/uma.h>
 
@@ -344,12 +345,10 @@ kmem_back(vm_object_t object, vm_offset_t addr, vm_size_t size, int flags)
 	i = 0;
 retry:
 	VM_OBJECT_WLOCK(object);
+	mpred = vm_radix_lookup_le(&object->rtree, atop(offset + i));
 	for (mpred = NULL; i < size; i += PAGE_SIZE, mpred = m) {
-		if (mpred != NULL)
-			m = vm_page_alloc_after(object, mpred, atop(offset + i),
-			    pflags);
-		else
-			m = vm_page_alloc(object, atop(offset + i), pflags);
+		m = vm_page_alloc_after(object, atop(offset + i), pflags,
+		    mpred);
 
 		/*
 		 * Ran out of space, free everything up and return. Don't need
