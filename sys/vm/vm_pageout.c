@@ -399,7 +399,6 @@ vm_pageout_cluster(vm_page_t m)
 
 	vm_page_assert_unbusied(m);
 	KASSERT(m->hold_count == 0, ("page %p is held", m));
-	KASSERT(m->wire_count == 0, ("page %p is wired", m));
 	vm_page_unlock(m);
 
 	mc[vm_pageout_page_count] = pb = ps = m;
@@ -437,7 +436,7 @@ more:
 		}
 		vm_page_lock(p);
 		if (!vm_page_in_laundry(p) ||
-		    p->hold_count != 0 || p->wire_count != 0) {
+		    p->hold_count != 0) {	/* may be undergoing I/O */
 			vm_page_unlock(p);
 			ib = 0;
 			break;
@@ -463,7 +462,7 @@ more:
 			break;
 		vm_page_lock(p);
 		if (!vm_page_in_laundry(p) ||
-		    p->hold_count != 0 || p->wire_count != 0) {
+		    p->hold_count != 0) {	/* may be undergoing I/O */
 			vm_page_unlock(p);
 			break;
 		}
@@ -868,8 +867,7 @@ vm_pageout_clean(vm_page_t m, int *numpagedout)
 		 * The page may have been busied or held while the object
 		 * and page locks were released.
 		 */
-		if (vm_page_busied(m) || m->hold_count != 0 ||
-		    m->wire_count != 0) {
+		if (vm_page_busied(m) || m->hold_count != 0) {
 			vm_page_unlock(m);
 			error = EBUSY;
 			goto unlock_all;
@@ -964,22 +962,13 @@ scan:
 			continue;
 		}
 		object = m->object;
-		if (!VM_OBJECT_TRYWLOCK(object)) {
-			if (!vm_pageout_fallback_object_lock(m, &next) ||
-			    m->hold_count != 0) {
-				VM_OBJECT_WUNLOCK(object);
-				vm_page_unlock(m);
-				continue;
-			}
-			if (m->wire_count != 0) {
-				VM_OBJECT_WUNLOCK(object);
-				vm_page_dequeue_locked(m);
-				vm_page_unlock(m);
-				continue;
-			}
-		}
-		if (vm_page_busied(m)) {
+		if ((!VM_OBJECT_TRYWLOCK(object) &&
+		    (!vm_pageout_fallback_object_lock(m, &next) ||
+		    m->hold_count != 0 || m->wire_count != 0)) ||
+		    vm_page_busied(m)) {
 			VM_OBJECT_WUNLOCK(object);
+			if (m->wire_count != 0 && vm_page_pagequeue(m) == pq)
+				vm_page_dequeue_locked(m);
 			vm_page_unlock(m);
 			continue;
 		}

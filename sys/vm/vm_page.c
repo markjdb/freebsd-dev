@@ -2888,11 +2888,16 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 		atomic_subtract_int(&vm_cnt.v_wire_count, 1);
 		if ((m->oflags & VPO_UNMANAGED) == 0 && m->object != NULL &&
 		    queue != PQ_NONE) {
-			if (m->queue == queue)
+			if (m->queue == queue) {
 				vm_page_requeue(m);
-			else {
+				if (queue == PQ_ACTIVE)
+					vm_page_reference(m);
+			} else {
 				vm_page_remque(m);
 				vm_page_enqueue(queue, m);
+				if (queue == PQ_ACTIVE)
+					/* initialize act_count */
+					vm_page_activate(m);
 			}
 		}
 		return (TRUE);
