@@ -346,7 +346,7 @@ kmem_back(vm_object_t object, vm_offset_t addr, vm_size_t size, int flags)
 retry:
 	VM_OBJECT_WLOCK(object);
 	mpred = vm_radix_lookup_le(&object->rtree, atop(offset + i));
-	for (mpred = NULL; i < size; i += PAGE_SIZE, mpred = m) {
+	for (; i < size; i += PAGE_SIZE, mpred = m) {
 		m = vm_page_alloc_after(object, atop(offset + i), pflags,
 		    mpred);
 
