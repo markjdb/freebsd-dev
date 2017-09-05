@@ -311,7 +311,7 @@ swap_release_by_cred(vm_ooffset_t decr, struct ucred *cred)
 #define SWM_FREE	0x02	/* free, period			*/
 #define SWM_POP		0x04	/* pop out			*/
 
-int swap_pager_full = 2;	/* swap space exhaustion (task killing) */
+static int swap_pager_full = 2;	/* swap space exhaustion (task killing) */
 static int swap_pager_almost_full = 1; /* swap space exhaustion (w/hysteresis)*/
 static int nsw_rcount;		/* free read buffers			*/
 static int nsw_wcount_sync;	/* limit write buffers / synchronous	*/
@@ -1827,7 +1827,7 @@ swp_pager_meta_free(vm_object_t object, vm_pindex_t pindex, vm_pindex_t count)
 	int i;
 	bool empty;
 
-	VM_OBJECT_ASSERT_LOCKED(object);
+	VM_OBJECT_ASSERT_WLOCKED(object);
 	if (object->type != OBJT_SWAP || count == 0)
 		return;
 
@@ -1909,9 +1909,13 @@ swp_pager_meta_ctl(vm_object_t object, vm_pindex_t pindex, int flags)
 	daddr_t r1;
 	int i;
 
-	VM_OBJECT_ASSERT_LOCKED(object);
+	if ((flags & (SWM_FREE | SWM_POP)) != 0)
+		VM_OBJECT_ASSERT_WLOCKED(object);
+	else
+		VM_OBJECT_ASSERT_LOCKED(object);
+
 	/*
-	 * The meta data only exists of the object is OBJT_SWAP
+	 * The meta data only exists if the object is OBJT_SWAP
 	 * and even then might not be allocated yet.
 	 */
 	if (object->type != OBJT_SWAP)
@@ -2056,13 +2060,14 @@ done:
 /*
  * Check that the total amount of swap currently configured does not
  * exceed half the theoretical maximum.  If it does, print a warning
- * message and return -1; otherwise, return 0.
+ * message.
  */
-static int
-swapon_check_swzone(unsigned long npages)
+static void
+swapon_check_swzone(void)
 {
-	unsigned long maxpages;
+	unsigned long maxpages, npages;
 
+	npages = swap_total / PAGE_SIZE;
 	/* absolute maximum we can handle assuming 100% efficiency */
 	maxpages = uma_zone_get_max(swblk_zone) * SWAP_META_PAGES;
 
@@ -2073,9 +2078,7 @@ swapon_check_swzone(unsigned long npages)
 		    npages, maxpages / 2);
 		printf("warning: increase kern.maxswzone "
 		    "or reduce amount of swap.\n");
-		return (-1);
 	}
-	return (0);
 }
 
 static void
@@ -2143,7 +2146,7 @@ swaponsomething(struct vnode *vp, void *id, u_long nblks,
 	nswapdev++;
 	swap_pager_avail += nblks - 2;
 	swap_total += (vm_ooffset_t)nblks * PAGE_SIZE;
-	swapon_check_swzone(swap_total / PAGE_SIZE);
+	swapon_check_swzone();
 	swp_sizecheck();
 	mtx_unlock(&sw_dev_mtx);
 	EVENTHANDLER_INVOKE(swapon, sp);
