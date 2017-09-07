@@ -623,6 +623,7 @@ vm_page_startup(vm_offset_t vaddr)
 	    VM_PROT_READ | VM_PROT_WRITE);
 	vm_page_array = (vm_page_t)mapped;
 	vm_page_array_size = page_range;
+
 #if VM_NRESERVLEVEL > 0
 	/*
 	 * Allocate physical memory for the reservation management system's
@@ -664,6 +665,13 @@ vm_page_startup(vm_offset_t vaddr)
 		for (pa = seg->start; pa < seg->end; pa += PAGE_SIZE)
 			vm_phys_init_page(pa);
 
+		/*
+		 * Add the segment to the free lists only if it is covered by
+		 * one of the ranges in phys_avail.  Because we've added the
+		 * ranges to the vm_phys_segs array, we can assume that each
+		 * segment is either entirely contained in one of the ranges,
+		 * or doesn't overlap any of them.
+		 */
 		for (i = 0; phys_avail[i + 1] != 0; i += 2) {
 			if (seg->start < phys_avail[i] ||
 			    seg->end > phys_avail[i + 1])
