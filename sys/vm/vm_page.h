@@ -210,7 +210,10 @@ struct vm_page {
 #define	PQ_UNSWAPPABLE	3
 #define	PQ_COUNT	4
 
+#ifndef VM_PAGE_HAVE_PGLIST
 TAILQ_HEAD(pglist, vm_page);
+#define VM_PAGE_HAVE_PGLIST
+#endif
 SLIST_HEAD(spglist, vm_page);
 
 struct vm_pagequeue {
@@ -523,6 +526,8 @@ int vm_page_is_valid (vm_page_t, int, int);
 void vm_page_test_dirty (vm_page_t);
 vm_page_bits_t vm_page_bits(int base, int size);
 void vm_page_zero_invalid(vm_page_t m, boolean_t setvalid);
+bool vm_page_free_prep(vm_page_t m, bool obj_term);
+void vm_page_free_phys_pglist(struct pglist *tq);
 void vm_page_free_toq(vm_page_t m);
 
 void vm_page_dirty_KBI(vm_page_t m);

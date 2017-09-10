@@ -93,11 +93,12 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_page.h>
 #include <vm/vm_pageout.h>
 #include <vm/vm_pager.h>
-#include <vm/swap_pager.h>
+#include <vm/vm_phys.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_extern.h>
 #include <vm/vm_radix.h>
 #include <vm/vm_reserv.h>
+#include <vm/swap_pager.h>
 #include <vm/uma.h>
 
 static int old_msync;
@@ -713,8 +714,13 @@ static void
 vm_object_terminate_pages(vm_object_t object)
 {
 	vm_page_t p, p_next;
+	struct mtx *pa, *pa1;
+	struct vm_pagequeue *pq, *pq1;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
+
+	pa = NULL;
+	pq = NULL;
 
 	/*
 	 * Free any remaining pageable pages.  This also removes them from the
@@ -724,21 +730,45 @@ vm_object_terminate_pages(vm_object_t object)
 	 */
 	TAILQ_FOREACH_SAFE(p, &object->memq, listq, p_next) {
 		vm_page_assert_unbusied(p);
-		vm_page_lock(p);
-		/*
-		 * Optimize the page's removal from the object by resetting
-		 * its "object" field.  Specifically, if the page is not
-		 * wired, then the effect of this assignment is that
-		 * vm_page_free()'s call to vm_page_remove() will return
-		 * immediately without modifying the page or the object.
-		 */ 
-		p->object = NULL;
-		if (p->wire_count == 0) {
-			vm_page_free(p);
-			VM_CNT_INC(v_pfree);
+		pa1 = vm_page_lockptr(p);
+		if (pa1 != pa) {
+			if (pa != NULL)
+				mtx_unlock(pa);
+			if (pq != NULL) {
+				vm_pagequeue_unlock(pq);
+				pq = NULL;
+			}
+			pa = pa1;
+			mtx_lock(pa);
 		}
-		vm_page_unlock(p);
+		p->object = NULL;
+		if (p->wire_count != 0)
+			goto unlist;
+		VM_CNT_INC(v_pfree);
+		p->flags &= ~PG_ZERO;
+		if (p->queue != PQ_NONE) {
+			KASSERT(p->queue < PQ_COUNT, ("vm_object_terminate: "
+			    "page %p is not queued", p));
+			pq1 = vm_page_pagequeue(p);
+			if (pq != pq1) {
+				if (pq != NULL)
+					vm_pagequeue_unlock(pq);
+				pq = pq1;
+				vm_pagequeue_lock(pq);
+			}
+		}
+		if (vm_page_free_prep(p, true))
+			continue;
+unlist:
+		TAILQ_REMOVE(&object->memq, p, listq);
 	}
+	if (pa != NULL)
+		mtx_unlock(pa);
+	if (pq != NULL)
+		vm_pagequeue_unlock(pq);
+
+	vm_page_free_phys_pglist(&object->memq);
+
 	/*
 	 * If the object contained any pages, then reset it to an empty state.
 	 * None of the object's fields, including "resident_page_count", were
