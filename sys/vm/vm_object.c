@@ -767,7 +767,7 @@ unlist:
 	if (pq != NULL)
 		vm_pagequeue_unlock(pq);
 
-	vm_page_free_phys_pglist(&object->memq);
+	vm_page_free_memq(object);
 
 	/*
 	 * If the object contained any pages, then reset it to an empty state.

@@ -2850,13 +2850,19 @@ vm_page_free_phys(vm_page_t m)
 }
 
 void
-vm_page_free_phys_pglist(struct pglist *tq)
+vm_page_free_memq(vm_object_t object)
 {
+#if VM_NRESERVLEVEL == 0
 	vm_page_t m;
+#endif
 
 	mtx_lock(&vm_page_queue_free_mtx);
-	TAILQ_FOREACH(m, tq, listq)
+#if VM_NRESERVLEVEL > 0
+	vm_reserv_object_terminate(object);
+#else
+	TAILQ_FOREACH(m, &object->memq, listq)
 		vm_page_free_phys(m);
+#endif
 	vm_page_free_wakeup();
 	mtx_unlock(&vm_page_queue_free_mtx);
 }

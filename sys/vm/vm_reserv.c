@@ -119,6 +119,18 @@ popmap_clear(popmap_t popmap[], int i)
 }
 
 /*
+ * Clear all bits in the population map.
+ */
+static __inline void
+popmap_clear_all(popmap_t popmap[])
+{
+	int i;
+
+	for (i = 0; i < howmany(NPOPMAP, NBPOPMAP); i++)
+		popmap[i] = 0;
+}
+
+/*
  * Set a bit in the population map.
  */
 static __inline void
@@ -1119,6 +1131,34 @@ vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end, vm_paddr_t high_water)
 	 * Return the next available physical address.
 	 */
 	return (new_end);
+}
+
+/* XXX */
+void
+vm_reserv_object_terminate(vm_object_t object)
+{
+	vm_page_t m, next;
+	vm_reserv_t rv;
+
+	VM_OBJECT_ASSERT_LOCKED(object);
+	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
+
+	TAILQ_FOREACH_SAFE(m, &object->memq, listq, next) {
+		if (vm_reserv_level(m) < 0) {
+			vm_phys_free_pages(m, 0);
+			continue;
+		}
+
+		rv = vm_reserv_from_page(m);
+		next = vm_page_find_least(object, m->pindex +
+		    VM_LEVEL_0_NPAGES - VM_RESERV_INDEX(object, m->pindex));
+		if (rv->inpartpopq) {
+			TAILQ_REMOVE(&vm_rvq_partpop, rv, partpopq);
+			rv->inpartpopq = FALSE;
+		}
+		popmap_clear_all(rv->popmap);
+		vm_reserv_break(rv, NULL);
+	}
 }
 
 /*
