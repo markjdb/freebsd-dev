@@ -716,9 +716,11 @@ vm_object_terminate_pages(vm_object_t object)
 	vm_page_t p, p_next;
 	struct mtx *pa, *pa1;
 	struct vm_pagequeue *pq, *pq1;
+	bool allfree;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 
+	allfree = true;
 	pa = NULL;
 	pq = NULL;
 
@@ -761,13 +763,14 @@ vm_object_terminate_pages(vm_object_t object)
 			continue;
 unlist:
 		TAILQ_REMOVE(&object->memq, p, listq);
+		allfree = false;
 	}
 	if (pa != NULL)
 		mtx_unlock(pa);
 	if (pq != NULL)
 		vm_pagequeue_unlock(pq);
 
-	vm_page_free_memq(object);
+	vm_page_free_memq(object, allfree);
 
 	/*
 	 * If the object contained any pages, then reset it to an empty state.

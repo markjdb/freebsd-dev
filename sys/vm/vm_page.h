@@ -527,7 +527,7 @@ void vm_page_test_dirty (vm_page_t);
 vm_page_bits_t vm_page_bits(int base, int size);
 void vm_page_zero_invalid(vm_page_t m, boolean_t setvalid);
 bool vm_page_free_prep(vm_page_t m, bool obj_term);
-void vm_page_free_memq(vm_object_t object);
+void vm_page_free_memq(vm_object_t object, bool allfree);
 void vm_page_free_toq(vm_page_t m);
 
 void vm_page_dirty_KBI(vm_page_t m);
