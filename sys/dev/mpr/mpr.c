@@ -49,6 +49,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/malloc.h>
 #include <sys/uio.h>
 #include <sys/sysctl.h>
+#include <sys/smp.h>
 #include <sys/queue.h>
 #include <sys/kthread.h>
 #include <sys/taskqueue.h>
@@ -88,6 +89,7 @@ static void mpr_iocfacts_free(struct mpr_softc *sc);
 static void mpr_startup(void *arg);
 static int mpr_send_iocinit(struct mpr_softc *sc);
 static int mpr_alloc_queues(struct mpr_softc *sc);
+static int mpr_alloc_hw_queues(struct mpr_softc *sc);
 static int mpr_alloc_replies(struct mpr_softc *sc);
 static int mpr_alloc_requests(struct mpr_softc *sc);
 static int mpr_alloc_nvme_prp_pages(struct mpr_softc *sc);
@@ -564,21 +566,23 @@ mpr_iocfacts_allocate(struct mpr_softc *sc, uint8_t attaching)
 	 * IOC Facts are different from the previous IOC Facts after a Diag
 	 * Reset. Targets have already been allocated above if needed.
 	 */
-	if (attaching || reallocating) {
-		if (((error = mpr_alloc_queues(sc)) != 0) ||
-		    ((error = mpr_alloc_replies(sc)) != 0) ||
-		    ((error = mpr_alloc_requests(sc)) != 0)) {
-			if (attaching ) {
-				mpr_dprint(sc, MPR_INIT|MPR_ERROR,
-				    "Failed to alloc queues with error %d\n",
-				    error);
-				mpr_free(sc);
-				return (error);
-			} else {
-				panic("%s failed to alloc queues with error "
-				    "%d\n", __func__, error);
-			}
-		}
+	error = 0;
+	while (attaching || reallocating) {
+		if ((error = mpr_alloc_hw_queues(sc)) != 0)
+			break;
+		if ((error = mpr_alloc_replies(sc)) != 0)
+			break;
+		if ((error = mpr_alloc_requests(sc)) != 0)
+			break;
+		if ((error = mpr_alloc_queues(sc)) != 0)
+			break;
+		break;
+	}
+	if (error) {
+		mpr_dprint(sc, MPR_INIT|MPR_ERROR,
+		    "Failed to alloc queues with error %d\n", error);
+		mpr_free(sc);
+		return (error);
 	}
 
 	/* Always initialize the queues */
@@ -592,15 +596,10 @@ mpr_iocfacts_allocate(struct mpr_softc *sc, uint8_t attaching)
 	 */
 	error = mpr_transition_operational(sc);
 	if (error != 0) {
-		if (attaching) {
-			mpr_dprint(sc, MPR_INIT|MPR_FAULT, "Failed to "
-			    "transition to operational with error %d\n", error);
-			mpr_free(sc);
-			return (error);
-		} else {
-			panic("%s failed to transition to operational with "
-			    "error %d\n", __func__, error);
-		}
+		mpr_dprint(sc, MPR_INIT|MPR_FAULT, "Failed to "
+		    "transition to operational with error %d\n", error);
+		mpr_free(sc);
+		return (error);
 	}
 
 	/*
@@ -619,26 +618,31 @@ mpr_iocfacts_allocate(struct mpr_softc *sc, uint8_t attaching)
 
 	/*
 	 * Attach the subsystems so they can prepare their event masks.
+	 * XXX Should be dynamic so that IM/IR and user modules can attach
 	 */
-	/* XXX Should be dynamic so that IM/IR and user modules can attach */
-	if (attaching) {
+	error = 0;
+	while (attaching) {
 		mpr_dprint(sc, MPR_INIT, "Attaching subsystems\n");
-		if (((error = mpr_attach_log(sc)) != 0) ||
-		    ((error = mpr_attach_sas(sc)) != 0) ||
-		    ((error = mpr_attach_user(sc)) != 0)) {
-			mpr_dprint(sc, MPR_INIT|MPR_ERROR,
-			    "Failed to attach all subsystems: error %d\n", 
-			    error);
-			mpr_free(sc);
-			return (error);
-		}
+		if ((error = mpr_attach_log(sc)) != 0)
+			break;
+		if ((error = mpr_attach_sas(sc)) != 0)
+			break;
+		if ((error = mpr_attach_user(sc)) != 0)
+			break;
+		break;
+	}
+	if (error) {
+		mpr_dprint(sc, MPR_INIT|MPR_ERROR,
+		    "Failed to attach all subsystems: error %d\n", error);
+		mpr_free(sc);
+		return (error);
+	}
 
-		if ((error = mpr_pci_setup_interrupts(sc)) != 0) {
-			mpr_dprint(sc, MPR_INIT|MPR_ERROR,
-			    "Failed to setup interrupts\n");
-			mpr_free(sc);
-			return (error);
-		}
+	if ((error = mpr_pci_setup_interrupts(sc)) != 0) {
+		mpr_dprint(sc, MPR_INIT|MPR_ERROR,
+		    "Failed to setup interrupts\n");
+		mpr_free(sc);
+		return (error);
 	}
 
 	return (error);
@@ -716,6 +720,10 @@ mpr_iocfacts_free(struct mpr_softc *sc)
 	}
 	if (sc->buffer_dmat != NULL)
 		bus_dma_tag_destroy(sc->buffer_dmat);
+
+	mpr_pci_free_interrupts(sc);
+	free(sc->queues, M_MPR);
+	sc->queues = NULL;
 }
 
 /* 
@@ -1134,6 +1142,29 @@ mpr_memaddr_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int error)
 
 static int
 mpr_alloc_queues(struct mpr_softc *sc)
+{
+	struct mpr_queue *q;
+	int nq, i;
+
+	nq = MIN(sc->msi_msgs, mp_ncpus);
+	sc->msi_msgs = nq;
+	mpr_dprint(sc, MPR_INIT|MPR_XINFO, "Allocating %d I/O queues\n", nq);
+
+	sc->queues = malloc(sizeof(struct mpr_queue) * nq, M_MPR, M_NOWAIT|M_ZERO);
+	if (sc->queues == NULL)
+		return (ENOMEM);
+
+	for (i = 0; i < nq; i++) {
+		q = &sc->queues[i];
+		mpr_dprint(sc, MPR_INIT, "Configuring queue %d %p\n", i, q);
+		q->sc = sc;
+		q->qnum = i;
+	}
+	return (0);
+}
+
+static int
+mpr_alloc_hw_queues(struct mpr_softc *sc)
 {
 	bus_addr_t queues_busaddr;
 	uint8_t *queues;
@@ -1785,6 +1816,11 @@ mpr_startup(void *arg)
 	mpr_mapping_initialize(sc);
 	mprsas_startup(sc);
 	mpr_unlock(sc);
+
+	mpr_dprint(sc, MPR_INIT, "disestablish config intrhook\n");
+	config_intrhook_disestablish(&sc->mpr_ich);
+	sc->mpr_ich.ich_arg = NULL;
+
 	mpr_dprint(sc, MPR_INIT, "%s exit\n", __func__);
 }
 
