@@ -723,9 +723,20 @@ efipart_open(struct open_file *f, ...)
 		pd->pd_bcache = bcache_allocate();
 
 	if (dev->d_dev->dv_type == DEVT_DISK) {
-		return (disk_open(dev,
+		int rc;
+
+		rc = disk_open(dev,
 		    blkio->Media->BlockSize * (blkio->Media->LastBlock + 1),
-		    blkio->Media->BlockSize));
+		    blkio->Media->BlockSize);
+		if (rc != 0) {
+			pd->pd_open--;
+			if (pd->pd_open == 0) {
+				pd->pd_blkio = NULL;
+				bcache_free(pd->pd_bcache);
+				pd->pd_bcache = NULL;
+			}
+		}
+		return (rc);
 	}
 	return (0);
 }
@@ -913,7 +924,8 @@ efipart_realstrategy(void *devdata, int rw, daddr_t blk, size_t size,
 		readstart = off / blkio->Media->BlockSize;
 
 		if (diskend <= readstart) {
-			*rsize = 0;
+			if (rsize != NULL)
+				*rsize = 0;
 
 			return (EIO);
 		}
