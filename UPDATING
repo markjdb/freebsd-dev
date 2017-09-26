@@ -16,6 +16,50 @@ from older versions of FreeBSD, try WITHOUT_CLANG and WITH_GCC to bootstrap to
 the tip of head, and then rebuild without this option. The bootstrap process
 from older version of current across the gcc/clang cutover is a bit fragile.
 
+2017mmdd:
+	Clang, llvm, lldb, compiler-rt and libc++ have been upgraded to 5.0.0.
+	Please see the 20141231 entry below for information about prerequisites
+	and upgrading, if you are not already using clang 3.5.0 or higher.
+
+20170822:
+	Since the switch to GPT disk labels, fsck for UFS/FFS has been
+	unable to automatically find alternate superblocks. As of r322806,
+	the information needed to find alternate superblocks has been
+	moved to the end of the area reserved for the boot block.
+	Filesystems created with a newfs of this vintage or later
+	will create the recovery information. If you have a filesystem
+	created prior to this change and wish to have a recovery block
+	created for your filesystem, you can do so by running fsck in
+	forground mode (i.e., do not use the -p or -y options). As it
+	starts, fsck will ask ``SAVE DATA TO FIND ALTERNATE SUPERBLOCKS''
+	to which you should answer yes.
+
+20170518:
+	arm64 builds now use the base system LLD 4.0.0 linker by default,
+	instead of requiring that the aarch64-binutils port or package be
+	installed. To continue using aarch64-binutils, set
+	CROSS_BINUTILS_PREFIX=/usr/local/aarch64-freebsd/bin .
+
+20170529:
+	The ctl.ko module no longer implements the iSCSI target frontend:
+	cfiscsi.ko does instead.
+
+	If building cfiscsi.ko as a kernel module, the module can be loaded
+	via one of the following methods:
+	- `cfiscsi_load="YES"` in loader.conf(5).
+	- Add `cfiscsi` to `$kld_list` in rc.conf(5).
+	- ctladm(8)/ctld(8), when compiled with iSCSI support
+	  (`WITH_ISCSI=yes` in src.conf(5))
+
+	Please see cfiscsi(4) for more details.
+
+20170511:
+	The mmcsd.ko module now additionally depends on geom_flashmap.ko.
+	Also, mmc.ko and mmcsd.ko need to be a matching pair built from the
+	same source (previously, the dependency of mmcsd.ko on mmc.ko was
+	missing, but mmcsd.ko now will refuse to load if it is incompatible
+	with mmc.ko).
+
 20170414:
 	Binds and sends to the loopback addresses, IPv6 and IPv4, will now
 	use any explicitly assigned loopback address available in the jail
