@@ -64,7 +64,6 @@ static int qla_link_event_req(qla_host_t *ha, uint16_t cntxt_id);
 static int qla_tx_tso(qla_host_t *ha, struct mbuf *mp, q80_tx_cmd_t *tx_cmd,
 		uint8_t *hdr);
 static int qla_hw_add_all_mcast(qla_host_t *ha);
-static int qla_hw_del_all_mcast(qla_host_t *ha);
 static int qla_add_rcv_rings(qla_host_t *ha, uint32_t sds_idx, uint32_t nsds);
 
 static int qla_init_nic_func(qla_host_t *ha);
@@ -2324,7 +2323,7 @@ ql_hw_send(qla_host_t *ha, bus_dma_segment_t *segs, int nsegs,
 	if (total_length > QLA_MAX_TSO_FRAME_SIZE) {
 		device_printf(dev, "%s: total length exceeds maxlen(%d)\n",
 			__func__, total_length);
-		return (-1);
+		return (EINVAL);
 	}
 	eh = mtod(mp, struct ether_vlan_header *);
 
@@ -3413,7 +3412,7 @@ qla_hw_add_all_mcast(qla_host_t *ha)
 	return (ret);
 }
 
-static int
+int
 qla_hw_del_all_mcast(qla_host_t *ha)
 {
 	int ret;
