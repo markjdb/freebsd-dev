@@ -1,8 +1,10 @@
 # $FreeBSD$
 
+.PATH: ${SRCTOP}/sys/boot/common ${SRCTOP}/sys/boot/libsa
+
 SRCS+=	boot.c commands.c console.c devopen.c interp.c 
 SRCS+=	interp_backslash.c interp_parse.c ls.c misc.c 
-SRCS+=	module.c panic.c
+SRCS+=	module.c
 
 .if ${MACHINE} == "i386" || ${MACHINE_CPUARCH} == "amd64"
 SRCS+=	load_elf32.c load_elf32_obj.c reloc_elf32.c
@@ -30,7 +32,6 @@ SRCS+=	dev_net.c
 SRCS+=	disk.c part.c
 CFLAGS+= -DLOADER_DISK_SUPPORT
 .if !defined(LOADER_NO_GPT_SUPPORT)
-SRCS+=	crc32.c
 CFLAGS+= -DLOADER_GPT_SUPPORT
 .endif
 .if !defined(LOADER_NO_MBR_SUPPORT)
@@ -70,7 +71,6 @@ CFLAGS+=	-DBOOT_PROMPT_123
 
 .if defined(LOADER_INSTALL_SUPPORT)
 SRCS+=	install.c
-CFLAGS+=-I${.CURDIR}/../../../../lib/libstand
 .endif
 
 CLEANFILES+=	vers.c
