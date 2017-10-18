@@ -169,7 +169,10 @@ struct vm_reserv {
 	vm_pindex_t	pindex;			/* offset within object */
 	vm_page_t	pages;			/* first page of a superpage */
 	int		popcnt;			/* # of pages in use */
-	char		inpartpopq;
+	uint16_t	pgcount;		/* pages allocated to object */
+	uint8_t		flags;
+#define	VM_RESERV_F_INPARTPOPQ	0x01
+	uint8_t		spare;
 	popmap_t	popmap[NPOPMAP];	/* bit vector of used pages */
 };
 
@@ -319,9 +322,9 @@ vm_reserv_depopulate(vm_reserv_t rv, int index)
 	    index));
 	KASSERT(rv->popcnt > 0,
 	    ("vm_reserv_depopulate: reserv %p's popcnt is corrupted", rv));
-	if (rv->inpartpopq) {
+	if ((rv->flags & VM_RESERV_F_INPARTPOPQ) != 0) {
 		TAILQ_REMOVE(&vm_rvq_partpop, rv, partpopq);
-		rv->inpartpopq = FALSE;
+		rv->flags &= ~VM_RESERV_F_INPARTPOPQ;
 	} else {
 		KASSERT(rv->pages->psind == 1,
 		    ("vm_reserv_depopulate: reserv %p is already demoted",
@@ -336,7 +339,7 @@ vm_reserv_depopulate(vm_reserv_t rv, int index)
 		vm_phys_free_pages(rv->pages, VM_LEVEL_0_ORDER);
 		vm_reserv_freed++;
 	} else {
-		rv->inpartpopq = TRUE;
+		rv->flags |= VM_RESERV_F_INPARTPOPQ;
 		TAILQ_INSERT_TAIL(&vm_rvq_partpop, rv, partpopq);
 	}
 }
@@ -382,14 +385,14 @@ vm_reserv_populate(vm_reserv_t rv, int index)
 	    ("vm_reserv_populate: reserv %p is already full", rv));
 	KASSERT(rv->pages->psind == 0,
 	    ("vm_reserv_populate: reserv %p is already promoted", rv));
-	if (rv->inpartpopq) {
+	if ((rv->flags & VM_RESERV_F_INPARTPOPQ) != 0) {
 		TAILQ_REMOVE(&vm_rvq_partpop, rv, partpopq);
-		rv->inpartpopq = FALSE;
+		rv->flags &= ~VM_RESERV_F_INPARTPOPQ;
 	}
 	popmap_set(rv->popmap, index);
 	rv->popcnt++;
 	if (rv->popcnt < VM_LEVEL_0_NPAGES) {
-		rv->inpartpopq = TRUE;
+		rv->flags |= VM_RESERV_F_INPARTPOPQ;
 		TAILQ_INSERT_TAIL(&vm_rvq_partpop, rv, partpopq);
 	} else
 		rv->pages->psind = 1;
@@ -559,9 +562,8 @@ vm_reserv_alloc_contig(vm_object_t object, vm_pindex_t pindex, u_long npages,
 		KASSERT(rv->popcnt == 0,
 		    ("vm_reserv_alloc_contig: reserv %p's popcnt is corrupted",
 		    rv));
-		KASSERT(!rv->inpartpopq,
-		    ("vm_reserv_alloc_contig: reserv %p's inpartpopq is TRUE",
-		    rv));
+		KASSERT((rv->flags & VM_RESERV_F_INPARTPOPQ) == 0,
+		    ("vm_reserv_alloc_contig: reserv %p in partpopq", rv));
 		for (i = 0; i < NPOPMAP; i++)
 			KASSERT(rv->popmap[i] == 0,
 		    ("vm_reserv_alloc_contig: reserv %p's popmap is corrupted",
@@ -703,8 +705,8 @@ vm_reserv_alloc_page(vm_object_t object, vm_pindex_t pindex, vm_page_t mpred)
 	rv->pindex = first;
 	KASSERT(rv->popcnt == 0,
 	    ("vm_reserv_alloc_page: reserv %p's popcnt is corrupted", rv));
-	KASSERT(!rv->inpartpopq,
-	    ("vm_reserv_alloc_page: reserv %p's inpartpopq is TRUE", rv));
+	KASSERT((rv->flags & VM_RESERV_F_INPARTPOPQ) == 0,
+	    ("vm_reserv_alloc_page: reserv %p in partpopq", rv));
 	for (i = 0; i < NPOPMAP; i++)
 		KASSERT(rv->popmap[i] == 0,
 		    ("vm_reserv_alloc_page: reserv %p's popmap is corrupted",
@@ -743,8 +745,8 @@ vm_reserv_break(vm_reserv_t rv, vm_page_t m)
 	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
 	KASSERT(rv->object != NULL,
 	    ("vm_reserv_break: reserv %p is free", rv));
-	KASSERT(!rv->inpartpopq,
-	    ("vm_reserv_break: reserv %p's inpartpopq is TRUE", rv));
+	KASSERT((rv->flags & VM_RESERV_F_INPARTPOPQ) == 0,
+	    ("vm_reserv_alloc_page: reserv %p in partpopq", rv));
 	LIST_REMOVE(rv, objq);
 	rv->object = NULL;
 	if (m != NULL) {
@@ -815,9 +817,9 @@ vm_reserv_break_all(vm_object_t object)
 	while ((rv = LIST_FIRST(&object->rvq)) != NULL) {
 		KASSERT(rv->object == object,
 		    ("vm_reserv_break_all: reserv %p is corrupted", rv));
-		if (rv->inpartpopq) {
+		if ((rv->flags & VM_RESERV_F_INPARTPOPQ) != 0) {
 			TAILQ_REMOVE(&vm_rvq_partpop, rv, partpopq);
-			rv->inpartpopq = FALSE;
+			rv->flags &= ~VM_RESERV_F_INPARTPOPQ;
 		}
 		vm_reserv_break(rv, NULL);
 	}
@@ -924,10 +926,10 @@ vm_reserv_reclaim(vm_reserv_t rv)
 {
 
 	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
-	KASSERT(rv->inpartpopq,
-	    ("vm_reserv_reclaim: reserv %p's inpartpopq is FALSE", rv));
+	KASSERT((rv->flags & VM_RESERV_F_INPARTPOPQ) != 0,
+	    ("vm_reserv_reclaim: reserv %p not in partpopq", rv));
 	TAILQ_REMOVE(&vm_rvq_partpop, rv, partpopq);
-	rv->inpartpopq = FALSE;
+	rv->flags &= ~VM_RESERV_F_INPARTPOPQ;
 	vm_reserv_break(rv, NULL);
 	vm_reserv_reclaimed++;
 }
