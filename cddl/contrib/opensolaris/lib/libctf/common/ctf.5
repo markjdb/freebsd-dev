@@ -285,13 +285,13 @@ In version two of the
 .Nm
 file format, the
 .Sy header
-denotes whether whether or not this
+denotes whether or not this
 .Nm
 file is the child of another
 .Nm
 file and also indicates the size of the remaining sections. The
 structure for the
-.Sy header ,
+.Sy header
 logically contains a copy of the
 .Sy preamble
 and the two have a combined size of 36 bytes.
@@ -923,6 +923,9 @@ and encoded according to the
 section. If the function's last argument is of type varargs, then it is also
 written out, but the type identifier is zero. This is included in the count of
 the function's arguments.
+If the function accepts an odd number of arguments, then an extra type
+identifier with value zero is written out in order to provide 32-bit alignment
+for the following type definition, if any.
 .Ss Encoding of Structures and Unions
 Structures and Unions, which are encoded with
 .Sy CTF_K_STRUCT
@@ -997,7 +1000,7 @@ to the left by thirty two and then doing a binary or of
 Enumerations, noted by the type
 .Sy CTF_K_ENUM ,
 are similar to structures. Enumerations use the variable list to note the number
-of values that the enumeration contains, which we'll term enumerators. In C, an
+of values that the enumeration contains, which we will term enumerators. In C, an
 enumeration is always equivalent to the intrinsic type
 .Sy int ,
 thus the value of the member
