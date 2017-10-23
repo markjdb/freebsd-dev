@@ -112,7 +112,7 @@ struct vm_object {
 	struct vm_object *backing_object; /* object that I'm a shadow of */
 	vm_ooffset_t backing_object_offset;/* Offset in backing object */
 	TAILQ_ENTRY(vm_object) pager_object_list; /* list of all objects of this pager type */
-	LIST_HEAD(, vm_reserv) rvq;	/* list of reservations */
+	LIST_HEAD(, vm_reserv) rvq;	/* (f) list of reservations */
 	void *handle;
 	union {
 		/*

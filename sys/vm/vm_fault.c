@@ -1117,7 +1117,8 @@ readrest:
 				 */
 				vm_reserv_rename(fs.m, fs.first_object,
 				    fs.object, OFF_TO_IDX(
-				    fs.first_object->backing_object_offset));
+				    fs.first_object->backing_object_offset),
+				    fs.object->size);
 #endif
 				/*
 				 * Removing the page from the backing object

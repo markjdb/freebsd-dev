@@ -118,6 +118,14 @@ popmap_clear(popmap_t popmap[], int i)
 	popmap[i / NBPOPMAP] &= ~(1UL << (i % NBPOPMAP));
 }
 
+/* XXX */
+static __inline void
+popmap_clear_all(popmap_t popmap[])
+{
+
+	memset(popmap, 0, NBPOPMAP * sizeof(*popmap));
+}
+
 /*
  * Set a bit in the population map.
  */
@@ -169,9 +177,9 @@ struct vm_reserv {
 	vm_pindex_t	pindex;			/* offset within object */
 	vm_page_t	pages;			/* first page of a superpage */
 	int		popcnt;			/* # of pages in use */
-	uint16_t	pgcount;		/* pages allocated to object */
 	uint8_t		flags;
 #define	VM_RESERV_F_INPARTPOPQ	0x01
+#define	VM_RESERV_F_SPLIT	0x02
 	uint8_t		spare;
 	popmap_t	popmap[NPOPMAP];	/* bit vector of used pages */
 };
@@ -915,6 +923,52 @@ vm_reserv_level_iffullpop(vm_page_t m)
 	return (rv->popcnt == VM_LEVEL_0_NPAGES ? 0 : -1);
 }
 
+/* XXX */
+void
+vm_reserv_object_remove(struct pglist *pgl, void (*cb)(vm_page_t))
+{
+	vm_page_t m;
+#ifdef INVARIANTS
+	vm_page_t next;
+#endif
+	vm_pindex_t end_offset;
+	vm_reserv_t rv;
+
+	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
+
+	if (TAILQ_EMPTY(pgl))
+		return;
+
+	end_offset = TAILQ_LAST(pgl, pglist)->pindex + 1;
+	TAILQ_FOREACH(m, pgl, listq) {
+#ifdef INVARIANTS
+		next = TAILQ_NEXT(m, listq);
+		MPASS(next == NULL || (next->pindex > m->pindex &&
+		    next->object == m->object));
+		MPASS(rv->object == m->object);
+#endif
+		rv = vm_reserv_from_page(m);
+		if ((rv->flags & VM_RESERV_F_SPLIT) != 0 ||
+		    rv->pindex - VM_RESERV_INDEX(rv->object, m->pindex) +
+		    VM_LEVEL_0_NPAGES > end_offset) {
+			cb(m);
+			continue;
+		}
+
+		popmap_clear_all(rv->popmap);
+		rv->popcnt = 0;
+		rv->object = NULL;
+		LIST_REMOVE(rv, objq);
+		if ((rv->flags & VM_RESERV_F_INPARTPOPQ) != 0) {
+			rv->flags &= ~VM_RESERV_F_INPARTPOPQ;
+			TAILQ_REMOVE(&vm_rvq_partpop, rv, partpopq);
+		} else
+			rv->pages->psind = 0;
+		vm_phys_free_pages(rv->pages, VM_LEVEL_0_ORDER);
+		vm_phys_freecnt_adj(rv->pages, VM_LEVEL_0_ORDER);
+	}
+}
+
 /*
  * Breaks the given partially populated reservation, releasing its free pages
  * to the physical memory allocator.
@@ -1054,9 +1108,10 @@ vm_reserv_reclaim_contig(u_long npages, vm_paddr_t low, vm_paddr_t high,
  */
 void
 vm_reserv_rename(vm_page_t m, vm_object_t new_object, vm_object_t old_object,
-    vm_pindex_t old_object_offset)
+    vm_pindex_t old_object_offset, vm_pindex_t end_offset)
 {
 	vm_reserv_t rv;
+	vm_pindex_t first, old_pindex;
 
 	VM_OBJECT_ASSERT_WLOCKED(new_object);
 	rv = vm_reserv_from_page(m);
@@ -1067,6 +1122,11 @@ vm_reserv_rename(vm_page_t m, vm_object_t new_object, vm_object_t old_object,
 			LIST_INSERT_HEAD(&new_object->rvq, rv, objq);
 			rv->object = new_object;
 			rv->pindex -= old_object_offset;
+			old_pindex = m->pindex + old_object_offset;
+			first = old_pindex -
+			    VM_RESERV_INDEX(old_object, old_pindex);
+			if (first + VM_LEVEL_0_NPAGES > end_offset)
+				rv->flags |= VM_RESERV_F_SPLIT;
 		}
 		mtx_unlock(&vm_page_queue_free_mtx);
 	}

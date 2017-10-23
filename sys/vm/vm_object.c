@@ -1489,7 +1489,8 @@ retry:
 		 * would be more costly than unconditionally renaming the
 		 * reservation.
 		 */
-		vm_reserv_rename(m, new_object, orig_object, offidxstart);
+		vm_reserv_rename(m, new_object, orig_object, offidxstart,
+		    size);
 #endif
 		if (orig_object->type == OBJT_SWAP)
 			vm_page_xbusy(m);
@@ -1603,7 +1604,7 @@ vm_object_collapse_scan(vm_object_t object, int op)
 {
 	vm_object_t backing_object;
 	vm_page_t next, p, pp;
-	vm_pindex_t backing_offset_index, new_pindex;
+	vm_pindex_t backing_offset_index, new_pindex, old_pindex;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	VM_OBJECT_ASSERT_WLOCKED(object->backing_object);
@@ -1707,6 +1708,7 @@ vm_object_collapse_scan(vm_object_t object, int op)
 		 * If the page was mapped to a process, it can remain mapped
 		 * through the rename.  vm_page_rename() will dirty the page.
 		 */
+		old_pindex = p->pindex;
 		if (vm_page_rename(p, object, new_pindex)) {
 			next = vm_object_collapse_scan_wait(object, NULL, next,
 			    op);
@@ -1723,7 +1725,8 @@ vm_object_collapse_scan(vm_object_t object, int op)
 		 * Rename the reservation.
 		 */
 		vm_reserv_rename(p, object, backing_object,
-		    backing_offset_index);
+		    backing_offset_index, op == OBSC_COLLAPSE_WAIT ?
+		    backing_object->size : old_pindex);
 #endif
 	}
 	return (true);

@@ -2865,13 +2865,17 @@ vm_page_free_phys(vm_page_t m)
 void
 vm_page_free_phys_pglist(struct pglist *tq)
 {
-	vm_page_t m;
 
 	if (TAILQ_EMPTY(tq))
 		return;
 	mtx_lock(&vm_page_queue_free_mtx);
+#if VM_NRESERVLEVEL > 0
+	if (!TAILQ_EMPTY(tq))
+		vm_reserv_object_remove(tq, vm_page_free_phys);
+#else
 	TAILQ_FOREACH(m, tq, listq)
 		vm_page_free_phys(m);
+#endif
 	vm_page_free_wakeup();
 	mtx_unlock(&vm_page_queue_free_mtx);
 }
