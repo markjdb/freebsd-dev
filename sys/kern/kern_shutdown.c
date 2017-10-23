@@ -1247,9 +1247,10 @@ dump_write_header(struct dumperinfo *di, struct kerneldumpheader *kdh,
  *     +-----------+------+-----+----------------------------+------+
  *                   1 blk  opt <------- dump extent --------> 1 blk
  *
- * Dumps are written starting at the beginning of the extent. Uncompressed
- * dumps will use the entire extent, but compressed dumps typically will not.
- * The true length of the dump is recorded in the leading and trailing headers.
+ * Dumps written using dump_append() start at the beginning of the extent.
+ * Uncompressed dumps will use the entire extent, but compressed dumps typically
+ * will not. The true length of the dump is recorded in the leading and trailing
+ * headers once the dump has been completed.
  */
 int
 dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh)
