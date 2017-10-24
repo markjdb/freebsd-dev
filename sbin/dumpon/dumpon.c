@@ -190,16 +190,13 @@ main(int argc, char *argv[])
 	int ch;
 	int i, fd;
 	int do_listdumpdev = 0;
-	bool compress, enable;
+	bool enable, gzip;
 
-	compress = false;
+	gzip = false;
 	pubkeyfile = NULL;
 
-	while ((ch = getopt(argc, argv, "ck:lv")) != -1)
+	while ((ch = getopt(argc, argv, "k:lvz")) != -1)
 		switch((char)ch) {
-		case 'c':
-			compress = true;
-			break;
 		case 'k':
 			pubkeyfile = optarg;
 			break;
@@ -208,6 +205,9 @@ main(int argc, char *argv[])
 			break;
 		case 'v':
 			verbose = 1;
+			break;
+		case 'z':
+			gzip = true;
 			break;
 		default:
 			usage();
@@ -252,7 +252,7 @@ main(int argc, char *argv[])
 		if (fd < 0)
 			err(EX_OSFILE, "%s", dumpdev);
 
-		if (!compress)
+		if (!gzip)
 			check_size(fd, dumpdev);
 
 		bzero(&kda, sizeof(kda));
@@ -266,7 +266,8 @@ main(int argc, char *argv[])
 #endif
 
 		kda.kda_enable = 1;
-		kda.kda_compress = compress;
+		kda.kda_compression = gzip ? KERNELDUMP_COMP_GZIP :
+		    KERNELDUMP_COMP_NONE;
 		i = ioctl(fd, DIOCSKERNELDUMP, &kda);
 		explicit_bzero(kda.kda_encryptedkey, kda.kda_encryptedkeysize);
 		free(kda.kda_encryptedkey);

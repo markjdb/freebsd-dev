@@ -96,8 +96,12 @@ the counter will restart from
 Print out some additional debugging information.
 Specify twice for more information.
 .It Fl z
-Compress the core dump and kernel (see
+Compress the dump (see
 .Xr gzip 1 ) .
+The dump may already be compressed if the kernel was configured to
+do so by
+.Xr dumpon 8 .
+In this case, the option has no effect.
 .El
 .Pp
 The

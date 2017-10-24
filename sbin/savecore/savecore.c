@@ -122,8 +122,8 @@ printheader(xo_handle_t *xo, const struct kerneldumpheader *h,
 	xo_emit_h(xo, "{P:  }{Lwc:Blocksize}{:blocksize/%d}\n",
 	    dtoh32(h->blocksize));
 	xo_emit_h(xo, "{P:  }{Lwc:Compression}{:compression/%s}\n",
-	    h->compression == KERNELDUMP_COMPRESSION_DEFLATE ?
-	    "DEFLATE" : "none");
+	    h->compression == KERNELDUMP_COMP_GZIP ?
+	    "gzip" : "none");
 
 	t = dtoh64(h->dumptime);
 	xo_emit_h(xo, "{P:  }{Lwc:Dumptime}{:dumptime/%s}", ctime(&t));
@@ -609,10 +609,19 @@ DoFile(const char *savedir, const char *device)
 			if (force == 0)
 				goto closefd;
 		}
-		if (kdhl.compression == KERNELDUMP_COMPRESSION_DEFLATE) {
+		switch (kdhl.compression) {
+		case KERNELDUMP_COMP_NONE:
+			break;
+		case KERNELDUMP_COMP_GZIP:
 			if (compress && verbose)
 				printf("dump is already compressed\n");
+			compress = false;
 			iscompressed = true;
+			break;
+		default:
+			syslog(LOG_ERR, "unknown compression type %d on %s",
+			    kdhl.compression, device);
+			break;
 		}
 	} else {
 		if (verbose)

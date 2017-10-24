@@ -337,15 +337,15 @@ struct dumperinfo {
 	off_t	mediasize;	/* Space available in bytes. */
 	void	*blockbuf;	/* Buffer for padding shorter dump blocks */
 	off_t	dumpoff;	/* Offset of ongoing kernel dump. */
-	size_t	resid;		/* Residual data from compression stream. */
 	struct kerneldumpcrypto	*kdc; /* Kernel dump crypto. */
+	struct kerneldumpgz *kdgz; /* Kernel dump compression. */
 };
 
 extern int dumping;		/* system is dumping */
 
 int doadump(boolean_t);
 int set_dumper(struct dumperinfo *di, const char *devname, struct thread *td,
-    bool compress, uint8_t encrypt, const uint8_t *key,
+    uint8_t compression, uint8_t encryption, const uint8_t *key,
     uint32_t encryptedkeysize, const uint8_t *encryptedkey);
 
 int dump_start(struct dumperinfo *di, struct kerneldumpheader *kdh);

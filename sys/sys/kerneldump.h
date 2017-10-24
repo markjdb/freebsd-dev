@@ -55,6 +55,9 @@
 #define	htod64(x)	(x)
 #endif
 
+#define	KERNELDUMP_COMP_NONE		0
+#define	KERNELDUMP_COMP_GZIP		1
+
 #define	KERNELDUMP_ENC_NONE		0
 #define	KERNELDUMP_ENC_AES_256_CBC	1
 
@@ -86,14 +89,12 @@ struct kerneldumpheader {
 #define	KERNELDUMP_POWERPC_VERSION	1
 #define	KERNELDUMP_RISCV_VERSION	1
 #define	KERNELDUMP_SPARC64_VERSION	1
-	uint64_t	dumplength;
+	uint64_t	dumplength;		/* excl headers */
 	uint64_t	dumpextent;
 	uint64_t	dumptime;
 	uint32_t	dumpkeysize;
 	uint32_t	blocksize;
 	uint8_t		compression;
-#define	KERNELDUMP_COMPRESSION_UNCOMPRESSED 0
-#define	KERNELDUMP_COMPRESSION_DEFLATE	1
 	char		hostname[64];
 	char		versionstring[192];
 	char		panicstring[179];
