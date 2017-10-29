@@ -6,6 +6,9 @@
 __BOOT_DEFS_MK__=${MFILE}
 
 BOOTSRC=	${SRCTOP}/sys/boot
+EFISRC=		${BOOTSRC}/efi
+EFIINC=		${EFISRC}/include
+EFIINCMD=	${EFIINC}/${MACHINE}
 FDTSRC=		${BOOTSRC}/fdt
 FICLSRC=	${BOOTSRC}/ficl
 LDRSRC=		${BOOTSRC}/common
@@ -14,6 +17,9 @@ SYSDIR=		${SRCTOP}/sys
 UBOOTSRC=	${BOOTSRC}/uboot
 
 BOOTOBJ=	${OBJTOP}/sys/boot
+
+# BINDIR is where we install
+BINDIR?=	/boot
 
 # NB: The makefiles depend on these being empty when we don't build forth.
 .if ${MK_FORTH} != "no"
