@@ -4217,24 +4217,13 @@ dtrace_dif_subr(uint_t subr, uint_t rd, uint64_t *regs,
 	volatile uint16_t *flags = &cpu_core[curcpu].cpuc_dtrace_flags;
 	volatile uintptr_t *illval = &cpu_core[curcpu].cpuc_dtrace_illval;
 	dtrace_vstate_t *vstate = &state->dts_vstate;
-
-#ifdef illumos
-	union {
-		mutex_impl_t mi;
-		uint64_t mx;
-	} m;
-
-	union {
-		krwlock_t ri;
-		uintptr_t rw;
-	} r;
-#else
+	struct lock_class *lclass;
 	struct thread *lowner;
 	union {
 		struct lock_object *li;
 		uintptr_t lx;
 	} l;
-#endif
+	int owned;
 
 	switch (subr) {
 	case DIF_SUBR_RAND:
@@ -4242,186 +4231,93 @@ dtrace_dif_subr(uint_t subr, uint_t rd, uint64_t *regs,
 		    state->dts_rstate[curcpu]);
 		break;
 
-#ifdef illumos
 	case DIF_SUBR_MUTEX_OWNED:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (kmutex_t),
-		    mstate, vstate)) {
-			regs[rd] = 0;
-			break;
-		}
-
-		m.mx = dtrace_load64(tupregs[0].dttk_value);
-		if (MUTEX_TYPE_ADAPTIVE(&m.mi))
-			regs[rd] = MUTEX_OWNER(&m.mi) != MUTEX_NO_OWNER;
-		else
-			regs[rd] = LOCK_HELD(&m.mi.m_spin.m_spinlock);
-		break;
-
 	case DIF_SUBR_MUTEX_OWNER:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (kmutex_t),
+		if (!dtrace_canload(tupregs[0].dttk_value, sizeof(struct mtx),
 		    mstate, vstate)) {
 			regs[rd] = 0;
 			break;
 		}
-
-		m.mx = dtrace_load64(tupregs[0].dttk_value);
-		if (MUTEX_TYPE_ADAPTIVE(&m.mi) &&
-		    MUTEX_OWNER(&m.mi) != MUTEX_NO_OWNER)
-			regs[rd] = (uintptr_t)MUTEX_OWNER(&m.mi);
-		else
+		l.lx = dtrace_loadptr((uintptr_t)&tupregs[0].dttk_value);
+		lclass = LOCK_CLASS(l.li);
+		if (lclass != &lock_class_mtx_sleep &&
+		    lclass != &lock_class_mtx_spin) {
 			regs[rd] = 0;
+			break;
+		}
+		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
+		owned = lclass->lc_owner(l.li, &lowner);
+		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
+		regs[rd] = (subr == DIF_SUBR_MUTEX_OWNED ? owned :
+		    (uintptr_t)lowner);
 		break;
 
 	case DIF_SUBR_MUTEX_TYPE_ADAPTIVE:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (kmutex_t),
-		    mstate, vstate)) {
-			regs[rd] = 0;
-			break;
-		}
-
-		m.mx = dtrace_load64(tupregs[0].dttk_value);
-		regs[rd] = MUTEX_TYPE_ADAPTIVE(&m.mi);
-		break;
-
 	case DIF_SUBR_MUTEX_TYPE_SPIN:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (kmutex_t),
+		if (!dtrace_canload(tupregs[0].dttk_value, sizeof(struct mtx),
 		    mstate, vstate)) {
 			regs[rd] = 0;
 			break;
 		}
-
-		m.mx = dtrace_load64(tupregs[0].dttk_value);
-		regs[rd] = MUTEX_TYPE_SPIN(&m.mi);
+		l.lx = dtrace_loadptr((uintptr_t)&tupregs[0].dttk_value);
+		lclass = LOCK_CLASS(l.li);
+		if (subr == DIF_SUBR_MUTEX_TYPE_ADAPTIVE)
+			regs[rd] = lclass == &lock_class_mtx_sleep;
+		else
+			regs[rd] = lclass == &lock_class_mtx_spin;
 		break;
 
-	case DIF_SUBR_RW_READ_HELD: {
-		uintptr_t tmp;
-
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (uintptr_t),
-		    mstate, vstate)) {
-			regs[rd] = 0;
-			break;
-		}
-
-		r.rw = dtrace_loadptr(tupregs[0].dttk_value);
-		regs[rd] = _RW_READ_HELD(&r.ri, tmp);
-		break;
-	}
-
+	case DIF_SUBR_RW_READ_HELD:
 	case DIF_SUBR_RW_WRITE_HELD:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (krwlock_t),
-		    mstate, vstate)) {
-			regs[rd] = 0;
-			break;
-		}
-
-		r.rw = dtrace_loadptr(tupregs[0].dttk_value);
-		regs[rd] = _RW_WRITE_HELD(&r.ri);
-		break;
-
 	case DIF_SUBR_RW_ISWRITER:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (krwlock_t),
-		    mstate, vstate)) {
-			regs[rd] = 0;
-			break;
-		}
-
-		r.rw = dtrace_loadptr(tupregs[0].dttk_value);
-		regs[rd] = _RW_ISWRITER(&r.ri);
-		break;
-
-#else /* !illumos */
-	case DIF_SUBR_MUTEX_OWNED:
 		if (!dtrace_canload(tupregs[0].dttk_value,
-			sizeof (struct lock_object), mstate, vstate)) {
+		    sizeof(struct rwlock), mstate, vstate)) {
 			regs[rd] = 0;
 			break;
 		}
 		l.lx = dtrace_loadptr((uintptr_t)&tupregs[0].dttk_value);
-		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-		regs[rd] = LOCK_CLASS(l.li)->lc_owner(l.li, &lowner);
-		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
-		break;
-
-	case DIF_SUBR_MUTEX_OWNER:
-		if (!dtrace_canload(tupregs[0].dttk_value,
-			sizeof (struct lock_object), mstate, vstate)) {
+		if ((lclass = LOCK_CLASS(l.li)) != &lock_class_rw) {
 			regs[rd] = 0;
 			break;
 		}
-		l.lx = dtrace_loadptr((uintptr_t)&tupregs[0].dttk_value);
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-		LOCK_CLASS(l.li)->lc_owner(l.li, &lowner);
+		regs[rd] = lclass->lc_owner(l.li, &lowner);
 		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
-		regs[rd] = (uintptr_t)lowner;
-		break;
-
-	case DIF_SUBR_MUTEX_TYPE_ADAPTIVE:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (struct mtx),
-		    mstate, vstate)) {
-			regs[rd] = 0;
-			break;
+		if (regs[rd]) {
+			if (subr == DIF_SUBR_RW_READ_HELD)
+				regs[rd] = lowner == NULL;
+			else if (subr == DIF_SUBR_RW_WRITE_HELD)
+				regs[rd] = lowner != NULL;
+			else
+				regs[rd] = lowner == curthread;
 		}
-		l.lx = dtrace_loadptr((uintptr_t)&tupregs[0].dttk_value);
-		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-		regs[rd] = (LOCK_CLASS(l.li)->lc_flags & LC_SLEEPLOCK) != 0;
-		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
 		break;
 
-	case DIF_SUBR_MUTEX_TYPE_SPIN:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (struct mtx),
-		    mstate, vstate)) {
-			regs[rd] = 0;
-			break;
-		}
-		l.lx = dtrace_loadptr((uintptr_t)&tupregs[0].dttk_value);
-		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-		regs[rd] = (LOCK_CLASS(l.li)->lc_flags & LC_SPINLOCK) != 0;
-		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
-		break;
-
-	case DIF_SUBR_RW_READ_HELD: 
 	case DIF_SUBR_SX_SHARED_HELD: 
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (uintptr_t),
+	case DIF_SUBR_SX_EXCLUSIVE_HELD:
+	case DIF_SUBR_SX_ISEXCLUSIVE:
+		if (!dtrace_canload(tupregs[0].dttk_value, sizeof(struct sx),
 		    mstate, vstate)) {
 			regs[rd] = 0;
 			break;
 		}
 		l.lx = dtrace_loadptr((uintptr_t)&tupregs[0].dttk_value);
-		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-		regs[rd] = LOCK_CLASS(l.li)->lc_owner(l.li, &lowner) &&
-		    lowner == NULL;
-		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
-		break;
-
-	case DIF_SUBR_RW_WRITE_HELD:
-	case DIF_SUBR_SX_EXCLUSIVE_HELD:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (uintptr_t),
-		    mstate, vstate)) {
+		if ((lclass = LOCK_CLASS(l.li)) != &lock_class_sx) {
 			regs[rd] = 0;
 			break;
 		}
-		l.lx = dtrace_loadptr(tupregs[0].dttk_value);
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-		regs[rd] = LOCK_CLASS(l.li)->lc_owner(l.li, &lowner) &&
-		    lowner != NULL;
+		regs[rd] = lclass->lc_owner(l.li, &lowner);
 		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
-		break;
-
-	case DIF_SUBR_RW_ISWRITER:
-	case DIF_SUBR_SX_ISEXCLUSIVE:
-		if (!dtrace_canload(tupregs[0].dttk_value, sizeof (uintptr_t),
-		    mstate, vstate)) {
-			regs[rd] = 0;
-			break;
+		if (regs[rd]) {
+			if (subr == DIF_SUBR_SX_SHARED_HELD)
+				regs[rd] = lowner == NULL;
+			else if (subr == DIF_SUBR_SX_EXCLUSIVE_HELD)
+				regs[rd] = lowner != NULL;
+			else
+				regs[rd] = lowner == curthread;
 		}
-		l.lx = dtrace_loadptr(tupregs[0].dttk_value);
-		DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-		LOCK_CLASS(l.li)->lc_owner(l.li, &lowner);
-		DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
-		regs[rd] = (lowner == curthread);
 		break;
-#endif /* illumos */
 
 	case DIF_SUBR_BCOPY: {
 		/*
