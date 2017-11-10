@@ -29,20 +29,17 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include "opt_kdb.h"
-
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/dtrace_bsd.h>
 #include <sys/eventhandler.h>
-#include <sys/kdb.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/proc.h>
-#include <sys/dtrace_bsd.h>
 #include <sys/sysctl.h>
 #include <sys/sysent.h>
 
-#define KDTRACE_PROC_SIZE	64
+#define	KDTRACE_PROC_SIZE	64
 #define	KDTRACE_THREAD_SIZE	256
 
 FEATURE(kdtrace_hooks,
@@ -60,7 +57,7 @@ systrace_probe_func_t __read_frequently	systrace_probe_func;
 
 /* Return the DTrace process data size compiled in the kernel hooks. */
 size_t
-kdtrace_proc_size()
+kdtrace_proc_size(void)
 {
 
 	return (KDTRACE_PROC_SIZE);
@@ -70,7 +67,7 @@ static void
 kdtrace_proc_ctor(void *arg __unused, struct proc *p)
 {
 
-	p->p_dtrace = malloc(KDTRACE_PROC_SIZE, M_KDTRACE, M_WAITOK|M_ZERO);
+	p->p_dtrace = malloc(KDTRACE_PROC_SIZE, M_KDTRACE, M_WAITOK | M_ZERO);
 }
 
 static void
@@ -85,7 +82,7 @@ kdtrace_proc_dtor(void *arg __unused, struct proc *p)
 
 /* Return the DTrace thread data size compiled in the kernel hooks. */
 size_t
-kdtrace_thread_size()
+kdtrace_thread_size(void)
 {
 
 	return (KDTRACE_THREAD_SIZE);
@@ -95,7 +92,8 @@ static void
 kdtrace_thread_ctor(void *arg __unused, struct thread *td)
 {
 
-	td->td_dtrace = malloc(KDTRACE_THREAD_SIZE, M_KDTRACE, M_WAITOK|M_ZERO);
+	td->td_dtrace = malloc(KDTRACE_THREAD_SIZE, M_KDTRACE,
+	    M_WAITOK | M_ZERO);
 }
 
 static void
@@ -108,9 +106,6 @@ kdtrace_thread_dtor(void *arg __unused, struct thread *td)
 	}
 }
 
-/*
- *  Initialise the kernel DTrace hooks.
- */
 static void
 init_dtrace(void *dummy __unused)
 {
@@ -124,5 +119,4 @@ init_dtrace(void *dummy __unused)
 	EVENTHANDLER_REGISTER(thread_dtor, kdtrace_thread_dtor, NULL,
 	    EVENTHANDLER_PRI_ANY);
 }
-
 SYSINIT(kdtrace, SI_SUB_KDTRACE, SI_ORDER_FIRST, init_dtrace, NULL);
