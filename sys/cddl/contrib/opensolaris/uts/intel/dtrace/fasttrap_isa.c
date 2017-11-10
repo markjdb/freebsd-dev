@@ -706,16 +706,9 @@ fasttrap_return_common(struct reg *rp, uintptr_t pc, pid_t pid,
 	fasttrap_tracepoint_t *tp;
 	fasttrap_bucket_t *bucket;
 	fasttrap_id_t *id;
-#ifdef illumos
-	kmutex_t *pid_mtx;
-
-	pid_mtx = &cpu_core[CPU->cpu_id].cpuc_pid_lock;
-	mutex_enter(pid_mtx);
-#else
 	struct rm_priotracker tracker;
 
 	rm_rlock(&fasttrap_tp_lock, &tracker);
-#endif
 	bucket = &fasttrap_tpoints.fth_table[FASTTRAP_TPOINTS_INDEX(pid, pc)];
 
 	for (tp = bucket->ftb_data; tp != NULL; tp = tp->ftt_next) {
@@ -730,11 +723,7 @@ fasttrap_return_common(struct reg *rp, uintptr_t pc, pid_t pid,
 	 * is not essential to the correct execution of the process.
 	 */
 	if (tp == NULL) {
-#ifdef illumos
-		mutex_exit(pid_mtx);
-#else
 		rm_runlock(&fasttrap_tp_lock, &tracker);
-#endif
 		return;
 	}
 
@@ -755,11 +744,7 @@ fasttrap_return_common(struct reg *rp, uintptr_t pc, pid_t pid,
 		    rp->r_rax, rp->r_rbx, 0, 0);
 	}
 
-#ifdef illumos
-	mutex_exit(pid_mtx);
-#else
 	rm_runlock(&fasttrap_tp_lock, &tracker);
-#endif
 }
 
 static void
@@ -969,9 +954,6 @@ fasttrap_pid_probe(struct trapframe *tf)
 	uintptr_t pc;
 	uintptr_t new_pc = 0;
 	fasttrap_bucket_t *bucket;
-#ifdef illumos
-	kmutex_t *pid_mtx;
-#endif
 	fasttrap_tracepoint_t *tp, tp_local;
 	pid_t pid;
 	dtrace_icookie_t cookie;
@@ -1017,8 +999,6 @@ fasttrap_pid_probe(struct trapframe *tf)
 	}
 
 	pid = p->p_pid;
-	pid_mtx = &cpu_core[CPU->cpu_id].cpuc_pid_lock;
-	mutex_enter(pid_mtx);
 #else
 	pp = p;
 	sx_slock(&proctree_lock);
@@ -1028,9 +1008,9 @@ fasttrap_pid_probe(struct trapframe *tf)
 	sx_sunlock(&proctree_lock);
 	pp = NULL;
 
-	rm_rlock(&fasttrap_tp_lock, &tracker);
 #endif
 
+	rm_rlock(&fasttrap_tp_lock, &tracker);
 	bucket = &fasttrap_tpoints.fth_table[FASTTRAP_TPOINTS_INDEX(pid, pc)];
 
 	/*
@@ -1048,11 +1028,7 @@ fasttrap_pid_probe(struct trapframe *tf)
 	 * fasttrap_ioctl), or somehow we have mislaid this tracepoint.
 	 */
 	if (tp == NULL) {
-#ifdef illumos
-		mutex_exit(pid_mtx);
-#else
 		rm_runlock(&fasttrap_tp_lock, &tracker);
-#endif
 		return (-1);
 	}
 
@@ -1173,11 +1149,7 @@ fasttrap_pid_probe(struct trapframe *tf)
 	 * tracepoint again later if we need to light up any return probes.
 	 */
 	tp_local = *tp;
-#ifdef illumos
-	mutex_exit(pid_mtx);
-#else
 	rm_runlock(&fasttrap_tp_lock, &tracker);
-#endif
 	tp = &tp_local;
 
 	/*
