@@ -116,6 +116,9 @@ PMC_SOFT_DECLARE( , , lock, failed);
  */
 #define	sx_recursed(sx)		((sx)->sx_recurse != 0)
 
+#define	lv_sx_owner(v)							\
+	(((v) & SX_LOCK_SHARED) ? NULL : (struct thread *)SX_OWNER(v))
+
 static void	assert_sx(const struct lock_object *lock, int what);
 #ifdef DDB
 static void	db_show_sx(const struct lock_object *lock);
