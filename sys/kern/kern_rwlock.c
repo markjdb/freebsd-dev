@@ -184,12 +184,13 @@ unlock_rw(struct lock_object *lock)
 int
 owner_rw(const struct lock_object *lock, struct thread **owner)
 {
-	const struct rwlock *rw = (const struct rwlock *)lock;
-	uintptr_t x = rw->rw_lock;
+	const struct rwlock *rw;
+	uintptr_t x;
 
-	*owner = rw_wowner(rw);
-	return ((x & RW_LOCK_READ) != 0 ?  (RW_READERS(x) != 0) :
-	    (*owner != NULL));
+	rw = (const struct rwlock *)lock;
+	x = rw->rw_lock;
+	*owner = lv_rw_wowner(x);
+	return (*owner != NULL || RW_READERS(x) != 0);
 }
 #endif
 

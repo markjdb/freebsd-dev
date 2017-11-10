@@ -205,9 +205,8 @@ owner_sx(const struct lock_object *lock, struct thread **owner)
 
 	sx = (const struct sx *)lock;
 	x = sx->sx_lock;
-	*owner = NULL;
-	return ((x & SX_LOCK_SHARED) != 0 ? (SX_SHARERS(x) != 0) :
-	    ((*owner = (struct thread *)SX_OWNER(x)) != NULL));
+	*owner = lv_sx_owner(x);
+	return (*owner != NULL || SX_SHARERS(x) != 0);
 }
 #endif
 
