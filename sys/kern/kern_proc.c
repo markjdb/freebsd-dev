@@ -1479,11 +1479,9 @@ sysctl_kern_proc(SYSCTL_HANDLER_ARGS)
 			/*
 			 * Skip embryonic processes.
 			 */
-			PROC_LOCK(p);
-			if (p->p_state == PRS_NEW) {
-				PROC_UNLOCK(p);
+			if (p->p_state == PRS_NEW)
 				continue;
-			}
+			PROC_LOCK(p);
 			KASSERT(p->p_ucred != NULL,
 			    ("process credential is NULL for non-NEW proc"));
 			/*
@@ -1956,7 +1954,7 @@ sysctl_kern_proc_args(SYSCTL_HANDLER_ARGS)
 	if (error != 0 || req->newptr == NULL)
 		return (error);
 
-	if (req->newlen + sizeof(struct pargs) > ps_arg_cache_limit)
+	if (req->newlen > ps_arg_cache_limit - sizeof(struct pargs))
 		return (ENOMEM);
 	newpa = pargs_alloc(req->newlen);
 	error = SYSCTL_IN(req, newpa->ar_args, req->newlen);
