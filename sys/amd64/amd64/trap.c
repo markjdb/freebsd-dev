@@ -173,6 +173,9 @@ trap(struct trapframe *frame)
 #endif
 	int signo, ucode;
 	u_int type;
+#ifdef KDTRACE_HOOKS
+	uint8_t instr[2];
+#endif
 
 	td = curthread;
 	p = td->td_proc;
@@ -278,6 +281,15 @@ trap(struct trapframe *frame)
 				if (dtrace_pid_probe_ptr != NULL &&
 				    dtrace_pid_probe_ptr(frame) == 0)
 					return;
+
+				/* Check for 0xcc or int3. */
+				if ((frame->tf_rip >= 2 || frame->tf_rip < 0) &&
+				    copyin((void *)(frame->tf_rip - 2), &instr,
+				    sizeof(instr)) == 0 && instr[1] != 0xcc &&
+				    (instr[1] != 0x3 || instr[0] != 0xcd)) {
+					frame->tf_rip--; /* XXX */
+					goto userret; /* XXX */
+				}
 			}
 #endif
 			frame->tf_rflags &= ~PSL_T;
