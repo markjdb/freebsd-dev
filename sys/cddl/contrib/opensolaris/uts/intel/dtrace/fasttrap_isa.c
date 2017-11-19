@@ -993,13 +993,6 @@ fasttrap_pid_probe(struct trapframe *tf)
 	 * parent. We know that there's only one thread of control in such a
 	 * process: this one.
 	 */
-#ifdef illumos
-	while (p->p_flag & SVFORK) {
-		p = p->p_parent;
-	}
-
-	pid = p->p_pid;
-#else
 	pp = p;
 	sx_slock(&proctree_lock);
 	while (pp->p_vmspace == pp->p_pptr->p_vmspace)
@@ -1007,8 +1000,6 @@ fasttrap_pid_probe(struct trapframe *tf)
 	pid = pp->p_pid;
 	sx_sunlock(&proctree_lock);
 	pp = NULL;
-
-#endif
 
 	rm_rlock(&fasttrap_tp_lock, &tracker);
 	bucket = &fasttrap_tpoints.fth_table[FASTTRAP_TPOINTS_INDEX(pid, pc)];
@@ -1761,9 +1752,10 @@ int
 fasttrap_return_probe(struct trapframe *tf)
 {
 	struct reg reg, *rp;
-	proc_t *p = curproc;
+	proc_t *p = curproc, *pp;
 	uintptr_t pc = curthread->t_dtrace_pc;
 	uintptr_t npc = curthread->t_dtrace_npc;
+	pid_t pid;
 
 	fill_frame_regs(tf, &reg);
 	rp = &reg;
@@ -1773,16 +1765,18 @@ fasttrap_return_probe(struct trapframe *tf)
 	curthread->t_dtrace_scrpc = 0;
 	curthread->t_dtrace_astpc = 0;
 
-#ifdef illumos
 	/*
 	 * Treat a child created by a call to vfork(2) as if it were its
 	 * parent. We know that there's only one thread of control in such a
 	 * process: this one.
 	 */
-	while (p->p_flag & SVFORK) {
-		p = p->p_parent;
-	}
-#endif
+	pp = p;
+	sx_slock(&proctree_lock);
+	while (pp->p_vmspace == pp->p_pptr->p_vmspace)
+		pp = pp->p_pptr;
+	pid = pp->p_pid;
+	sx_sunlock(&proctree_lock);
+	pp = NULL;
 
 	/*
 	 * We set rp->r_rip to the address of the traced instruction so
@@ -1791,7 +1785,7 @@ fasttrap_return_probe(struct trapframe *tf)
 	 */
 	rp->r_rip = pc;
 
-	fasttrap_return_common(rp, pc, p->p_pid, npc);
+	fasttrap_return_common(rp, pc, pid, npc);
 
 	return (0);
 }
