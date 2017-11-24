@@ -1,5 +1,6 @@
 /*-
  * Copyright 2008 John Birrell <jb@FreeBSD.org>
+ * Copyright 2017 Mark Johnston <markj@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -9,7 +10,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -21,19 +22,25 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
- *
  */
+
 #include <sys/cdefs.h>
-#include <sys/types.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/systm.h>
-
 #include <sys/conf.h>
 #include <sys/kernel.h>
+#include <sys/kthread.h>
+#include <sys/lock.h>
 #include <sys/module.h>
+#include <sys/mutex.h>
+#include <sys/proc.h>
+#include <sys/rwlock.h>
+#include <sys/sched.h>
 #include <sys/sdt.h>
+#include <sys/smp.h>
+#include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/vnode.h>
 
@@ -42,9 +49,18 @@ SDT_PROVIDER_DEFINE(test);
 SDT_PROBE_DEFINE7(test, , , sdttest, "int", "int", "int", "int", "int",
     "int", "int");
 
+SDT_PROBE_DEFINE1(test, , , adaptive__mutex, "struct mtx *");
+SDT_PROBE_DEFINE2(test, , , adaptive__mutex_test, "struct mtx *", "int");
+SDT_PROBE_DEFINE1(test, , , spin__mutex, "struct mtx *");
+SDT_PROBE_DEFINE2(test, , , spin__mutex_test, "struct mtx *", "int");
+SDT_PROBE_DEFINE1(test, , , rw__lock, "struct rwlock *");
+SDT_PROBE_DEFINE2(test, , , rw__lock_test, "struct rwlock *", "int");
+SDT_PROBE_DEFINE1(test, , , sx__lock, "struct sx *");
+SDT_PROBE_DEFINE2(test, , , sx__lock_test, "struct sx *", "int");
+
 /*
  * These are variables that the DTrace test suite references in the
- * Solaris kernel. We define them here so that the tests function 
+ * Solaris kernel. We define them here so that the tests function
  * unaltered.
  */
 int	kmem_flags;
@@ -52,6 +68,251 @@ int	kmem_flags;
 typedef struct vnode vnode_t;
 vnode_t dummy;
 vnode_t *rootvp = &dummy;
+
+static SYSCTL_NODE(_debug, OID_AUTO, dtrace_test, CTLFLAG_RD, 0, "");
+
+/* Helper thread for use in triggering lockstat *-block probes. */
+static void
+spinner(void *arg __unused)
+{
+	struct thread *td;
+
+	td = curthread;
+	thread_lock(td);
+	sched_bind(td, CPU_FIRST());
+	thread_unlock(td);
+
+	DELAY(200000);
+
+	kthread_exit();
+}
+
+/* Locks for lockstat tests. */
+static struct mtx dt_mutex;
+MTX_SYSINIT(dt_mutex, &dt_mutex, "dtrace test mutex", MTX_DEF);
+static struct mtx dt_spin_mutex;
+MTX_SYSINIT(dt_spin_mutex, &dt_spin_mutex, "dtrace test spin mutex", MTX_SPIN);
+static struct rwlock dt_rwlock;
+RW_SYSINIT(dt_rwlock, &dt_rwlock, "dtrace test rw lock");
+static struct sx dt_sxlock;
+SX_SYSINIT(dt_sxlock, &dt_sxlock, "dtrace test sx lock");
+
+static int
+dtrace_test_mutex(SYSCTL_HANDLER_ARGS)
+{
+	int val, error;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+	else if (val == 0)
+		return (0);
+
+	SDT_PROBE2(test, , , adaptive__mutex_test, &dt_mutex, 1);
+	SDT_PROBE1(test, , , adaptive__mutex, &dt_mutex);
+	mtx_lock(&dt_mutex);
+	SDT_PROBE1(test, , , adaptive__mutex, &dt_mutex);
+	mtx_unlock(&dt_mutex);
+	SDT_PROBE1(test, , , adaptive__mutex, &dt_mutex);
+	SDT_PROBE2(test, , , adaptive__mutex_test, &dt_mutex, 0);
+
+	SDT_PROBE2(test, , , spin__mutex_test, &dt_spin_mutex, 1);
+	SDT_PROBE1(test, , , spin__mutex, &dt_spin_mutex);
+	mtx_lock_spin(&dt_spin_mutex);
+	SDT_PROBE1(test, , , spin__mutex, &dt_spin_mutex);
+	mtx_unlock_spin(&dt_spin_mutex);
+	SDT_PROBE1(test, , , spin__mutex, &dt_spin_mutex);
+	SDT_PROBE2(test, , , spin__mutex_test, &dt_spin_mutex, 0);
+
+	return (0);
+}
+SYSCTL_PROC(_debug_dtrace_test, OID_AUTO, mutex,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    dtrace_test_mutex, "I",
+    "");
+
+static void
+acquire_mutex(void *arg __unused)
+{
+	struct thread *td;
+
+	td = curthread;
+	thread_lock(td);
+	sched_bind(td, CPU_FIRST());
+	thread_unlock(td);
+
+	mtx_lock(&dt_mutex);
+	wakeup(&dt_mutex);
+	kern_yield(PRI_MAX);
+	DELAY(100000);
+	mtx_unlock(&dt_mutex);
+
+	kthread_exit();
+}
+
+static int
+dtrace_test_mutex_contended(SYSCTL_HANDLER_ARGS)
+{
+	int val, error;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+	else if (val == 0)
+		return (0);
+
+	mtx_lock(&dt_mutex);
+	error = kthread_add(spinner, NULL, NULL, NULL, 0, 0,
+	    "dtrace test");
+	if (error != 0)
+		return (error);
+	mtx_sleep(&dt_mutex, &dt_mutex, PDROP, "dtrtest", 0);
+
+	SDT_PROBE2(test, , , adaptive__mutex_test, &dt_mutex, 1);
+	error = kthread_add(acquire_mutex, NULL, NULL, NULL, 0, 0,
+	    "dtrace test");
+	if (error != 0)
+		return (error);
+	mtx_lock(&dt_mutex);
+	mtx_unlock(&dt_mutex);
+	SDT_PROBE2(test, , , adaptive__mutex_test, &dt_mutex, 0);
+
+	return (0);
+}
+SYSCTL_PROC(_debug_dtrace_test, OID_AUTO, mutex_contended,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    dtrace_test_mutex_contended, "I",
+    "");
+
+static void
+acquire_spin_mutex(void *arg __unused)
+{
+
+	mtx_lock(&dt_mutex);
+	wakeup(&dt_mutex);
+	mtx_lock_spin(&dt_spin_mutex);
+	mtx_unlock(&dt_mutex);
+	DELAY(1000);
+	mtx_unlock_spin(&dt_spin_mutex);
+
+	kthread_exit();
+}
+
+static int
+dtrace_test_spin_mutex_contended(SYSCTL_HANDLER_ARGS)
+{
+	int val, error;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+	else if (val == 0)
+		return (0);
+
+	mtx_lock(&dt_mutex);
+	error = kthread_add(acquire_spin_mutex, NULL, NULL, NULL, 0, 0,
+	    "dtrace test");
+	if (error != 0)
+		return (error);
+	mtx_sleep(&dt_mutex, &dt_mutex, 0, "dtrtest", 0);
+
+	/* XXX this will not work on a uniprocessor system. */
+	SDT_PROBE2(test, , , spin__mutex_test, &dt_spin_mutex, 1);
+	mtx_lock_spin(&dt_spin_mutex);
+	SDT_PROBE2(test, , , spin__mutex_test, &dt_spin_mutex, 0);
+
+	mtx_unlock_spin(&dt_spin_mutex);
+	mtx_unlock(&dt_mutex);
+
+	return (0);
+}
+SYSCTL_PROC(_debug_dtrace_test, OID_AUTO, spin_mutex_contended,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    dtrace_test_spin_mutex_contended, "I",
+    "");
+
+static int
+dtrace_test_rw_lock(SYSCTL_HANDLER_ARGS)
+{
+	int val, error;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+	else if (val == 0)
+		return (0);
+
+	SDT_PROBE2(test, , , rw__lock_test, &dt_rwlock, 1);
+	SDT_PROBE1(test, , , rw__lock, &dt_rwlock);
+	rw_rlock(&dt_rwlock);
+	SDT_PROBE1(test, , , rw__lock, &dt_rwlock);
+	rw_runlock(&dt_rwlock);
+	SDT_PROBE1(test, , , rw__lock, &dt_rwlock);
+	rw_wlock(&dt_rwlock);
+	SDT_PROBE1(test, , , rw__lock, &dt_rwlock);
+	rw_wunlock(&dt_rwlock);
+	SDT_PROBE1(test, , , rw__lock, &dt_rwlock);
+	rw_rlock(&dt_rwlock);
+	SDT_PROBE1(test, , , rw__lock, &dt_rwlock);
+	if (!rw_try_upgrade(&dt_rwlock))
+		panic("%s: lock upgrade failed", __func__);
+	SDT_PROBE1(test, , , rw__lock, &dt_rwlock);
+	rw_downgrade(&dt_rwlock);
+	SDT_PROBE1(test, , , rw__lock, &dt_rwlock);
+	rw_runlock(&dt_rwlock);
+	SDT_PROBE1(test, , , rw__lock, &dt_rwlock);
+	SDT_PROBE2(test, , , rw__lock_test, &dt_rwlock, 0);
+
+	return (0);
+}
+SYSCTL_PROC(_debug_dtrace_test, OID_AUTO, rw_lock,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    dtrace_test_rw_lock, "I",
+    "");
+
+static int
+dtrace_test_sx_lock(SYSCTL_HANDLER_ARGS)
+{
+	int val, error;
+
+	val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+	else if (val == 0)
+		return (0);
+
+	SDT_PROBE2(test, , , sx__lock_test, &dt_sxlock, 1);
+	SDT_PROBE1(test, , , sx__lock, &dt_sxlock);
+	sx_slock(&dt_sxlock);
+	SDT_PROBE1(test, , , sx__lock, &dt_sxlock);
+	sx_sunlock(&dt_sxlock);
+	SDT_PROBE1(test, , , sx__lock, &dt_sxlock);
+	sx_xlock(&dt_sxlock);
+	SDT_PROBE1(test, , , sx__lock, &dt_sxlock);
+	sx_xunlock(&dt_sxlock);
+	SDT_PROBE1(test, , , sx__lock, &dt_sxlock);
+	sx_slock(&dt_sxlock);
+	SDT_PROBE1(test, , , sx__lock, &dt_sxlock);
+	if (!sx_try_upgrade(&dt_sxlock))
+		panic("%s: lock upgrade failed", __func__);
+	SDT_PROBE1(test, , , sx__lock, &dt_sxlock);
+	sx_downgrade(&dt_sxlock);
+	SDT_PROBE1(test, , , sx__lock, &dt_sxlock);
+	sx_sunlock(&dt_sxlock);
+	SDT_PROBE1(test, , , sx__lock, &dt_sxlock);
+	SDT_PROBE2(test, , , sx__lock_test, &dt_sxlock, 0);
+
+	return (0);
+}
+SYSCTL_PROC(_debug_dtrace_test, OID_AUTO, sx_lock,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    dtrace_test_sx_lock, "I",
+    "");
 
 /*
  * Test SDT probes with more than 5 arguments. On amd64, such probes require
@@ -74,31 +335,27 @@ dtrace_test_sdttest(SYSCTL_HANDLER_ARGS)
 
 	return (error);
 }
-
-static SYSCTL_NODE(_debug, OID_AUTO, dtracetest, CTLFLAG_RD, 0, "");
-
-SYSCTL_PROC(_debug_dtracetest, OID_AUTO, sdttest, CTLTYPE_INT | CTLFLAG_RW,
-    NULL, 0, dtrace_test_sdttest, "I", "Trigger the SDT test probe");
+SYSCTL_PROC(_debug_dtrace_test, OID_AUTO, sdttest,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+    dtrace_test_sdttest, "I",
+    "");
 
 static int
 dtrace_test_modevent(module_t mod, int type, void *data)
 {
-	int error = 0;
+	int error;
 
+	error = 0;
 	switch (type) {
 	case MOD_LOAD:
 		break;
-
 	case MOD_UNLOAD:
 		break;
-
 	case MOD_SHUTDOWN:
 		break;
-
 	default:
 		error = EOPNOTSUPP;
 		break;
-
 	}
 	return (error);
 }
