@@ -38,6 +38,9 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20171201: libproc version bump
+OLD_LIBS+=usr/lib/libproc.so.4
+OLD_LIBS+=usr/lib32/libproc.so.4
 # 20171118: Remove old etc casper files
 OLD_FILES+=etc/casper/system.dns
 OLD_FILES+=etc/casper/system.grp
