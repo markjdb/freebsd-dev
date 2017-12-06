@@ -281,8 +281,8 @@ extern ssize_t	read(int, void *, size_t);
 extern ssize_t	write(int, void *, size_t);
 extern struct	dirent *readdirfd(int);
 
-extern void	srandom(u_long seed);
-extern u_long	random(void);
+extern void	srandom(unsigned int);
+extern long	random(void);
     
 /* imports from stdlib, locally modified */
 extern long	strtol(const char *, char **, int);
@@ -330,7 +330,7 @@ extern int		env_setenv(const char *name, int flags,
 extern char		*getenv(const char *name);
 extern int		setenv(const char *name, const char *value,
 			       int overwrite);
-extern int		putenv(const char *string);
+extern int		putenv(char *string);
 extern int		unsetenv(const char *name);
 
 extern ev_sethook_t	env_noset;		/* refuse set operation */
