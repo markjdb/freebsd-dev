@@ -96,6 +96,7 @@ extern bool vm_pages_needed;
  *	Signal pageout-daemon and wait for it.
  */
 
+extern void pagedaemon_wait(int pri, const char *wmesg);
 extern void pagedaemon_wakeup(void);
 #define VM_WAIT vm_wait()
 #define VM_WAITPFAULT vm_waitpfault()
