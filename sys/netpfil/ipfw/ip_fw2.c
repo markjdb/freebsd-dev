@@ -39,6 +39,7 @@ __FBSDID("$FreeBSD$");
 #error "IPFIREWALL requires INET"
 #endif /* INET */
 #include "opt_inet6.h"
+#include "opt_sctp.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -574,7 +575,9 @@ ipfw_send_abort(struct mbuf *replyto, struct ipfw_flow_id *id, u_int32_t vtag,
 	}
 	chunk->chunk_length = htons(sizeof(struct sctp_chunkhdr));
 
+#ifndef SCTP_WITH_NO_CSUM
 	sctp->checksum = sctp_calculate_cksum(m, hlen);
+#endif
 
 	return (m);
 }
