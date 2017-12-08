@@ -159,6 +159,7 @@ static enum {
 	VM_LAUNDRY_BACKGROUND,
 	VM_LAUNDRY_SHORTFALL
 } vm_laundry_request = VM_LAUNDRY_IDLE;
+static int vm_laundry_thread_wakeups;
 
 static int vm_pageout_update_period;
 static int disable_swap_pageouts;
@@ -976,6 +977,7 @@ vm_pageout_laundry_worker(void *arg)
 	shortfall_cycle = 0;
 	target = 0;
 	last_launder = 0;
+	wakeups = 0;
 
 	/*
 	 * Calls to these handlers are serialized by the swap syscall lock.
@@ -993,7 +995,6 @@ vm_pageout_laundry_worker(void *arg)
 		KASSERT(shortfall_cycle >= 0,
 		    ("negative cycle %d", shortfall_cycle));
 		launder = 0;
-		wakeups = VM_CNT_FETCH(v_pdwakeups);
 
 		/*
 		 * First determine whether we need to launder pages to meet a
@@ -1104,6 +1105,7 @@ dolaundry:
 
 		if (target == 0)
 			vm_laundry_request = VM_LAUNDRY_IDLE;
+		wakeups = vm_laundry_thread_wakeups;
 		vm_pagequeue_unlock(pq);
 	}
 }
@@ -1350,11 +1352,11 @@ drop_page:
 	 * swap devices are configured, the laundry thread has no work to do, so
 	 * don't bother waking it up.
 	 */
-	if (vm_laundry_request == VM_LAUNDRY_IDLE &&
-	    starting_page_shortage > 0) {
+	if (starting_page_shortage > 0) {
 		pq = &vm_dom[0].vmd_pagequeues[PQ_LAUNDRY];
 		vm_pagequeue_lock(pq);
-		if (pq->pq_cnt > 0 || atomic_load_acq_int(&swapdev_enabled)) {
+		if (vm_laundry_request == VM_LAUNDRY_IDLE &&
+		    (pq->pq_cnt > 0 || atomic_load_acq_int(&swapdev_enabled))) {
 			if (page_shortage > 0) {
 				vm_laundry_request = VM_LAUNDRY_SHORTFALL;
 				VM_CNT_INC(v_pdshortfalls);
@@ -1362,6 +1364,7 @@ drop_page:
 				vm_laundry_request = VM_LAUNDRY_BACKGROUND;
 			wakeup(&vm_laundry_request);
 		}
+		vm_laundry_thread_wakeups++;
 		vm_pagequeue_unlock(pq);
 	}
 
