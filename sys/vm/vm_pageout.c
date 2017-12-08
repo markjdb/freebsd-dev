@@ -1791,8 +1791,15 @@ vm_pageout_worker(void *arg)
 		 * other threads to alleviate the free page shortage.  The
 		 * thread will, nonetheless, wait until another page is freed
 		 * or this wakeup is performed.
+		 *
+		 * If waiters are still asleep, we need to continue scanning.
 		 */
-		if (vm_pages_needed && !vm_page_count_min()) {
+		if (vm_pages_needed) {
+			if (vm_page_count_min()) {
+				mtx_unlock(&vm_page_queue_free_mtx);
+				pass++;
+				goto scan;
+			}
 			vm_pages_needed = false;
 			wakeup(&vm_cnt.v_free_count);
 		}
@@ -1837,6 +1844,7 @@ vm_pageout_worker(void *arg)
 				pass = 0;
 		}
 
+scan:
 		target_met = vm_pageout_scan(domain, pass);
 	}
 }
@@ -1936,17 +1944,39 @@ vm_pageout(void)
 }
 
 /*
- * Unless the free page queue lock is held by the caller, this function
- * should be regarded as advisory.  Specifically, the caller should
- * not msleep() on &vm_cnt.v_free_count following this function unless
- * the free page queue lock is held until the msleep() is performed.
+ * Perform an advisory wakeup of the page daemon.
  */
 void
 pagedaemon_wakeup(void)
 {
 
+	mtx_assert(&vm_page_queue_free_mtx, MA_NOTOWNED);
+
 	if (!vm_pageout_wanted && curthread->td_proc != pageproc) {
 		vm_pageout_wanted = true;
 		wakeup(&vm_pageout_wanted);
 	}
+}
+
+/*
+ * Wake up the page daemon and wait for it to reclaim free pages.
+ *
+ * This function returns with the free queues mutex unlocked.
+ */
+void
+pagedaemon_wait(int pri, const char *wmesg)
+{
+
+	MPASS(curthread->td_proc != pageproc);
+	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
+
+	/*
+	 * vm_pageout_wanted may have been set by an advisory wakeup, but if the
+	 * page daemon is running on a CPU, the wakeup will have been lost.
+	 */
+	if (!vm_pageout_wanted || !vm_pages_needed)
+		wakeup(&vm_pageout_wanted);
+	vm_pageout_wanted = vm_pages_needed = true;
+	msleep(&vm_cnt.v_free_count, &vm_page_queue_free_mtx, PDROP | pri,
+	    wmesg, 0);
 }
