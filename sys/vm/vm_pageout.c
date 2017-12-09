@@ -159,7 +159,7 @@ static enum {
 	VM_LAUNDRY_BACKGROUND,
 	VM_LAUNDRY_SHORTFALL
 } vm_laundry_request = VM_LAUNDRY_IDLE;
-static int vm_laundry_thread_wakeups;
+static int vm_launder_requests;
 
 static int vm_pageout_update_period;
 static int disable_swap_pageouts;
@@ -962,7 +962,7 @@ vm_pageout_laundry_worker(void *arg)
 	struct vm_domain *domain;
 	struct vm_pagequeue *pq;
 	uint64_t nclean, ndirty;
-	u_int last_launder, wakeups;
+	u_int last_launder, requests;
 	int domidx, last_target, launder, shortfall, shortfall_cycle, target;
 	bool in_shortfall;
 
@@ -977,7 +977,7 @@ vm_pageout_laundry_worker(void *arg)
 	shortfall_cycle = 0;
 	target = 0;
 	last_launder = 0;
-	wakeups = 0;
+	requests = 0;
 
 	/*
 	 * Calls to these handlers are serialized by the swap syscall lock.
@@ -1018,7 +1018,7 @@ vm_pageout_laundry_worker(void *arg)
 			target = 0;
 			goto trybackground;
 		}
-		last_launder = wakeups;
+		last_launder = requests;
 		launder = target / shortfall_cycle--;
 		goto dolaundry;
 
@@ -1035,29 +1035,29 @@ vm_pageout_laundry_worker(void *arg)
 		 *
 		 * The background laundering threshold is not a constant.
 		 * Instead, it is a slowly growing function of the number of
-		 * page daemon wakeups since the last laundering.  Thus, as the
+		 * page daemon scans since the last laundering.  Thus, as the
 		 * ratio of dirty to clean inactive pages grows, the amount of
 		 * memory pressure required to trigger laundering decreases.
 		 */
 trybackground:
 		nclean = vm_cnt.v_inactive_count + vm_cnt.v_free_count;
 		ndirty = vm_cnt.v_laundry_count;
-		if (target == 0 && wakeups != last_launder &&
-		    ndirty * isqrt(wakeups - last_launder) >= nclean) {
+		if (target == 0 && requests != last_launder &&
+		    ndirty * isqrt(requests - last_launder) >= nclean) {
 			target = vm_background_launder_target;
 		}
 
 		/*
 		 * We have a non-zero background laundering target.  If we've
 		 * laundered up to our maximum without observing a page daemon
-		 * wakeup, just stop.  This is a safety belt that ensures we
+		 * request, just stop.  This is a safety belt that ensures we
 		 * don't launder an excessive amount if memory pressure is low
 		 * and the ratio of dirty to clean pages is large.  Otherwise,
 		 * proceed at the background laundering rate.
 		 */
 		if (target > 0) {
-			if (wakeups != last_launder) {
-				last_launder = wakeups;
+			if (requests != last_launder) {
+				last_launder = requests;
 				last_target = target;
 			} else if (last_target - target >=
 			    vm_background_launder_max * PAGE_SIZE / 1024) {
@@ -1105,7 +1105,7 @@ dolaundry:
 
 		if (target == 0)
 			vm_laundry_request = VM_LAUNDRY_IDLE;
-		wakeups = vm_laundry_thread_wakeups;
+		requests = vm_launder_requests;
 		vm_pagequeue_unlock(pq);
 	}
 }
@@ -1364,7 +1364,7 @@ drop_page:
 				vm_laundry_request = VM_LAUNDRY_BACKGROUND;
 			wakeup(&vm_laundry_request);
 		}
-		vm_laundry_thread_wakeups++;
+		vm_launder_requests++;
 		vm_pagequeue_unlock(pq);
 	}
 
