@@ -1791,15 +1791,8 @@ vm_pageout_worker(void *arg)
 		 * other threads to alleviate the free page shortage.  The
 		 * thread will, nonetheless, wait until another page is freed
 		 * or this wakeup is performed.
-		 *
-		 * If waiters are still asleep, we need to continue scanning.
 		 */
-		if (vm_pages_needed) {
-			if (vm_page_count_min()) {
-				mtx_unlock(&vm_page_queue_free_mtx);
-				pass++;
-				goto scan;
-			}
+		if (vm_pages_needed && !vm_page_count_min()) {
 			vm_pages_needed = false;
 			wakeup(&vm_cnt.v_free_count);
 		}
@@ -1832,10 +1825,15 @@ vm_pageout_worker(void *arg)
 			pass++;
 		} else {
 			/*
-			 * Yes.  Sleep until pages need to be reclaimed or
+			 * Yes.  If threads are still sleeping in VM_WAIT
+			 * because the previous scan didn't free enough pages,
+			 * then we immediately start a new scan.  Otherwise,
+			 * sleep until the next wakeup or until pages need to
 			 * have their reference stats updated.
 			 */
-			if (mtx_sleep(&vm_pageout_wanted,
+			if (vm_pages_needed) {
+				mtx_unlock(&vm_page_queue_free_mtx);
+			} else if (mtx_sleep(&vm_pageout_wanted,
 			    &vm_page_queue_free_mtx, PDROP | PVM, "psleep",
 			    hz) == 0) {
 				VM_CNT_INC(v_pdwakeups);
@@ -1844,7 +1842,6 @@ vm_pageout_worker(void *arg)
 				pass = 0;
 		}
 
-scan:
 		target_met = vm_pageout_scan(domain, pass);
 	}
 }
@@ -1973,6 +1970,8 @@ pagedaemon_wait(int pri, const char *wmesg)
 	/*
 	 * vm_pageout_wanted may have been set by an advisory wakeup, but if the
 	 * page daemon is running on a CPU, the wakeup will have been lost.
+	 * Thus, deliver a potentially spurious wakeup to ensure that the page
+	 * daemon has been notified of the shortage.
 	 */
 	if (!vm_pageout_wanted || !vm_pages_needed)
 		wakeup(&vm_pageout_wanted);
