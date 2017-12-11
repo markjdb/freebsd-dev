@@ -159,7 +159,7 @@ static enum {
 	VM_LAUNDRY_BACKGROUND,
 	VM_LAUNDRY_SHORTFALL
 } vm_laundry_request = VM_LAUNDRY_IDLE;
-static int vm_launder_requests;
+static int vm_inactq_scans;
 
 static int vm_pageout_update_period;
 static int disable_swap_pageouts;
@@ -962,7 +962,7 @@ vm_pageout_laundry_worker(void *arg)
 	struct vm_domain *domain;
 	struct vm_pagequeue *pq;
 	uint64_t nclean, ndirty;
-	u_int last_launder, requests;
+	u_int inactq_scans, last_launder;
 	int domidx, last_target, launder, shortfall, shortfall_cycle, target;
 	bool in_shortfall;
 
@@ -976,8 +976,8 @@ vm_pageout_laundry_worker(void *arg)
 	in_shortfall = false;
 	shortfall_cycle = 0;
 	target = 0;
+	inactq_scans = 0;
 	last_launder = 0;
-	requests = 0;
 
 	/*
 	 * Calls to these handlers are serialized by the swap syscall lock.
@@ -1018,7 +1018,7 @@ vm_pageout_laundry_worker(void *arg)
 			target = 0;
 			goto trybackground;
 		}
-		last_launder = requests;
+		last_launder = inactq_scans;
 		launder = target / shortfall_cycle--;
 		goto dolaundry;
 
@@ -1042,8 +1042,8 @@ vm_pageout_laundry_worker(void *arg)
 trybackground:
 		nclean = vm_cnt.v_inactive_count + vm_cnt.v_free_count;
 		ndirty = vm_cnt.v_laundry_count;
-		if (target == 0 && requests != last_launder &&
-		    ndirty * isqrt(requests - last_launder) >= nclean) {
+		if (target == 0 && inactq_scans != last_launder &&
+		    ndirty * isqrt(inactq_scans - last_launder) >= nclean) {
 			target = vm_background_launder_target;
 		}
 
@@ -1056,8 +1056,8 @@ trybackground:
 		 * proceed at the background laundering rate.
 		 */
 		if (target > 0) {
-			if (requests != last_launder) {
-				last_launder = requests;
+			if (inactq_scans != last_launder) {
+				last_launder = inactq_scans;
 				last_target = target;
 			} else if (last_target - target >=
 			    vm_background_launder_max * PAGE_SIZE / 1024) {
@@ -1105,7 +1105,7 @@ dolaundry:
 
 		if (target == 0)
 			vm_laundry_request = VM_LAUNDRY_IDLE;
-		requests = vm_launder_requests;
+		inactq_scans = vm_inactq_scans;
 		vm_pagequeue_unlock(pq);
 	}
 }
@@ -1351,6 +1351,10 @@ drop_page:
 	 * need to launder more aggressively.  If PQ_LAUNDRY is empty and no
 	 * swap devices are configured, the laundry thread has no work to do, so
 	 * don't bother waking it up.
+	 *
+	 * The laundry thread uses the number of inactive queue scans elapsed
+	 * since the last laundering to determine whether to launder again, so
+	 * keep count.
 	 */
 	if (starting_page_shortage > 0) {
 		pq = &vm_dom[0].vmd_pagequeues[PQ_LAUNDRY];
@@ -1364,7 +1368,7 @@ drop_page:
 				vm_laundry_request = VM_LAUNDRY_BACKGROUND;
 			wakeup(&vm_laundry_request);
 		}
-		vm_launder_requests++;
+		vm_inactq_scans++;
 		vm_pagequeue_unlock(pq);
 	}
 
