@@ -18,7 +18,10 @@ TAP_TESTS_SH+=	11_test
 TAP_TESTS_SH+=	12_test
 TAP_TESTS_SH+=	13_test
 
-${PACKAGE}FILES+=		conf.sh
+PROGS=	test
+BINDIR.test=	${TESTSDIR}
+
+${PACKAGE}FILES+=	conf.sh
 
 .for t in ${TAP_TESTS_SH}
 TEST_METADATA.$t+=	required_user="root"
