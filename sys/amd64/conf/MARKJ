@@ -17,7 +17,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  wlan_acl wlan_xauth                          \
 				  procfs nullfs fuse unionfs fdescfs tmpfs zfs \
 				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
-				  if_bridge bridgestp ipfw_nat libalias        \
+				  if_bridge bridgestp ipfw_nat libalias pf     \
 				  snp hwpmc                                    \
 				  usb/usb usb/run usb/umass usb/ucom usb/ums   \
 				    usb/runfw usb/uether usb/axe usb/axge      \
