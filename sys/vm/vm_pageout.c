@@ -1826,7 +1826,6 @@ vm_pageout_worker(void *arg)
 		} else {
 			/*
 			 * Yes.  If threads are still sleeping in VM_WAIT
-			 * because the previous scan didn't free enough pages,
 			 * then we immediately start a new scan.  Otherwise,
 			 * sleep until the next wakeup or until pages need to
 			 * have their reference stats updated.
@@ -1964,7 +1963,6 @@ void
 pagedaemon_wait(int pri, const char *wmesg)
 {
 
-	MPASS(curthread->td_proc != pageproc);
 	mtx_assert(&vm_page_queue_free_mtx, MA_OWNED);
 
 	/*
