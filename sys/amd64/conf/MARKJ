@@ -84,6 +84,7 @@ options 	RCTL			# Resource limits
 
 options 	EKCD
 options		GZIO
+options 	ZSTDIO
 
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.
