@@ -1001,9 +1001,6 @@ kerneldumpcomp_create(struct dumperinfo *di, uint8_t compression)
 		return (NULL);
 	}
 
-	if (compression != KERNELDUMP_COMP_GZIP &&
-	    compression != KERNELDUMP_COMP_ZSTD)
-		return (NULL);
 	kdcomp = malloc(sizeof(*kdcomp), M_DUMPER, M_WAITOK | M_ZERO);
 	kdcomp->kdc_format = compression;
 	kdcomp->kdc_stream = compressor_init(kerneldumpcomp_write_cb,
