@@ -73,7 +73,7 @@ static void
 usage(void)
 {
 	fprintf(stderr, "%s\n%s\n%s\n",
-	    "usage: dumpon [-v] [-k public_key_file] [-z] special_file",
+	    "usage: dumpon [-v] [-k public_key_file] [-zZ] special_file",
 	    "       dumpon [-v] off",
 	    "       dumpon [-v] -l");
 	exit(EX_USAGE);
@@ -192,12 +192,12 @@ main(int argc, char *argv[])
 	int ch;
 	int i, fd;
 	int do_listdumpdev = 0;
-	bool enable, gzip;
+	bool enable, gzip, zstd;
 
-	gzip = false;
+	gzip = zstd = false;
 	pubkeyfile = NULL;
 
-	while ((ch = getopt(argc, argv, "k:lvz")) != -1)
+	while ((ch = getopt(argc, argv, "k:lvzZ")) != -1)
 		switch((char)ch) {
 		case 'k':
 			pubkeyfile = optarg;
@@ -211,9 +211,15 @@ main(int argc, char *argv[])
 		case 'z':
 			gzip = true;
 			break;
+		case 'Z':
+			zstd = true;
+			break;
 		default:
 			usage();
 		}
+
+	if (gzip && zstd)
+		errx(EX_USAGE, "The -z and -Z options are exclusive.");
 
 	argc -= optind;
 	argv += optind;
@@ -254,7 +260,7 @@ main(int argc, char *argv[])
 		if (fd < 0)
 			err(EX_OSFILE, "%s", dumpdev);
 
-		if (!gzip)
+		if (!gzip && !zstd)
 			check_size(fd, dumpdev);
 
 		bzero(&kda, sizeof(kda));
@@ -268,8 +274,11 @@ main(int argc, char *argv[])
 #endif
 
 		kda.kda_enable = 1;
-		kda.kda_compression = gzip ? KERNELDUMP_COMP_GZIP :
-		    KERNELDUMP_COMP_NONE;
+		kda.kda_compression = KERNELDUMP_COMP_NONE;
+		if (zstd)
+			kda.kda_compression = KERNELDUMP_COMP_ZSTD;
+		else if (gzip)
+			kda.kda_compression = KERNELDUMP_COMP_GZIP;
 		i = ioctl(fd, DIOCSKERNELDUMP, &kda);
 		explicit_bzero(kda.kda_encryptedkey, kda.kda_encryptedkeysize);
 		free(kda.kda_encryptedkey);
