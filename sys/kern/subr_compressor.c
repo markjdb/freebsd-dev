@@ -344,7 +344,10 @@ zst_flush_intermediate(struct zstdio_stream *s, compressor_cb_t cb, void *arg)
 		if (error != 0)
 			return (error);
 
-		/* Shift any non-full blocks up to the front of the output buffer */
+		/*
+		 * Shift any non-full blocks up to the front of the output
+		 * buffer.
+		 */
 		s->zst_outbuffer.pos -= bytes_to_dump;
 		memmove(s->zst_outbuffer.dst,
 		    (char *)s->zst_outbuffer.dst + bytes_to_dump,
