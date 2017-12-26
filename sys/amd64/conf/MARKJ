@@ -84,6 +84,7 @@ options 	RCTL			# Resource limits
 
 options 	EKCD
 options		GZIO
+options 	ZSTDIO
 options 	VM_NUMA_ALLOC
 
 # Debugging support.  Always need this:
