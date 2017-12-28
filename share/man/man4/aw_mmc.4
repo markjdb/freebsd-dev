@@ -26,38 +26,51 @@
 .\" $FreeBSD$
 .\"
 .Dd Dec 25, 2017
-.Dt AW_RTC 4
+.Dt AW_MMC 4
 .Os
 .Sh NAME
-.Nm aw_rtc
-.Nd driver for the RTC controller in Allwinner SoC
+.Nm aw_mmc
+.Nd driver for the SD/MMC controller in Allwinner SoC
+.Sh SYNOPSIS
+.Cd "device mmc"
 .Sh DESCRIPTION
 The
 .Nm
-device driver provides support for the Allwinner RTC controller.
+device driver provides support for the Allwinner SD/MMC host controller.
 .Sh HARDWARE
 The current version of the
 .Nm
-driver supports the RTC controller with one of the following compatible
-strings :
+driver supports the SD/MMC controller with one of the following compatible strings :
 .Pp
 .Bl -bullet -compact
 .It
-allwinner,sun4i-a10-rtc
+allwinner,sun4i-a10-mmc
 .It
-allwinner,sun7i-a20-rtc
+allwinner,sun5i-a13-mmc
 .It
-allwinner,sun6i-a31-rtc
+allwinner,sun7i-a20-mmc
+.It
+allwinner,sun50i-a64-mmc
 .El
+.Sh SYSCTL VARIABLES
+The following read-only variables are available via
+.Xr sysctl 8 :
+.Bl -tag -width indent
+.It Va dev.aw_mmc.req_timeout
+Request timeout in seconds (default: 10) .
+.El
+.Sh SEE ALSO
+.Xr fdt 4 ,
+.Xr mmc 4
 .Sh HISTORY
 The
 .Nm
 device driver first appeared in
-.Fx 11.0 .
+.Fx 10.0 .
 .Sh AUTHORS
 The
 .Nm
-device driver was written by
-.An Vladimir Belian Aq Mt fate10@gmail.com .
-This manual page was written by
+device driver was originally written by
+.An Alexander Fedorov Aq Mt alexander.fedorov@rtlservice.com .
+Later work and this manual page was done by
 .An Emmanuel Vadot Aq Mt manu@freebsd.org .
