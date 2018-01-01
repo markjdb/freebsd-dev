@@ -1122,8 +1122,10 @@ static void
 g_mirror_start(struct bio *bp)
 {
 	struct g_mirror_softc *sc;
+	bool empty;
 
 	sc = bp->bio_to->private;
+
 	/*
 	 * If sc == NULL or there are no valid disks, provider's error
 	 * should be set and g_mirror_start() should not be called at all.
@@ -1158,10 +1160,12 @@ g_mirror_start(struct bio *bp)
 		g_io_deliver(bp, bp->bio_to->error);
 		return;
 	}
+	empty = TAILQ_EMPTY(&sc->sc_queue);
 	TAILQ_INSERT_TAIL(&sc->sc_queue, bp, bio_queue);
 	mtx_unlock(&sc->sc_queue_mtx);
 	G_MIRROR_DEBUG(4, "%s: Waking up %p.", __func__, sc);
-	wakeup(sc);
+	if (empty)
+		wakeup(sc);
 }
 
 /*
