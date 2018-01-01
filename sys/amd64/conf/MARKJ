@@ -13,7 +13,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				    i2c/iicbus i2c/controllers/ichsmb i2c/smbus\
 				  ichwd coretemp                               \
 				  linux_common linux linprocfs                 \
-				  geom/geom_eli                                \
+				  geom/geom_eli geom/geom_mirror               \
 				  wlan_acl wlan_xauth                          \
 				  procfs nullfs fuse unionfs fdescfs tmpfs zfs \
 				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
