@@ -132,7 +132,7 @@ static uint8_t kmemsize[KMEM_ZSIZE + 1];
 #ifndef MALLOC_DEBUG_MAXZONES
 #define	MALLOC_DEBUG_MAXZONES	1
 #endif
-static int numzones = MALLOC_DEBUG_MAXZONES;
+static int numzones = 1;
 
 /*
  * Small malloc(9) memory allocations are allocated from a set of UMA buckets
