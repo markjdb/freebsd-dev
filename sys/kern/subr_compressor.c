@@ -44,14 +44,14 @@ MALLOC_DEFINE(M_COMPRESS, "compressor", "kernel compression subroutines");
 
 struct compressor_methods {
 	int format;
-	void *(*init)(size_t, int);
-	void (*reset)(void *);
-	int (*write)(void *, void *, size_t, compressor_cb_t, void *);
-	void (*fini)(void *);
+	void *(* const init)(size_t, int);
+	void (* const reset)(void *);
+	int (* const write)(void *, void *, size_t, compressor_cb_t, void *);
+	void (* const fini)(void *);
 };
 
 struct compressor {
-	struct compressor_methods *methods;
+	const struct compressor_methods *methods;
 	compressor_cb_t cb;
 	void *priv;
 	void *arg;

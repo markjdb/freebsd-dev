@@ -35,7 +35,6 @@
 
 /* Supported formats. */
 #define	COMPRESS_GZIP	1
-#define	COMPRESS_ZSTD	2
 
 typedef int (*compressor_cb_t)(void *, size_t, off_t, void *);
 
