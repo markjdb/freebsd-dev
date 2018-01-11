@@ -1,10 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
- *
- * Copyright (c) 2001 Brian Somers <brian@Awfulhak.org>
- *   based on work by Slawa Olhovchenkov
- *                    John Prince <johnp@knight-trosoft.com>
- *                    Eric Hernes
+ * Copyright (c) 2018 Conrad Meyer <cem@freebsd.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,38 +26,50 @@
  * $FreeBSD$
  */
 
+#include "zstd_kfreebsd.h"
+
 /*
- * A very small subset of cards.
+ * The kernel as a standalone target does not link against libgcc or
+ * libcompiler-rt. On platforms (e.g., MIPS and RISCV) that do not have a
+ * direct assembly implementation of the relevant builtin functions that zstd
+ * references, the compiler converts them into calls to the runtime library
+ * intrinsics.  Since the kernel does not link against the runtime libraries,
+ * this results in a failure to link the kernel.
+ *
+ * The goal of the following definitions is to use supported kernel constructs
+ * to implement the same functionality, without adding diff to the Zstd contrib
+ * code.
+ *
+ * A subsequent enhancement might create a mini compiler-rt library for kernel
+ * use and move these over there instead.
  */
-enum digi_model {
-	PCXE,
-	PCXEVE,
-	PCXI,
-	PCXEM,
-	PCCX,
-	PCIEPCX,
-	PCIXR
-};
 
-enum {
-	DIGIDB_INIT = (1<<0),
-	DIGIDB_OPEN = (1<<1),
-	DIGIDB_CLOSE = (1<<2),
-	DIGIDB_SET = (1<<3),
-	DIGIDB_INT = (1<<4),
-	DIGIDB_READ = (1<<5),
-	DIGIDB_WRITE = (1<<6),
-	DIGIDB_RX = (1<<7),
-	DIGIDB_TX = (1<<8),
-	DIGIDB_IRQ = (1<<9),
-	DIGIDB_MODEM = (1<<10),
-	DIGIDB_RI = (1<<11),
-};
+/* Count trailing zeros */
+int
+__ctzsi2(int x)
+{
+       if (x == 0)
+               return (sizeof(x) * NBBY);
+       return (ffs(x) - 1);
+}
 
-#define	DIGIIO_REINIT		_IO('e', 'A')
-#define	DIGIIO_DEBUG		_IOW('e', 'B', int)
-#define	DIGIIO_RING		_IOWINT('e', 'C')
-#define	DIGIIO_MODEL		_IOR('e', 'D', enum digi_model)
-#define	DIGIIO_IDENT		_IOW('e', 'E', char *)
-#define	DIGIIO_SETALTPIN	_IOW('e', 'F', int)
-#define	DIGIIO_GETALTPIN	_IOR('e', 'G', int)
+long long
+__ctzdi2(long long x)
+{
+       if (x == 0)
+               return (sizeof(x) * NBBY);
+       return (ffsll(x) - 1);
+}
+
+/* Count leading zeros */
+int
+__clzsi2(int x)
+{
+       return (sizeof(x) * NBBY - fls(x));
+}
+
+long long
+__clzdi2(long long x)
+{
+       return (sizeof(x) * NBBY - flsll(x));
+}
