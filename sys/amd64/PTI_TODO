@@ -1,0 +1,23 @@
+nmi *
+dblflt *
+X all entries in exception.S *
+X interrupt entries *
+syscall *
+int0x80 *
+sysret *
+iretq *
+setidt *
+pmap_pti_add_kva *
+pmap_pti_remove_kva *
+X PG_G *
+stack rsp0 *
+ist stacks *
+X call pmap_pti_add_kva:
+     kernel text *
+     pcpu pages *
+     gdt *
+     idt *
+     ldt *
+     common_tss *
+     task *
+     pre-allocate pml4 for kernel_map *
