@@ -84,7 +84,6 @@ options 	RCTL			# Resource limits
 
 options 	EKCD
 options		GZIO
-options 	VM_NUMA_ALLOC
 
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.
@@ -104,7 +103,6 @@ options		ALT_BREAK_TO_DEBUGGER
 
 # Make an SMP-capable kernel by default
 options 	SMP			# Symmetric MultiProcessor Kernel
-options 	DEVICE_NUMA		# I/O Device Affinity
 options 	EARLY_AP_STARTUP
 
 device		nmdm
