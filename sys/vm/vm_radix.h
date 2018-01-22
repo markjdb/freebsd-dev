@@ -35,7 +35,7 @@
 
 #include <vm/_vm_radix.h>
 
-#ifdef _KERNEL
+#if defined(_KERNEL) || defined(_WANT_VM_RADIX_IFACE)
 
 int		vm_radix_insert(struct vm_radix *rtree, vm_page_t page);
 void		vm_radix_wait(void);
@@ -62,5 +62,5 @@ vm_radix_is_empty(struct vm_radix *rtree)
 	return (rtree->rt_root == 0);
 }
 
-#endif /* _KERNEL */
+#endif /* defined(_KERNEL) || defined(_WANT_VM_RADIX_IFACE) */
 #endif /* !_VM_RADIX_H_ */

@@ -53,6 +53,8 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
+#ifdef _KERNEL
+
 #include "opt_ddb.h"
 
 #include <sys/param.h>
@@ -69,6 +71,48 @@ __FBSDID("$FreeBSD$");
 #ifdef DDB
 #include <ddb/ddb.h>
 #endif
+
+#else /* !_KERNEL */
+
+#ifndef VM_RADIX_NO_DEBUG
+#define VM_RADIX_DEBUG
+#endif
+
+#include <sys/param.h>
+#include <assert.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "vm.h"
+#define	_WANT_VM_RADIX_IFACE
+#include "vm_radix.h"
+
+#define	INVARIANTS		1
+#define	KASSERT(cond, msg)	assert(cond)
+#define	SYSINIT(...)
+
+void	panic(const char *fmt, ...) _Noreturn;
+
+typedef void *uma_zone_t;
+
+struct vm_page {
+	vm_pindex_t pindex;
+};
+
+#define	uma_zalloc(zone, flags) ({			\
+	calloc(1, sizeof(struct vm_radix_node));	\
+})
+#define	uma_zfree(zone, item)	free(item)
+
+#define	uma_zcreate(...)	((void *)vm_radix_node_zone_dtor) /* -Wunused */
+#define	uma_zwait(...)
+#define	uma_zone_reserve_kva(...) 0
+
+#define	UMA_MD_SMALL_ALLOC
+
+#endif /* _KERNEL */
 
 /*
  * These widths should allow the pointers to a node's children to fit within
@@ -446,10 +490,11 @@ vm_radix_lookup_ge(struct vm_radix *rtree, vm_pindex_t index)
 	vm_pindex_t inc;
 	vm_page_t m;
 	struct vm_radix_node *child, *rnode;
+	u_int tos;
 #ifdef INVARIANTS
 	int loops = 0;
 #endif
-	int slot, tos;
+	int slot;
 
 	rnode = vm_radix_getroot(rtree);
 	if (rnode == NULL)
@@ -557,10 +602,11 @@ vm_radix_lookup_le(struct vm_radix *rtree, vm_pindex_t index)
 	vm_pindex_t inc;
 	vm_page_t m;
 	struct vm_radix_node *child, *rnode;
+	u_int tos;
 #ifdef INVARIANTS
 	int loops = 0;
 #endif
-	int slot, tos;
+	int slot;
 
 	rnode = vm_radix_getroot(rtree);
 	if (rnode == NULL)
@@ -806,3 +852,16 @@ DB_SHOW_COMMAND(radixnode, db_show_radixnode)
 			    rnode->rn_clev);
 }
 #endif /* DDB */
+
+#ifdef VM_RADIX_DEBUG
+
+#if 0
+int
+main(int argc, char **argv)
+{
+
+	return (0);
+}
+#endif
+
+#endif /* VM_RADIX_DEBUG */
