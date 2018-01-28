@@ -93,7 +93,14 @@ __FBSDID("$FreeBSD$");
 #define	KASSERT(cond, msg)	assert(cond)
 #define	SYSINIT(...)
 
-void	panic(const char *fmt, ...) _Noreturn;
+#define	panic(fmt, ...) do {				\
+	fprintf(stderr, fmt "\n", __VA_ARGS__);		\
+	abort();					\
+} while (0)
+
+#if 0
+void _Noreturn panic(const char *fmt, ...);
+#endif
 
 typedef void *uma_zone_t;
 
@@ -253,7 +260,7 @@ vm_radix_addpage(struct vm_radix_node *rnode, vm_pindex_t index, uint16_t clev,
 }
 
 /*
- * Returns the slot where two keys differ.
+ * Returns the largest level where two keys differ.
  * It cannot accept 2 equal keys.
  */
 static __inline uint16_t
@@ -275,12 +282,12 @@ vm_radix_keydiff(vm_pindex_t index1, vm_pindex_t index2)
  * specified rnode.  Otherwise, returns FALSE.
  */
 static __inline bool
-vm_radix_keybarr(struct vm_radix_node *rnode, vm_pindex_t idx)
+vm_radix_keybarr(struct vm_radix_node *rnode, vm_pindex_t index)
 {
 
 	if (rnode->rn_clev < VM_RADIX_LIMIT) {
-		idx = vm_radix_trimkey(idx, rnode->rn_clev + 1);
-		return (idx != rnode->rn_owner);
+		index = vm_radix_trimkey(index, rnode->rn_clev + 1);
+		return (index != rnode->rn_owner);
 	}
 	return (false);
 }
@@ -855,13 +862,141 @@ DB_SHOW_COMMAND(radixnode, db_show_radixnode)
 
 #ifdef VM_RADIX_DEBUG
 
-#if 0
+static vm_page_t
+vm_page_alloc(vm_pindex_t pindex)
+{
+	vm_page_t m;
+
+	m = malloc(sizeof(*m));
+	m->pindex = pindex;
+	return (m);
+}
+
+static void
+vm_page_free(vm_page_t m)
+{
+
+	free(m);
+}
+
+static void
+_vm_radix_print(struct vm_radix_node *rnode, int level)
+{
+	vm_page_t m;
+	int i;
+
+	if (vm_radix_isleaf(rnode)) {
+		m = vm_radix_topage(rnode);
+		printf("%*.*s%#lx (%p)\n", level * 2, level * 2, "",
+		    m->pindex, m);
+	} else {
+		printf("node %p (owner %#lx, level %d, count %d)\n",
+		    rnode, rnode->rn_owner, rnode->rn_clev, rnode->rn_count);
+		for (i = 0; i < VM_RADIX_COUNT; i++)
+			if (rnode->rn_child[i] != NULL)
+				_vm_radix_print(rnode->rn_child[i], rnode->rn_clev);
+	}
+}
+
+static void
+vm_radix_print(struct vm_radix *rtree)
+{
+	struct vm_radix_node *root;
+
+	root = vm_radix_getroot(rtree);
+	if (root == NULL)
+		return;
+	_vm_radix_print(root, 0);
+}
+
 int
 main(int argc, char **argv)
 {
+	char buf[1024];
+	struct vm_radix rtree;
+	vm_page_t m;
+	vm_pindex_t pindex;
+
+	vm_radix_init(&rtree);
+
+	for (;;) {
+		printf("> ");
+		fflush(stdout);
+		if (fgets(buf, sizeof(buf), stdin) == NULL)
+			break;
+		switch (buf[0]) {
+		case 'd':
+			if (sscanf(buf + 2, "%lx", &pindex) != 1) {
+				printf("?\n");
+				continue;
+			}
+			m = vm_radix_remove(&rtree, pindex);
+			if (m == NULL)
+				printf("key not found\n");
+			else
+				vm_page_free(m);
+			break;
+		case 'i':
+			if (sscanf(buf + 2, "%lx", &pindex) != 1) {
+				printf("?\n");
+				continue;
+			}
+			m = vm_page_alloc(pindex);
+			vm_radix_insert(&rtree, m);
+			break;
+		case 'l':
+			switch (buf[1]) {
+			case ' ':
+				if (sscanf(buf + 2, "%lx", &pindex) != 1) {
+					printf("?\n");
+					continue;
+				}
+				m = vm_radix_lookup(&rtree, pindex);
+				break;
+			case 'g':
+			case 'l':
+				if (sscanf(buf + 3, "%lx", &pindex) != 1) {
+					printf("?\n");
+					continue;
+				}
+				m = (buf[1] == 'g' ?
+				    vm_radix_lookup_ge(&rtree, pindex) :
+				    vm_radix_lookup_le(&rtree, pindex));
+				break;
+			default:
+				printf("?\n");
+				continue;
+			}
+			if (m == NULL) {
+				printf("page not found\n");
+				continue;
+			}
+			if (m->pindex != pindex)
+				panic("key doesn't match: %lu vs %lu\n",
+				    m->pindex, pindex);
+			printf("%p\n", m);
+			break;
+		case 'p':
+			if (buf[1] != '\n') {
+				printf("?\n");
+				continue;
+			}
+			vm_radix_print(&rtree);
+			break;
+		case 'r':
+			if (buf[1] != '\n') {
+				printf("?\n");
+				continue;
+			}
+			vm_radix_reclaim_allnodes(&rtree);
+			break;
+		default:
+			printf("?\n");
+			continue;
+		}
+	}
 
 	return (0);
 }
-#endif
 
 #endif /* VM_RADIX_DEBUG */
