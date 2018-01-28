@@ -1621,6 +1621,7 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	mtx_init(&dt_lock, "descriptor tables", NULL, MTX_DEF);
 
 	/* exceptions */
+	pti = pti_get_default();
 	TUNABLE_INT_FETCH("vm.pmap.pti", &pti);
 
 	for (x = 0; x < NIDT; x++)
@@ -1666,7 +1667,8 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	    &IDTVEC(dtrace_ret), SDT_SYSIGT, SEL_UPL, 0);
 #endif
 #ifdef XENHVM
-	setidt(IDT_EVTCHN, &IDTVEC(xen_intr_upcall), SDT_SYSIGT, SEL_UPL, 0);
+	setidt(IDT_EVTCHN, pti ? &IDTVEC(xen_intr_upcall_pti) :
+	    &IDTVEC(xen_intr_upcall), SDT_SYSIGT, SEL_KPL, 0);
 #endif
 	r_idt.rd_limit = sizeof(idt0) - 1;
 	r_idt.rd_base = (long) idt;
