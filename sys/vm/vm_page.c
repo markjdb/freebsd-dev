@@ -2873,9 +2873,7 @@ vm_page_activate(vm_page_t m)
 			if (queue != PQ_NONE)
 				vm_page_dequeue(m);
 			vm_page_enqueue(PQ_ACTIVE, m);
-		} else
-			KASSERT(queue == PQ_NONE,
-			    ("vm_page_activate: wired page %p is queued", m));
+		}
 	} else {
 		if (m->act_count < ACT_INIT)
 			m->act_count = ACT_INIT;
@@ -3047,26 +3045,18 @@ vm_page_free_toq(vm_page_t m)
 }
 
 /*
- *	vm_page_wire:
+ * vm_page_wire:
  *
- *	Mark this page as wired down by yet
- *	another map, removing it from paging queues
- *	as necessary.
+ * Mark this page as wired down.  If the page is fictitious, then
+ * its wire count must remain one.
  *
- *	If the page is fictitious, then its wire count must remain one.
- *
- *	The page must be locked.
+ * The page must be locked.
  */
 void
 vm_page_wire(vm_page_t m)
 {
 
-	/*
-	 * Only bump the wire statistics if the page is not already wired,
-	 * and only unqueue the page if it is on some queue (if it is unmanaged
-	 * it is already off the queues).
-	 */
-	vm_page_lock_assert(m, MA_OWNED);
+	vm_page_assert_locked(m);
 	if ((m->flags & PG_FICTITIOUS) != 0) {
 		KASSERT(m->wire_count == 1,
 		    ("vm_page_wire: fictitious page %p's wire count isn't one",
@@ -3077,7 +3067,6 @@ vm_page_wire(vm_page_t m)
 		KASSERT((m->oflags & VPO_UNMANAGED) == 0 ||
 		    m->queue == PQ_NONE,
 		    ("vm_page_wire: unmanaged page %p is queued", m));
-		vm_page_remque(m);
 		atomic_add_int(&vm_cnt.v_wire_count, 1);
 	}
 	m->wire_count++;
@@ -3094,38 +3083,69 @@ vm_page_wire(vm_page_t m)
  * Only managed pages belonging to an object can be paged out.  If the number
  * of wirings transitions to zero and the page is eligible for page out, then
  * the page is added to the specified paging queue (unless PQ_NONE is
- * specified).
+ * specified, in which case the page is dequeued if it belongs to a paging
+ * queue).
  *
  * If a page is fictitious, then its wire count must always be one.
  *
  * A managed page must be locked.
  */
-boolean_t
+bool
 vm_page_unwire(vm_page_t m, uint8_t queue)
 {
+	bool unwired;
 
 	KASSERT(queue < PQ_COUNT || queue == PQ_NONE,
 	    ("vm_page_unwire: invalid queue %u request for page %p",
 	    queue, m));
+
+	unwired = vm_page_unwire_noq(m);
+	if (unwired && (m->oflags & VPO_UNMANAGED) == 0 && m->object != NULL) {
+		if (m->queue == queue) {
+			if (queue == PQ_ACTIVE)
+				vm_page_reference(m);
+			else if (queue != PQ_NONE)
+				vm_page_requeue(m);
+		} else {
+			vm_page_remque(m);
+			if (queue != PQ_NONE) {
+				vm_page_enqueue(queue, m);
+				if (queue == PQ_ACTIVE)
+					/* Initialize act_count. */
+					vm_page_activate(m);
+			}
+		}
+	}
+	return (unwired);
+}
+
+/*
+ *
+ * vm_page_unwire_noq:
+ *
+ * Unwire a page without (re-)inserting it into a page queue.  It is up
+ * to the caller to enqueue, requeue, or free the page as appropriate.
+ * In most cases, vm_page_unwire() should be used instead.
+ */
+bool
+vm_page_unwire_noq(vm_page_t m)
+{
+
 	if ((m->oflags & VPO_UNMANAGED) == 0)
 		vm_page_assert_locked(m);
 	if ((m->flags & PG_FICTITIOUS) != 0) {
 		KASSERT(m->wire_count == 1,
 	    ("vm_page_unwire: fictitious page %p's wire count isn't one", m));
-		return (FALSE);
+		return (false);
 	}
-	if (m->wire_count > 0) {
-		m->wire_count--;
-		if (m->wire_count == 0) {
-			atomic_subtract_int(&vm_cnt.v_wire_count, 1);
-			if ((m->oflags & VPO_UNMANAGED) == 0 &&
-			    m->object != NULL && queue != PQ_NONE)
-				vm_page_enqueue(queue, m);
-			return (TRUE);
-		} else
-			return (FALSE);
-	} else
+	if (m->wire_count == 0)
 		panic("vm_page_unwire: page %p's wire count is zero", m);
+	m->wire_count--;
+	if (m->wire_count == 0) {
+		atomic_subtract_int(&vm_cnt.v_wire_count, 1);
+		return (true);
+	} else
+		return (false);
 }
 
 /*
