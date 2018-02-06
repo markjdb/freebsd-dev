@@ -97,7 +97,7 @@
  *	or the lock for either the free or paging queue (Q).  If a field is
  *	annotated below with two of these locks, then holding either lock is
  *	sufficient for read access, but both locks are required for write
- *	access.
+ *	access.  An annotation of (C) indicates that the field is immutable.
  *
  *	In contrast, the synchronization of accesses to the page's
  *	dirty field is machine dependent (M).  In the
@@ -111,6 +111,39 @@
  *	contains the dirty field.  In the machine-independent layer,
  *	the implementation of read-modify-write operations on the
  *	field is encapsulated in vm_page_clear_dirty_mask().
+ *
+ *	The page structure contains two fields which count references to the
+ *	structure (as opposed to the page's contents), and the busy lock, an
+ *	embedded sleepable reader-writer lock used to synchronize access to
+ *	the page's contents while they are being written to or read from a
+ *	pager.  Both reference counters are protected by the page lock (P).
+ *	The hold counter tracks transient references obtained via a pmap
+ *	lookup, and is also used in cases where the busy lock cannot be used
+ *	due to ordering constraints with the vnode lock.  The wire counter
+ *	is used to implement mlock(2) and is non-zero for pages containing
+ *	kernel memory.  Pages that are wired or held will not be reclaimed
+ *	or laundered by the page daemon, but are treated differently during
+ *	a page queue scan: held pages remain at their position in the queue,
+ *	while wired pages are removed from the queue and must later be
+ *	re-enqueued appropriately by the unwiring thread.  It is legal to
+ *	call vm_page_free() on a held page; doing so causes it to be removed
+ *	from its object and page queue, and the page is released to the
+ *	allocator once the last hold reference is dropped.  In contrast,
+ *	wired pages may not be freed.
+ *
+ *	In some pmap implementations, the wire count of a page table page is
+ *	used to track the number of populated entries.
+ *
+ *	The busy lock protects a page's contents and interlocks with the
+ *	object lock (O).  In particular, a page may be busied or unbusied
+ *	only with the object write lock held.  To avoid bloating the page
+ *	structure, the busy lock lacks some of the features available to the
+ *	kernel's general-purpose synchronization primitives.  As a result,
+ *	busy lock ordering rules are not verified, lock recursion is not
+ *	detected, and an attempt to xbusy a busy page or sbusy an xbusy
+ *	page results will trigger a panic rather than causing the thread to
+ *	block.  vm_page_sleep_if_busy() can be used to sleep until the
+ *	page's busy state changes.
  */
 
 #if PAGE_SIZE == 4096
@@ -152,9 +185,9 @@ struct vm_page {
 	uint8_t oflags;			/* page VPO_* flags (O) */
 	uint8_t	queue;			/* page queue index (P,Q) */
 	int8_t psind;			/* pagesizes[] index (O) */
-	int8_t segind;
+	int8_t segind;			/* vm_phys segment index (C) */
 	uint8_t	order;			/* index of the buddy queue */
-	uint8_t pool;
+	uint8_t pool;			/* vm_phys freepool index (C) */
 	u_char	act_count;		/* page usage count (P) */
 	/* NOTE that these must support one bit per DEV_BSIZE in a page */
 	/* so, on normal X86 kernels, they must be at least 8 bits wide */
@@ -761,6 +794,13 @@ vm_page_in_laundry(vm_page_t m)
 {
 
 	return (m->queue == PQ_LAUNDRY || m->queue == PQ_UNSWAPPABLE);
+}
+
+static inline bool
+vm_page_is_referenced(vm_page_t m)
+{
+
+	return (m->hold_count > 0 || m->wire_count > 0);
 }
 
 #endif				/* _KERNEL */

@@ -2181,7 +2181,7 @@ vm_page_scan_contig(u_long npages, vm_page_t m_start, vm_page_t m_end,
 		vm_page_change_lock(m, &m_mtx);
 		m_inc = 1;
 retry:
-		if (m->wire_count != 0 || m->hold_count != 0)
+		if (vm_page_is_referenced(m))
 			run_ext = 0;
 #if VM_NRESERVLEVEL > 0
 		else if ((level = vm_reserv_level(m)) >= 0 &&
@@ -2209,8 +2209,7 @@ retry:
 					 */
 					VM_OBJECT_RUNLOCK(object);
 					goto retry;
-				} else if (m->wire_count != 0 ||
-				    m->hold_count != 0) {
+				} else if (vm_page_is_referenced(m)) {
 					run_ext = 0;
 					goto unlock;
 				}
@@ -2351,7 +2350,7 @@ vm_page_reclaim_run(int req_class, u_long npages, vm_page_t m_run,
 		 */
 		vm_page_change_lock(m, &m_mtx);
 retry:
-		if (m->wire_count != 0 || m->hold_count != 0)
+		if (vm_page_is_referenced(m))
 			error = EBUSY;
 		else if ((object = m->object) != NULL) {
 			/*
@@ -2368,8 +2367,7 @@ retry:
 					 */
 					VM_OBJECT_WUNLOCK(object);
 					goto retry;
-				} else if (m->wire_count != 0 ||
-				    m->hold_count != 0) {
+				} else if (vm_page_is_referenced(m)) {
 					error = EBUSY;
 					goto unlock;
 				}
@@ -3273,8 +3271,7 @@ vm_page_try_to_free(vm_page_t m)
 	vm_page_assert_locked(m);
 	VM_OBJECT_ASSERT_WLOCKED(m->object);
 	KASSERT((m->oflags & VPO_UNMANAGED) == 0, ("page %p is unmanaged", m));
-	if (m->dirty != 0 || m->hold_count != 0 || m->wire_count != 0 ||
-	    vm_page_busied(m))
+	if (m->dirty != 0 || vm_page_is_referenced(m) || vm_page_busied(m))
 		return (false);
 	if (m->object->ref_count != 0) {
 		pmap_remove_all(m);
