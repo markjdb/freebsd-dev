@@ -124,7 +124,8 @@ static void vm_pageout(void);
 static void vm_pageout_init(void);
 static int vm_pageout_clean(vm_page_t m, int *numpagedout);
 static int vm_pageout_cluster(vm_page_t m);
-static bool vm_pageout_scan(struct vm_domain *vmd, int pass);
+static bool vm_pageout_scan_act(struct vm_domain *vmd);
+static bool vm_pageout_scan_inact(struct vm_domain *vmd);
 static void vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
     int starting_page_shortage);
 
@@ -1095,30 +1096,23 @@ dolaundry:
 }
 
 /*
- *	vm_pageout_scan does the dirty work for the pageout daemon.
- *
- *	pass == 0: Update active LRU/deactivate pages
- *	pass >= 1: Free inactive pages
- *
- * Returns true if pass was zero or enough pages were freed by the inactive
- * queue scan to meet the target.
+ * XXX
  */
 static bool
-vm_pageout_scan(struct vm_domain *vmd, int pass)
+vm_pageout_scan_inact(struct vm_domain *vmd)
 {
 	vm_page_t m, next;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
-	long min_scan;
-	int act_delta, addl_page_shortage, deficit, inactq_shortage, maxscan;
-	int page_shortage, scan_tick, scanned, starting_page_shortage;
-	boolean_t queue_locked;
+	int act_delta, addl_page_shortage, deficit, maxscan, page_shortage;
+	int starting_page_shortage;
+	bool queue_locked;
 
 	/*
 	 * If we need to reclaim memory ask kernel caches to return
 	 * some.  We rate limit to avoid thrashing.
 	 */
-	if (vmd == VM_DOMAIN(0) && pass > 0 &&
+	if (vmd == VM_DOMAIN(0) &&
 	    (time_uptime - lowmem_uptime) >= lowmem_period) {
 		/*
 		 * Decrease registered cache sizes.
@@ -1146,11 +1140,8 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	 * can be negative if many pages are freed between the wakeup call to
 	 * the page daemon and this calculation.
 	 */
-	if (pass > 0) {
-		deficit = atomic_readandclear_int(&vmd->vmd_pageout_deficit);
-		page_shortage = vm_paging_target(vmd) + deficit;
-	} else
-		page_shortage = deficit = 0;
+	deficit = atomic_readandclear_int(&vmd->vmd_pageout_deficit);
+	page_shortage = vm_paging_target(vmd) + deficit;
 	starting_page_shortage = page_shortage;
 
 	/*
@@ -1162,7 +1153,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass)
 	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 	maxscan = pq->pq_cnt;
 	vm_pagequeue_lock(pq);
-	queue_locked = TRUE;
+	queue_locked = true;
 	for (m = TAILQ_FIRST(&pq->pq_pl);
 	     m != NULL && maxscan-- > 0 && page_shortage > 0;
 	     m = next) {
@@ -1254,7 +1245,7 @@ unlock_page:
 		TAILQ_INSERT_AFTER(&pq->pq_pl, m, &vmd->vmd_marker, plinks.q);
 		vm_page_dequeue_locked(m);
 		vm_pagequeue_unlock(pq);
-		queue_locked = FALSE;
+		queue_locked = false;
 
 		/*
 		 * Invalid pages can be easily freed. They cannot be
@@ -1295,7 +1286,7 @@ unlock_page:
 				goto drop_page;
 			} else if ((object->flags & OBJ_DEAD) == 0) {
 				vm_pagequeue_lock(pq);
-				queue_locked = TRUE;
+				queue_locked = true;
 				m->queue = PQ_INACTIVE;
 				TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 				vm_pagequeue_cnt_inc(pq);
@@ -1335,7 +1326,7 @@ drop_page:
 		VM_OBJECT_WUNLOCK(object);
 		if (!queue_locked) {
 			vm_pagequeue_lock(pq);
-			queue_locked = TRUE;
+			queue_locked = true;
 		}
 		next = TAILQ_NEXT(&vmd->vmd_marker, plinks.q);
 		TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_marker, plinks.q);
@@ -1384,6 +1375,20 @@ drop_page:
 	 */
 	vm_pageout_mightbe_oom(vmd, page_shortage, starting_page_shortage);
 
+	/* XXX */
+	vm_swapout_run_idle();
+
+	return (page_shortage <= 0);
+}
+
+static bool
+vm_pageout_scan_act(struct vm_domain *vmd)
+{
+	vm_page_t m, next;
+	struct vm_pagequeue *pq;
+	u_long min_scan;
+	int act_delta, maxscan, page_shortage, scan_tick, scanned;
+
 	/*
 	 * Compute the number of pages we want to try to move from the
 	 * active queue to either the inactive or laundry queue.
@@ -1396,10 +1401,11 @@ drop_page:
 	 * more aggressively, improving the effectiveness of clustering and
 	 * ensuring that they can eventually be reused.
 	 */
-	inactq_shortage = vmd->vmd_inactive_target - (pq->pq_cnt +
+	page_shortage = vmd->vmd_inactive_target -
+	    (vmd->vmd_pagequeues[PQ_INACTIVE].pq_cnt +
 	    vmd->vmd_pagequeues[PQ_LAUNDRY].pq_cnt / act_scan_laundry_weight) +
-	    vm_paging_target(vmd) + deficit + addl_page_shortage;
-	inactq_shortage *= act_scan_laundry_weight;
+	    vm_paging_target(vmd);
+	page_shortage *= act_scan_laundry_weight;
 
 	pq = &vmd->vmd_pagequeues[PQ_ACTIVE];
 	vm_pagequeue_lock(pq);
@@ -1416,7 +1422,7 @@ drop_page:
 		min_scan /= hz * vm_pageout_update_period;
 	} else
 		min_scan = 0;
-	if (min_scan > 0 || (inactq_shortage > 0 && maxscan > 0))
+	if (min_scan > 0 || (page_shortage > 0 && maxscan > 0))
 		vmd->vmd_last_active_scan = scan_tick;
 
 	/*
@@ -1425,7 +1431,7 @@ drop_page:
 	 * candidates.  Held pages may be deactivated.
 	 */
 	for (m = TAILQ_FIRST(&pq->pq_pl), scanned = 0; m != NULL && (scanned <
-	    min_scan || (inactq_shortage > 0 && scanned < maxscan)); m = next,
+	    min_scan || (page_shortage > 0 && scanned < maxscan)); m = next,
 	    scanned++) {
 		KASSERT(m->queue == PQ_ACTIVE,
 		    ("vm_pageout_scan: page %p isn't active", m));
@@ -1508,7 +1514,7 @@ drop_page:
 			 * is necessarily small, so we may move dirty pages
 			 * directly to the laundry queue.
 			 */
-			if (inactq_shortage <= 0)
+			if (page_shortage <= 0)
 				vm_page_deactivate(m);
 			else {
 				/*
@@ -1523,11 +1529,11 @@ drop_page:
 				 */
 				if (m->dirty == 0) {
 					vm_page_deactivate(m);
-					inactq_shortage -=
+					page_shortage -=
 					    act_scan_laundry_weight;
 				} else {
 					vm_page_launder(m);
-					inactq_shortage--;
+					page_shortage--;
 				}
 			}
 		} else
@@ -1535,12 +1541,8 @@ drop_page:
 		vm_page_unlock(m);
 	}
 	vm_pagequeue_unlock(pq);
-	if (pass > 0)
-		vm_swapout_run_idle();
 	return (page_shortage <= 0);
 }
-
-static int vm_pageout_oom_vote;
 
 /*
  * The pagedaemon threads randlomly select one to perform the
@@ -1551,6 +1553,7 @@ static void
 vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
     int starting_page_shortage)
 {
+	static int vm_pageout_oom_vote;
 	int old_vote;
 
 	if (starting_page_shortage <= 0 || starting_page_shortage !=
@@ -1858,7 +1861,9 @@ vm_pageout_worker(void *arg)
 				pass = 0;
 		}
 
-		target_met = vm_pageout_scan(vmd, pass);
+		if (pass > 0)
+			target_met = vm_pageout_scan_inact(vmd);
+		(void)vm_pageout_scan_act(vmd);
 	}
 }
 
