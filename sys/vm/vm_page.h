@@ -118,9 +118,10 @@
  *	is also used to prevent page reclamation in situations where it is
  *	undesirable to block other accesses to the page.  The wire counter
  *	is used to implement mlock(2) and is non-zero for pages containing
- *	kernel memory.  Pages that are wired or held will not be reclaimed
- *	or laundered by the page daemon, but are treated differently during
- *	a page queue scan: held pages remain at their position in the queue,
+ *	kernel memory.  A wired managed page always has a non-zero hold
+ *	count. 	Pages that are wired or held will not be reclaimed or
+ *	laundered by the page daemon, but are treated differently during a
+ *	page queue scan: held pages remain at their position in the queue,
  *	while wired pages are removed from the queue and must later be
  *	re-enqueued appropriately by the unwiring thread.  It is legal to
  *	call vm_page_free() on a held page; doing so causes it to be removed
@@ -758,7 +759,7 @@ static inline bool
 vm_page_held(vm_page_t m)
 {
 
-	return (m->hold_count > 0 || m->wire_count > 0);
+	return (m->hold_count > 0);
 }
 
 #endif				/* _KERNEL */

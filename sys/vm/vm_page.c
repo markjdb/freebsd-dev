@@ -1797,6 +1797,7 @@ found:
 		 * page is inserted into the object.
 		 */
 		atomic_add_int(&vm_cnt.v_wire_count, 1);
+		m->hold_count = 1;
 		m->wire_count = 1;
 	}
 	m->act_count = 0;
@@ -1806,6 +1807,7 @@ found:
 			pagedaemon_wakeup(domain);
 			if (req & VM_ALLOC_WIRED) {
 				atomic_subtract_int(&vm_cnt.v_wire_count, 1);
+				m->hold_count = 0;
 				m->wire_count = 0;
 			}
 			KASSERT(m->object == NULL, ("page %p has object", m));
@@ -1999,8 +2001,10 @@ found:
 		m->aflags = 0;
 		m->flags = (m->flags | PG_NODUMP) & flags;
 		m->busy_lock = busy_lock;
-		if ((req & VM_ALLOC_WIRED) != 0)
+		if ((req & VM_ALLOC_WIRED) != 0) {
+			m->hold_count = 1;
 			m->wire_count = 1;
+		}
 		m->act_count = 0;
 		m->oflags = oflags;
 		if (object != NULL) {
@@ -2134,6 +2138,7 @@ again:
 		 * not belong to an object.
 		 */
 		atomic_add_int(&vm_cnt.v_wire_count, 1);
+		m->hold_count = 1;
 		m->wire_count = 1;
 	}
 	/* Unmanaged pages don't use "act_count". */
@@ -3256,6 +3261,7 @@ vm_page_wire(vm_page_t m)
 		KASSERT((m->oflags & VPO_UNMANAGED) == 0 ||
 		    m->queue == PQ_NONE,
 		    ("vm_page_wire: unmanaged page %p is queued", m));
+		vm_page_hold(m);
 		atomic_add_int(&vm_cnt.v_wire_count, 1);
 	}
 	m->wire_count++;
@@ -3331,6 +3337,7 @@ vm_page_unwire_noq(vm_page_t m)
 		panic("vm_page_unwire: page %p's wire count is zero", m);
 	m->wire_count--;
 	if (m->wire_count == 0) {
+		vm_page_unhold(m);
 		atomic_subtract_int(&vm_cnt.v_wire_count, 1);
 		return (true);
 	} else
