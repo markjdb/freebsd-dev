@@ -124,13 +124,21 @@ printheader(xo_handle_t *xo, const struct kerneldumpheader *h,
 	    (long long)dumplen);
 	xo_emit_h(xo, "{P:  }{Lwc:Blocksize}{:blocksize/%d}\n",
 	    dtoh32(h->blocksize));
-	comp_str = "none";
-	if (h->compression == KERNELDUMP_COMP_GZIP)
+	switch (h->compression) {
+	case KERNELDUMP_COMP_NONE:
+		comp_str = "none";
+		break;
+	case KERNELDUMP_COMP_GZIP:
 		comp_str = "gzip";
-	else if (h->compression == KERNELDUMP_COMP_ZSTD)
+		break;
+	case KERNELDUMP_COMP_ZSTD:
 		comp_str = "zstd";
+		break;
+	default:
+		comp_str = "???";
+		break;
+	}
 	xo_emit_h(xo, "{P:  }{Lwc:Compression}{:compression/%s}\n", comp_str);
-
 	t = dtoh64(h->dumptime);
 	xo_emit_h(xo, "{P:  }{Lwc:Dumptime}{:dumptime/%s}", ctime(&t));
 	xo_emit_h(xo, "{P:  }{Lwc:Hostname}{:hostname/%s}\n", h->hostname);
@@ -859,7 +867,7 @@ DoFile(const char *savedir, const char *device)
 		snprintf(linkname, sizeof(linkname), "%s.last.%s",
 		    istextdump ? "textdump.tar" :
 		    (isencrypted ? "vmcore_encrypted" : "vmcore"),
-		    (kdhl.compression == KERNELDUMP_COMP_ZSTD) ? "zstd" : "gz");
+		    (kdhl.compression == KERNELDUMP_COMP_ZSTD) ? "zst" : "gz");
 	} else {
 		snprintf(linkname, sizeof(linkname), "%s.last",
 		    istextdump ? "textdump.tar" :
