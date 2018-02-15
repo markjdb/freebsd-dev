@@ -687,6 +687,8 @@ ufs_use_sa_read(void *devfd, off_t loc, void **bufp, int size)
 	int error;
 
 	f = (struct open_file *)devfd;
+	if (*bufp != NULL)
+		free(*bufp);
 	if ((*bufp = malloc(size)) == NULL)
 		return (ENOSPC);
 	error = (f->f_dev->dv_strategy)(f->f_devdata, F_READ, loc / DEV_BSIZE,
