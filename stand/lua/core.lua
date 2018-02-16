@@ -28,6 +28,18 @@
 
 local core = {};
 
+-- Commonly appearing constants
+core.KEY_ENTER		= 13;
+core.KEY_BACKSPACE	= 127;
+
+core.KEYSTR_ESCAPE	= "\027";
+
+core.MENU_RETURN	= "return";
+core.MENU_ENTRY		= "entry";
+core.MENU_SEPARATOR	= "separator";
+core.MENU_SUBMENU	= "submenu";
+core.MENU_CAROUSEL_ENTRY	= "carousel_entry";
+
 function core.setVerbose(b)
 	if (b == nil) then
 		b = not core.verbose;
@@ -52,6 +64,20 @@ function core.setSingleUser(b)
 		loader.unsetenv("boot_single");
 	end
 	core.su = b;
+end
+
+function core.getACPIPresent(checkingSystemDefaults)
+	local c = loader.getenv("hint.acpi.0.rsdp");
+
+	if (c ~= nil) then
+		if (checkingSystemDefaults == true) then
+			return true;
+		end
+		-- Otherwise, respect disabled if it's set
+		c = loader.getenv("hint.acpi.0.disabled");
+		return (c == nil) or (tonumber(c) ~= 1);
+	end
+	return false;
 end
 
 function core.setACPI(b)
@@ -116,7 +142,7 @@ function core.kernelList()
 end
 
 function core.setDefaults()
-	core.setACPI(true);
+	core.setACPI(core.getACPIPresent(true));
 	core.setSafeMode(false);
 	core.setSingleUser(false);
 	core.setVerbose(false);
@@ -151,4 +177,5 @@ function core.bootserial()
 	return false;
 end
 
+core.setACPI(core.getACPIPresent(false))
 return core
