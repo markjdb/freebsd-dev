@@ -313,6 +313,7 @@ init_secondary(void)
 int
 native_start_all_aps(void)
 {
+	struct pcpu *pc;
 	vm_offset_t va = boot_address + KERNBASE;
 	u_int64_t *pt4, *pt3, *pt2;
 	u_int32_t mpbioswarmvec;
@@ -360,6 +361,7 @@ native_start_all_aps(void)
 	/* start each AP */
 	for (cpu = 1; cpu < mp_ncpus; cpu++) {
 		apic_id = cpu_apic_ids[cpu];
+		pc = &__pcpu[cpu];
 
 		/* allocate and set up an idle stack data page */
 		bootstacks[cpu] = (void *)kmem_malloc(kernel_arena,
@@ -368,9 +370,15 @@ native_start_all_aps(void)
 		    PAGE_SIZE, M_WAITOK | M_ZERO);
 		mce_stack = (char *)kmem_malloc(kernel_arena, PAGE_SIZE,
 		    M_WAITOK | M_ZERO);
-		nmi_stack = (char *)kmem_malloc(kernel_arena, PAGE_SIZE,
+
+		/*
+		 * The NMI stack and PCPU regions are accessed frequently, so
+		 * allocate them
+		 */
+		printf("cpu %d, dom %d\n", cpu, pc->pc_domain);
+		nmi_stack = (char *)kmem_malloc_domain(pc->pc_domain, PAGE_SIZE,
 		    M_WAITOK | M_ZERO);
-		dpcpu = (void *)kmem_malloc(kernel_arena, DPCPU_SIZE,
+		dpcpu = (char *)kmem_malloc_domain(pc->pc_domain, DPCPU_SIZE,
 		    M_WAITOK | M_ZERO);
 
 		bootSTK = (char *)bootstacks[cpu] + kstack_pages * PAGE_SIZE - 8;
