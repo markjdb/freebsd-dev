@@ -548,13 +548,14 @@ SYSINIT(srat_set_cpus, SI_SUB_CPU, SI_ORDER_ANY, srat_set_cpus, NULL);
 int acpi_cpu_to_domainid(int);
 
 int
-acpi_cpu_to_domainid(int cpuid)
+acpi_cpu_to_domainid(int apic_id)
 {
 	struct cpu_info *cpu;
-	struct pcpu *pc;
 
-	pc = pcpu_find(cpuid);
-	cpu = &cpus[pc->pc_apic_id];
+	printf("apid id is %d\n", apic_id);
+	if (srat_physaddr == 0)
+		return (0);
+	cpu = &cpus[apic_id];
 	return (cpu->domain);
 }
 

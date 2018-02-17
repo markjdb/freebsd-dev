@@ -377,7 +377,7 @@ native_start_all_aps(void)
 		 * The NMI stack and PCPU regions are accessed frequently, so
 		 * allocate them from the local domain.
 		 */
-		domain = acpi_cpu_to_domainid(cpu);
+		domain = acpi_cpu_to_domainid(cpu_apic_ids[cpu]);
 		printf("cpu %d, dom %d\n", cpu, domain);
 		nmi_stack = (char *)kmem_malloc_domain(domain, PAGE_SIZE,
 		    M_WAITOK | M_ZERO);
