@@ -545,6 +545,19 @@ srat_set_cpus(void *dummy)
 }
 SYSINIT(srat_set_cpus, SI_SUB_CPU, SI_ORDER_ANY, srat_set_cpus, NULL);
 
+int acpi_cpu_to_domainid(int);
+
+int
+acpi_cpu_to_domainid(int cpuid)
+{
+	struct cpu_info *cpu;
+	struct pcpu *pc;
+
+	pc = pcpu_find(cpuid);
+	cpu = &cpus[pc->pc_apic_id];
+	return (cpu->domain);
+}
+
 /*
  * Map a _PXM value to a VM domain ID.
  *
@@ -564,6 +577,13 @@ acpi_map_pxm_to_vm_domainid(int pxm)
 }
 
 #else /* MAXMEMDOM == 1 */
+
+int
+acpi_cpu_to_domainid(int cpu)
+{
+
+	return (0);
+}
 
 int
 acpi_map_pxm_to_vm_domainid(int pxm)

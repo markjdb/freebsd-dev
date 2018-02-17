@@ -307,6 +307,8 @@ init_secondary(void)
  * local functions and data
  */
 
+int acpi_cpu_to_domainid(int cpu);
+
 /*
  * start each AP in our list
  */
@@ -317,7 +319,7 @@ native_start_all_aps(void)
 	vm_offset_t va = boot_address + KERNBASE;
 	u_int64_t *pt4, *pt3, *pt2;
 	u_int32_t mpbioswarmvec;
-	int apic_id, cpu, i;
+	int apic_id, cpu, domain, i;
 	u_char mpbiosreason;
 
 	mtx_init(&ap_boot_mtx, "ap boot", NULL, MTX_SPIN);
@@ -373,12 +375,13 @@ native_start_all_aps(void)
 
 		/*
 		 * The NMI stack and PCPU regions are accessed frequently, so
-		 * allocate them
+		 * allocate them from the local domain.
 		 */
-		printf("cpu %d, dom %d\n", cpu, pc->pc_domain);
-		nmi_stack = (char *)kmem_malloc_domain(pc->pc_domain, PAGE_SIZE,
+		domain = acpi_cpu_to_domainid(cpu);
+		printf("cpu %d, dom %d\n", cpu, domain);
+		nmi_stack = (char *)kmem_malloc_domain(domain, PAGE_SIZE,
 		    M_WAITOK | M_ZERO);
-		dpcpu = (char *)kmem_malloc_domain(pc->pc_domain, DPCPU_SIZE,
+		dpcpu = (char *)kmem_malloc_domain(domain, DPCPU_SIZE,
 		    M_WAITOK | M_ZERO);
 
 		bootSTK = (char *)bootstacks[cpu] + kstack_pages * PAGE_SIZE - 8;
