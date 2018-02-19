@@ -743,7 +743,7 @@ zfsctl_common_pathconf(ap)
 	 */
 	switch (ap->a_name) {
 	case _PC_LINK_MAX:
-		*ap->a_retval = INT_MAX;
+		*ap->a_retval = MIN(LONG_MAX, ZFS_LINK_MAX);
 		return (0);
 
 	case _PC_FILESIZEBITS:
@@ -766,8 +766,12 @@ zfsctl_common_pathconf(ap)
 		*ap->a_retval = ACL_MAX_ENTRIES;
 		return (0);
 
+	case _PC_NAME_MAX:
+		*ap->a_retval = NAME_MAX;
+		return (0);
+
 	default:
-		return (EINVAL);
+		return (vop_stdpathconf(ap));
 	}
 }
 
@@ -976,7 +980,7 @@ zfsctl_snapdir_lookup(ap)
 		 * the mount point or the thread doing the mounting.
 		 * There can be more references from concurrent lookups.
 		 */
-		KASSERT(vrefcnt(*vpp) > 1, ("found unreferenced mountpoint"));
+		KASSERT((*vpp)->v_holdcnt > 1, ("found unheld mountpoint"));
 
 		/*
 		 * Check if a snapshot is already mounted on top of the vnode.
