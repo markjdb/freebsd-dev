@@ -36,12 +36,55 @@ local drawer = require("drawer");
 
 local menu = {};
 
-local OnOff;
 local skip;
 local run;
 local autoboot;
-local carousel_choices = {};
 
+local OnOff = function(str, b)
+	if (b) then
+		return str .. color.escapef(color.GREEN) .. "On" ..
+		    color.escapef(color.WHITE);
+	else
+		return str .. color.escapef(color.RED) .. "off" ..
+		    color.escapef(color.WHITE);
+	end
+end
+
+-- Module exports
+menu.handlers = {
+	-- Menu handlers take the current menu and selected entry as parameters,
+	-- and should return a boolean indicating whether execution should
+	-- continue or not. The return value may be omitted if this entry should
+	-- have no bearing on whether we continue or not, indicating that we
+	-- should just continue after execution.
+	[core.MENU_ENTRY] = function(current_menu, entry)
+		-- run function
+		entry.func();
+	end,
+	[core.MENU_CAROUSEL_ENTRY] = function(current_menu, entry)
+		-- carousel (rotating) functionality
+		local carid = entry.carousel_id;
+		local caridx = config.getCarouselIndex(carid);
+		local choices = entry.items();
+
+		if (#choices > 0) then
+			caridx = (caridx % #choices) + 1;
+			config.setCarouselIndex(carid, caridx);
+			entry.func(caridx, choices[caridx], choices);
+		end
+	end,
+	[core.MENU_SUBMENU] = function(current_menu, entry)
+		-- recurse
+		return menu.run(entry.submenu());
+	end,
+	[core.MENU_RETURN] = function(current_menu, entry)
+		-- allow entry to have a function/side effect
+		if (entry.func ~= nil) then
+			entry.func();
+		end
+		return false;
+	end,
+};
 -- loader menu tree is rooted at menu.welcome
 
 menu.boot_options = {
@@ -85,6 +128,7 @@ menu.boot_options = {
 		-- acpi
 		{
 			entry_type = core.MENU_ENTRY,
+			visible = core.isSystem386,
 			name = function()
 				return OnOff(color.highlight("A") ..
 				    "CPI       :", core.acpi);
@@ -146,8 +190,8 @@ menu.welcome = {
 			menu_entries = core.shallowCopyTable(menu_entries);
 
 			-- Swap the first two menu entries
-			menu_entries[1], menu_entries[2] = menu_entries[2],
-			    menu_entries[1];
+			menu_entries[1], menu_entries[2] =
+			    menu_entries[2], menu_entries[1];
 
 			-- Then set their names to their alternate names
 			menu_entries[1].name, menu_entries[2].name =
@@ -283,19 +327,6 @@ menu.welcome = {
 	},
 };
 
--- The first item in every carousel is always the default item.
-function menu.getCarouselIndex(id)
-	local val = carousel_choices[id];
-	if (val == nil) then
-		return 1;
-	end
-	return val;
-end
-
-function menu.setCarouselIndex(id, idx)
-	carousel_choices[id] = idx;
-end
-
 function menu.run(m)
 
 	if (menu.skip()) then
@@ -338,31 +369,16 @@ function menu.run(m)
 
 		-- if we have an alias do the assigned action:
 		if (sel_entry ~= nil) then
-			if (sel_entry.entry_type == core.MENU_ENTRY) then
-				-- run function
-				sel_entry.func();
-			elseif (sel_entry.entry_type == core.MENU_CAROUSEL_ENTRY) then
-				-- carousel (rotating) functionality
-				local carid = sel_entry.carousel_id;
-				local caridx = menu.getCarouselIndex(carid);
-				local choices = sel_entry.items();
-
-				if (#choices > 0) then
-					caridx = (caridx % #choices) + 1;
-					menu.setCarouselIndex(carid, caridx);
-					sel_entry.func(caridx, choices[caridx],
-					    choices);
+			-- Get menu handler
+			local handler = menu.handlers[sel_entry.entry_type];
+			if (handler ~= nil) then
+				-- The handler's return value indicates whether
+				-- we need to exit this menu. An omitted return
+				-- value means "continue" by default.
+				cont = handler(m, sel_entry);
+				if (cont == nil) then
+					cont = true;
 				end
-			elseif (sel_entry.entry_type == core.MENU_SUBMENU) then
-				-- recurse
-				cont = menu.run(sel_entry.submenu());
-			elseif (sel_entry.entry_type == core.MENU_RETURN) then
-				-- allow entry to have a function/side effect
-				if (sel_entry.func ~= nil) then
-					sel_entry.func();
-				end
-				-- break recurse
-				cont = false;
 			end
 			-- if we got an alias key the screen is out of date:
 			screen.clear();
@@ -440,16 +456,6 @@ function menu.autoboot()
 	until time <= 0;
 	core.boot();
 
-end
-
-function OnOff(str, b)
-	if (b) then
-		return str .. color.escapef(color.GREEN) .. "On" ..
-		    color.escapef(color.WHITE);
-	else
-		return str .. color.escapef(color.RED) .. "off" ..
-		    color.escapef(color.WHITE);
-	end
 end
 
 return menu;

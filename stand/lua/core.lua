@@ -30,6 +30,7 @@ local config = require('config');
 
 local core = {};
 
+-- Module exports
 -- Commonly appearing constants
 core.KEY_BACKSPACE	= 8;
 core.KEY_ENTER		= 13;
@@ -217,6 +218,10 @@ function core.isSerialBoot()
 	return false;
 end
 
+function core.isSystem386()
+	return (loader.machine_arch == "i386");
+end
+
 -- This may be a better candidate for a 'utility' module.
 function core.shallowCopyTable(tbl)
 	local new_tbl = {};
@@ -230,5 +235,11 @@ function core.shallowCopyTable(tbl)
 	return new_tbl;
 end
 
-core.setACPI(core.getACPIPresent(false));
+-- On i386, hint.acpi.0.rsdp will be set before we're loaded. On !i386, it will
+-- generally be set upon execution of the kernel. Because of this, we can't (or
+-- don't really want to) detect/disable ACPI on !i386 reliably. Just set it
+-- enabled if we detect it and leave well enough alone if we don't.
+if (core.isSystem386()) and (core.getACPIPresent(false)) then
+	core.setACPI(true);
+end
 return core;
