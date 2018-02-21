@@ -2031,7 +2031,6 @@ done:
 			 * The page lock is not required for wiring a page
 			 * until that page is inserted into the object.
 			 */
-			VM_CNT_ADD(v_wire_count, 1);
 			m->wire_count = 1;
 		}
 		m->act_count = 0;
@@ -2042,14 +2041,8 @@ done:
 				avail = i;
 				for (; i < nalloc; i++) {
 					m = ma[i];
-					if ((req & VM_ALLOC_WIRED) != 0) {
-						VM_CNT_ADD(v_wire_count, -1);
-						m->wire_count = 0;
-					}
 					KASSERT(m->object == NULL,
 					    ("page %p has object", m));
-					m->oflags = VPO_UNMANAGED;
-					m->busy_lock = VPB_UNBUSIED;
 					/* Don't change PG_ZERO. */
 					vm_page_free_toq(m);
 				}
@@ -2070,6 +2063,8 @@ done:
 			m->pindex = pindex + i;
 		mpred = m;
 	}
+	if ((req & VM_ALLOC_WIRED) != 0)
+		VM_CNT_ADD(v_wire_count, nalloc);
 
 	return (nalloc);
 }
