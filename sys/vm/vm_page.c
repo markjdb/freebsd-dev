@@ -2038,6 +2038,7 @@ done:
 		if (object != NULL) {
 			if (vm_page_insert_after(m, object, pindex + i,
 			    mpred)) {
+				m->wire_count = 0;
 				avail = i;
 				for (; i < nalloc; i++) {
 					m = ma[i];
