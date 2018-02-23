@@ -1231,7 +1231,7 @@ swap_pager_getpages(vm_object_t object, vm_page_t *ma, int count, int *rbehind,
 	/*
 	 * If we had an unrecoverable read error pages will not be valid.
 	 */
-	for (i = 0; i < reqcount; i++)
+	for (i = 0; i < count; i++)
 		if (ma[i]->valid != VM_PAGE_BITS_ALL)
 			return (VM_PAGER_ERROR);
 
