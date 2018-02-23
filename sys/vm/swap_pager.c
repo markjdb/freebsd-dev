@@ -1136,7 +1136,7 @@ swap_pager_getpages(vm_object_t object, vm_page_t *ma, int count, int *rbehind,
 	/*
 	 * Allocate readahead and readbehind pages.
 	 */
-	if (rbehind != NULL) {
+	if (rbehind != NULL && *rbehind > 0) {
 		shift = vm_page_alloc_pages_after(object,
 		    ma[0]->pindex - *rbehind, VM_ALLOC_NORMAL, &bp->b_pages[0],
 		    *rbehind, mpred);
@@ -1150,7 +1150,7 @@ swap_pager_getpages(vm_object_t object, vm_page_t *ma, int count, int *rbehind,
 	}
 	for (i = 0; i < reqcount; i++)
 		bp->b_pages[i + shift] = ma[i];
-	if (rahead != NULL) {
+	if (rahead != NULL && *rahead > 0) {
 		*rahead = vm_page_alloc_pages_after(object,
 		    ma[reqcount - 1]->pindex + 1, VM_ALLOC_NORMAL,
 		    &bp->b_pages[reqcount], *rahead, ma[reqcount - 1]);

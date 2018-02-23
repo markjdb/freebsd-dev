@@ -900,7 +900,7 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 	 * read behind or read ahead pages.
 	 */
 	i = bp->b_npages = 0;
-	if (rbehind) {
+	if (rbehind > 0) {
 		vm_pindex_t startpindex;
 		vm_page_t mpred;
 
@@ -931,7 +931,7 @@ vnode_pager_generic_getpages(struct vnode *vp, vm_page_t *m, int count,
 		bp->b_pages[i] = m[j];
 	bp->b_npages += count;
 
-	if (rahead) {
+	if (rahead > 0) {
 		vm_pindex_t endpindex, startpindex;
 		vm_page_t msucc;
 
