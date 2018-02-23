@@ -1147,7 +1147,8 @@ swap_pager_getpages(vm_object_t object, vm_page_t *ma, int count, int *rbehind,
 			shift = 0;
 		} else
 			count += *rbehind;
-	}
+	} else
+		shift = 0;
 	for (i = 0; i < reqcount; i++)
 		bp->b_pages[i + shift] = ma[i];
 	if (rahead != NULL && *rahead > 0) {
