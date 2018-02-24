@@ -1,4 +1,6 @@
 --
+-- SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+--
 -- Copyright (c) 2015 Pedro Souza <pedrosouza@freebsd.org>
 -- Copyright (C) 2018 Kyle Evans <kevans@FreeBSD.org>
 -- All rights reserved.
@@ -36,11 +38,7 @@ local drawer = require("drawer")
 
 local menu = {}
 
-local skip
-local run
-local autoboot
-
-local OnOff = function(str, b)
+local function OnOff(str, b)
 	if b then
 		return str .. color.escapef(color.GREEN) .. "On" ..
 		    color.escapef(color.WHITE)
@@ -50,7 +48,7 @@ local OnOff = function(str, b)
 	end
 end
 
-local bootenvSet = function(env)
+local function bootenvSet(env)
 	loader.setenv("vfs.root.mountfrom", env)
 	loader.setenv("currdev", env .. ":")
 	config.reload()
@@ -63,11 +61,11 @@ menu.handlers = {
 	-- continue or not. The return value may be omitted if this entry should
 	-- have no bearing on whether we continue or not, indicating that we
 	-- should just continue after execution.
-	[core.MENU_ENTRY] = function(current_menu, entry)
+	[core.MENU_ENTRY] = function(_, entry)
 		-- run function
 		entry.func()
 	end,
-	[core.MENU_CAROUSEL_ENTRY] = function(current_menu, entry)
+	[core.MENU_CAROUSEL_ENTRY] = function(_, entry)
 		-- carousel (rotating) functionality
 		local carid = entry.carousel_id
 		local caridx = config.getCarouselIndex(carid)
@@ -81,11 +79,11 @@ menu.handlers = {
 			entry.func(caridx, choices[caridx], choices)
 		end
 	end,
-	[core.MENU_SUBMENU] = function(current_menu, entry)
+	[core.MENU_SUBMENU] = function(_, entry)
 		-- recurse
 		return menu.run(entry.submenu)
 	end,
-	[core.MENU_RETURN] = function(current_menu, entry)
+	[core.MENU_RETURN] = function(_, entry)
 		-- allow entry to have a function/side effect
 		if entry.func ~= nil then
 			entry.func()
@@ -126,7 +124,7 @@ menu.boot_environments = {
 				    bootenv_name .. " (" .. idx .. " of " ..
 				    #all_choices .. ")"
 			end,
-			func = function(idx, choice, all_choices)
+			func = function(_, choice, _)
 				bootenvSet(choice)
 			end,
 			alias = {"a", "A"},
@@ -224,7 +222,7 @@ menu.welcome = {
 				return menu.welcome.swapped_menu
 			end
 			-- Shallow copy the table
-			menu_entries = core.shallowCopyTable(menu_entries)
+			menu_entries = core.deepCopyTable(menu_entries)
 
 			-- Swap the first two menu entries
 			menu_entries[1], menu_entries[2] =
@@ -316,7 +314,7 @@ menu.welcome = {
 				    kernel_name .. " (" .. idx .. " of " ..
 				    #all_choices .. ")"
 			end,
-			func = function(idx, choice, all_choices)
+			func = function(_, choice, _)
 				config.selectkernel(choice)
 			end,
 			alias = {"k", "K"}
@@ -365,7 +363,7 @@ function menu.run(m)
 	if m == menu.default then
 		autoboot_key = menu.autoboot()
 	end
-	cont = true
+	local cont = true
 	while cont do
 		local key = autoboot_key or io.getchar()
 		autoboot_key = nil
@@ -460,8 +458,7 @@ function menu.autoboot()
 			else
 				-- erase autoboot msg
 				screen.setcursor(0, y)
-				print("                                        "
-				    .. "                                        ")
+				print(string.rep(" ", 80))
 				screen.defcursor()
 				return ch
 			end

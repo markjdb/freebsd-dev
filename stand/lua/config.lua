@@ -1,4 +1,6 @@
 --
+-- SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+--
 -- Copyright (c) 2015 Pedro Souza <pedrosouza@freebsd.org>
 -- Copyright (C) 2018 Kyle Evans <kevans@FreeBSD.org>
 -- All rights reserved.
@@ -37,7 +39,7 @@ local carousel_choices = {}
 pattern_table = {
 	[1] = {
 		str = "^%s*(#.*)",
-		process = function(k, v)  end
+		process = function(_, _)  end
 	},
 	--  module_load="value"
 	[2] = {
@@ -94,7 +96,7 @@ pattern_table = {
 	--  exec="command"
 	[9] = {
 		str = "^%s*exec%s*=%s*\"([%w%s%p]-)\"%s*(.*)",
-		process = function(k, v)
+		process = function(k, _)
 			if loader.perform(k) ~= 0 then
 				print("Failed to exec '" .. k .. "'")
 			end
@@ -121,6 +123,38 @@ pattern_table = {
 		end
 	}
 }
+
+local function check_nextboot()
+	local nextboot_file = loader.getenv("nextboot_file")
+	if nextboot_file == nil then
+		return
+	end
+
+	local function check_nextboot_enabled(text)
+		return text:match("^nextboot_enable=\"NO\"") == nil
+	end
+
+	if not config.parse(nextboot_file, true, check_nextboot_enabled) then
+		-- This only fails if it actually hit a parse error
+		print("Failed to parse nextboot configuration: '" ..
+		    nextboot_file .. "'")
+	end
+
+	-- Attempt to rewrite the first line and only the first line of the
+	-- nextboot_file. We overwrite it with nextboot_enable="NO", then
+	-- check for that on load. See: check_nextboot_enabled
+	-- It's worth noting that this won't work on every filesystem, so we
+	-- won't do anything notable if we have any errors in this process.
+	local nfile = io.open(nextboot_file, 'w')
+	if nfile ~= nil then
+		-- We need the trailing space here to account for the extra
+		-- character taken up by the string nextboot_enable="YES"
+		-- Or new end quotation mark lands on the S, and we want to
+		-- rewrite the entirety of the first line.
+		io.write(nfile, "nextboot_enable=\"NO\" ")
+		io.close(nfile)
+	end
+end
 
 -- Module exports
 -- Which variables we changed
@@ -260,10 +294,10 @@ function config.loadmod(mod, silent)
 				end
 			end
 
-		else
-			-- if not silent then
-				-- print("Skipping module '". . k .. "'")
-			-- end
+--		else
+--			if not silent then
+--				print("Skipping module '". . k .. "'")
+--			end
 		end
 	end
 
@@ -271,7 +305,9 @@ function config.loadmod(mod, silent)
 end
 
 -- silent runs will not return false if we fail to open the file
-function config.parse(name, silent)
+-- check_and_halt, if it's set, will be executed on the full text of the config
+-- file. If it returns false, we are to halt immediately.
+function config.parse(name, silent, check_and_halt)
 	if silent == nil then
 		silent = false
 	end
@@ -283,10 +319,9 @@ function config.parse(name, silent)
 		return silent
 	end
 
-	local text
-	local r
-
-	text, r = io.read(f)
+	local text, _ = io.read(f)
+	-- We might have read in the whole file, this won't be needed any more.
+	io.close(f)
 
 	if text == nil then
 		if not silent then
@@ -295,6 +330,13 @@ function config.parse(name, silent)
 		return silent
 	end
 
+
+	if check_and_halt ~= nil then
+		if not check_and_halt(text) then
+			-- We'll just pretend that everything is fine...
+			return true
+		end
+	end
 	local n = 1
 	local status = true
 
@@ -302,7 +344,7 @@ function config.parse(name, silent)
 		if line:match("^%s*$") == nil then
 			local found = false
 
-			for i, val in ipairs(pattern_table) do
+			for _, val in ipairs(pattern_table) do
 				local k, v, c = line:match(val.str)
 				if k ~= nil then
 					found = true
@@ -337,9 +379,10 @@ function config.loadkernel(other_kernel)
 	local flags = loader.getenv("kernel_options") or ""
 	local kernel = other_kernel or loader.getenv("kernel")
 
-	local try_load = function (names)
+	local function try_load(names)
 		for name in names:gmatch("([^;]+)%s*;?") do
-			r = loader.perform("load " .. flags .. " " .. name)
+			local r = loader.perform("load " .. flags ..
+			    " " .. name)
 			if r == 0 then
 				return name
 			end
@@ -347,7 +390,7 @@ function config.loadkernel(other_kernel)
 		return nil
 	end
 
-	local load_bootfile = function()
+	local function load_bootfile()
 		local bootfile = loader.getenv("bootfile")
 
 		-- append default kernel name
@@ -376,7 +419,7 @@ function config.loadkernel(other_kernel)
 		-- Use our cached module_path, so we don't end up with multiple
 		-- automatically added kernel paths to our final module_path
 		local module_path = config.module_path
-		local res = nil
+		local res
 
 		if other_kernel ~= nil then
 			kernel = other_kernel
@@ -385,7 +428,7 @@ function config.loadkernel(other_kernel)
 		-- then try load with module_path=${kernel}
 		local paths = {"/boot/" .. kernel, kernel}
 
-		for k,v in pairs(paths) do
+		for _, v in pairs(paths) do
 			loader.setenv("module_path", v)
 			res = load_bootfile()
 
@@ -439,6 +482,8 @@ function config.load(file)
 		end
 	end
 
+	check_nextboot()
+
 	-- Cache the provided module_path at load time for later use
 	config.module_path = loader.getenv("module_path")
 end
@@ -452,7 +497,7 @@ end
 
 function config.loadelf()
 	local kernel = config.kernel_selected or config.kernel_loaded
-	local loaded = false
+	local loaded
 
 	print("Loading kernel...")
 	loaded = config.loadkernel(kernel)

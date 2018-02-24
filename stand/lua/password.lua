@@ -1,4 +1,6 @@
 --
+-- SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+--
 -- Copyright (c) 2015 Pedro Souza <pedrosouza@freebsd.org>
 -- Copyright (C) 2018 Kyle Evans <kevans@FreeBSD.org>
 -- All rights reserved.
@@ -37,8 +39,8 @@ function password.read()
 	local str = ""
 	local n = 0
 
-	repeat
-		ch = io.getchar()
+	while true do
+		local ch = io.getchar()
 		if ch == core.KEY_ENTER then
 			break
 		end
@@ -55,7 +57,7 @@ function password.read()
 			str = str .. string.char(ch)
 			n = n + 1
 		end
-	until n == 16
+	end
 	return str
 end
 

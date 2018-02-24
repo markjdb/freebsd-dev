@@ -1,4 +1,6 @@
 --
+-- SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+--
 -- Copyright (c) 2015 Pedro Souza <pedrosouza@freebsd.org>
 -- Copyright (c) 2018 Kyle Evans <kevans@FreeBSD.org>
 -- All rights reserved.
@@ -38,11 +40,12 @@ local fbsd_logo
 local beastie_color
 local beastie
 local fbsd_logo_v
+local orb_color
 local orb
 local none
 local none_shifted = false
 
-local menu_entry_name = function(drawing_menu, entry)
+local function menu_entry_name(drawing_menu, entry)
 	local name_handler = drawer.menu_name_handlers[entry.entry_type]
 
 	if name_handler ~= nil then
@@ -54,7 +57,7 @@ local menu_entry_name = function(drawing_menu, entry)
 	return entry.name
 end
 
-local shift_brand_text = function(shift)
+local function shift_brand_text(shift)
 	drawer.brand_position.x = drawer.brand_position.x + shift.x
 	drawer.brand_position.y = drawer.brand_position.y + shift.y
 	drawer.menu_position.x = drawer.menu_position.x + shift.x
@@ -64,109 +67,109 @@ local shift_brand_text = function(shift)
 end
 
 fbsd_logo = {
-	"  ______               ____   _____ _____  ",
-	" |  ____|             |  _ \\ / ____|  __ \\ ",
-	" | |___ _ __ ___  ___ | |_) | (___ | |  | |",
-	" |  ___| '__/ _ \\/ _ \\|  _ < \\___ \\| |  | |",
-	" | |   | | |  __/  __/| |_) |____) | |__| |",
-	" | |   | | |    |    ||     |      |      |",
-	" |_|   |_|  \\___|\\___||____/|_____/|_____/ "
+"  ______               ____   _____ _____  ",
+" |  ____|             |  _ \\ / ____|  __ \\ ",
+" | |___ _ __ ___  ___ | |_) | (___ | |  | |",
+" |  ___| '__/ _ \\/ _ \\|  _ < \\___ \\| |  | |",
+" | |   | | |  __/  __/| |_) |____) | |__| |",
+" | |   | | |    |    ||     |      |      |",
+" |_|   |_|  \\___|\\___||____/|_____/|_____/ "
 }
 
 beastie_color = {
-	"               \027[31m,        ,",
-	"              /(        )`",
-	"              \\ \\___   / |",
-	"              /- \027[37m_\027[31m  `-/  '",
-	"             (\027[37m/\\/ \\\027[31m \\   /\\",
-	"             \027[37m/ /   |\027[31m `    \\",
-	"             \027[34mO O   \027[37m) \027[31m/    |",
-	"             \027[37m`-^--'\027[31m`<     '",
-	"            (_.)  _  )   /",
-	"             `.___/`    /",
-	"               `-----' /",
-	"  \027[33m<----.\027[31m     __ / __   \\",
-	"  \027[33m<----|====\027[31mO)))\027[33m==\027[31m) \\) /\027[33m====|",
-	"  \027[33m<----'\027[31m    `--' `.__,' \\",
-	"               |        |",
-	"                \\       /       /\\",
-	"           \027[36m______\027[31m( (_  / \\______/",
-	"         \027[36m,'  ,-----'   |",
-	"         `--{__________)\027[37m"
+"               \027[31m,        ,",
+"              /(        )`",
+"              \\ \\___   / |",
+"              /- \027[37m_\027[31m  `-/  '",
+"             (\027[37m/\\/ \\\027[31m \\   /\\",
+"             \027[37m/ /   |\027[31m `    \\",
+"             \027[34mO O   \027[37m) \027[31m/    |",
+"             \027[37m`-^--'\027[31m`<     '",
+"            (_.)  _  )   /",
+"             `.___/`    /",
+"               `-----' /",
+"  \027[33m<----.\027[31m     __ / __   \\",
+"  \027[33m<----|====\027[31mO)))\027[33m==\027[31m) \\) /\027[33m====|",
+"  \027[33m<----'\027[31m    `--' `.__,' \\",
+"               |        |",
+"                \\       /       /\\",
+"           \027[36m______\027[31m( (_  / \\______/",
+"         \027[36m,'  ,-----'   |",
+"         `--{__________)\027[37m"
 }
 
 beastie = {
-	"               ,        ,",
-	"              /(        )`",
-	"              \\ \\___   / |",
-	"              /- _  `-/  '",
-	"             (/\\/ \\ \\   /\\",
-	"             / /   | `    \\",
-	"             O O   ) /    |",
-	"             `-^--'`<     '",
-	"            (_.)  _  )   /",
-	"             `.___/`    /",
-	"               `-----' /",
-	"  <----.     __ / __   \\",
-	"  <----|====O)))==) \\) /====|",
-	"  <----'    `--' `.__,' \\",
-	"               |        |",
-	"                \\       /       /\\",
-	"           ______( (_  / \\______/",
-	"         ,'  ,-----'   |",
-	"         `--{__________)"
+"               ,        ,",
+"              /(        )`",
+"              \\ \\___   / |",
+"              /- _  `-/  '",
+"             (/\\/ \\ \\   /\\",
+"             / /   | `    \\",
+"             O O   ) /    |",
+"             `-^--'`<     '",
+"            (_.)  _  )   /",
+"             `.___/`    /",
+"               `-----' /",
+"  <----.     __ / __   \\",
+"  <----|====O)))==) \\) /====|",
+"  <----'    `--' `.__,' \\",
+"               |        |",
+"                \\       /       /\\",
+"           ______( (_  / \\______/",
+"         ,'  ,-----'   |",
+"         `--{__________)"
 }
 
 fbsd_logo_v = {
-	"  ______",
-	" |  ____| __ ___  ___ ",
-	" | |__ | '__/ _ \\/ _ \\",
-	" |  __|| | |  __/  __/",
-	" | |   | | |    |    |",
-	" |_|   |_|  \\___|\\___|",
-	"  ____   _____ _____",
-	" |  _ \\ / ____|  __ \\",
-	" | |_) | (___ | |  | |",
-	" |  _ < \\___ \\| |  | |",
-	" | |_) |____) | |__| |",
-	" |     |      |      |",
-	" |____/|_____/|_____/"
+"  ______",
+" |  ____| __ ___  ___ ",
+" | |__ | '__/ _ \\/ _ \\",
+" |  __|| | |  __/  __/",
+" | |   | | |    |    |",
+" |_|   |_|  \\___|\\___|",
+"  ____   _____ _____",
+" |  _ \\ / ____|  __ \\",
+" | |_) | (___ | |  | |",
+" |  _ < \\___ \\| |  | |",
+" | |_) |____) | |__| |",
+" |     |      |      |",
+" |____/|_____/|_____/"
 }
 
 orb_color = {
-	"  \027[31m```                        \027[31;1m`\027[31m",
-	" s` `.....---...\027[31;1m....--.```   -/\027[31m",
-	" +o   .--`         \027[31;1m/y:`      +.\027[31m",
-	"  yo`:.            \027[31;1m:o      `+-\027[31m",
-	"   y/               \027[31;1m-/`   -o/\027[31m",
-	"  .-                  \027[31;1m::/sy+:.\027[31m",
-	"  /                     \027[31;1m`--  /\027[31m",
-	" `:                          \027[31;1m:`\027[31m",
-	" `:                          \027[31;1m:`\027[31m",
-	"  /                          \027[31;1m/\027[31m",
-	"  .-                        \027[31;1m-.\027[31m",
-	"   --                      \027[31;1m-.\027[31m",
-	"    `:`                  \027[31;1m`:`",
-	"      \027[31;1m.--             `--.",
-	"         .---.....----.\027[37m"
+"  \027[31m```                        \027[31;1m`\027[31m",
+" s` `.....---...\027[31;1m....--.```   -/\027[31m",
+" +o   .--`         \027[31;1m/y:`      +.\027[31m",
+"  yo`:.            \027[31;1m:o      `+-\027[31m",
+"   y/               \027[31;1m-/`   -o/\027[31m",
+"  .-                  \027[31;1m::/sy+:.\027[31m",
+"  /                     \027[31;1m`--  /\027[31m",
+" `:                          \027[31;1m:`\027[31m",
+" `:                          \027[31;1m:`\027[31m",
+"  /                          \027[31;1m/\027[31m",
+"  .-                        \027[31;1m-.\027[31m",
+"   --                      \027[31;1m-.\027[31m",
+"    `:`                  \027[31;1m`:`",
+"      \027[31;1m.--             `--.",
+"         .---.....----.\027[37m"
 }
 
 orb = {
-	"  ```                        `",
-	" s` `.....---.......--.```   -/",
-	" +o   .--`         /y:`      +.",
-	"  yo`:.            :o      `+-",
-	"   y/               -/`   -o/",
-	"  .-                  ::/sy+:.",
-	"  /                     `--  /",
-	" `:                          :`",
-	" `:                          :`",
-	"  /                          /",
-	"  .-                        -.",
-	"   --                      -.",
-	"    `:`                  `:`",
-	"      .--             `--.",
-	"         .---.....----."
+"  ```                        `",
+" s` `.....---.......--.```   -/",
+" +o   .--`         /y:`      +.",
+"  yo`:.            :o      `+-",
+"   y/               -/`   -o/",
+"  .-                  ::/sy+:.",
+"  /                     `--  /",
+" `:                          :`",
+" `:                          :`",
+"  /                          /",
+"  .-                        -.",
+"   --                      -.",
+"    `:`                  `:`",
+"      .--             `--.",
+"         .---.....----."
 }
 
 none = {""}
@@ -178,7 +181,7 @@ drawer.menu_name_handlers = {
 	-- This is designed so that everything, including menu separators, may
 	-- have their names derived differently. The default action for entry
 	-- types not specified here is to use entry.name directly.
-	[core.MENU_SEPARATOR] = function(drawing_menu, entry)
+	[core.MENU_SEPARATOR] = function(_, entry)
 		if entry.name ~= nil then
 			if type(entry.name) == "function" then
 				return entry.name()
@@ -187,7 +190,7 @@ drawer.menu_name_handlers = {
 		end
 		return ""
 	end,
-	[core.MENU_CAROUSEL_ENTRY] = function(drawing_menu, entry)
+	[core.MENU_CAROUSEL_ENTRY] = function(_, entry)
 		local carid = entry.carousel_id
 		local caridx = config.getCarouselIndex(carid)
 		local choices = entry.items
@@ -257,43 +260,45 @@ function drawer.drawscreen(menu_opts)
 	-- drawlogo() must go first.
 	-- it determines the positions of other elements
 	drawer.drawlogo()
-        drawer.drawbrand()
-        drawer.drawbox()
+	drawer.drawbrand()
+	drawer.drawbox()
 	return drawer.drawmenu(menu_opts)
 end
 
 function drawer.drawmenu(m)
-	x = drawer.menu_position.x
-	y = drawer.menu_position.y
+	local x = drawer.menu_position.x
+	local y = drawer.menu_position.y
 
 	-- print the menu and build the alias table
 	local alias_table = {}
 	local entry_num = 0
 	local menu_entries = m.entries
+	local effective_line_num = 0
 	if type(menu_entries) == "function" then
 		menu_entries = menu_entries()
 	end
-	for line_num, e in ipairs(menu_entries) do
+	for _, e in ipairs(menu_entries) do
 		-- Allow menu items to be conditionally visible by specifying
 		-- a visible function.
 		if e.visible ~= nil and not e.visible() then
 			goto continue
 		end
+		effective_line_num = effective_line_num + 1
 		if e.entry_type ~= core.MENU_SEPARATOR then
 			entry_num = entry_num + 1
-			screen.setcursor(x, y + line_num)
+			screen.setcursor(x, y + effective_line_num)
 
 			print(entry_num .. ". " .. menu_entry_name(m, e))
 
 			-- fill the alias table
 			alias_table[tostring(entry_num)] = e
 			if e.alias ~= nil then
-				for n, a in ipairs(e.alias) do
+				for _, a in ipairs(e.alias) do
 					alias_table[a] = e
 				end
 			end
 		else
-			screen.setcursor(x, y + line_num)
+			screen.setcursor(x, y + effective_line_num)
 			print(menu_entry_name(m, e))
 		end
 		::continue::
@@ -303,10 +308,10 @@ end
 
 
 function drawer.drawbox()
-	x = drawer.box_pos_dim.x
-	y = drawer.box_pos_dim.y
-	w = drawer.box_pos_dim.w
-	h = drawer.box_pos_dim.h
+	local x = drawer.box_pos_dim.x
+	local y = drawer.box_pos_dim.y
+	local w = drawer.box_pos_dim.w
+	local h = drawer.box_pos_dim.h
 
 	local hl = string.char(0xCD)
 	local vl = string.char(0xBA)
