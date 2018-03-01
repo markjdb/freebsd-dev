@@ -1144,7 +1144,7 @@ swap_pager_getpages(vm_object_t object, vm_page_t *ma, int count, int *rbehind,
 			/* Drop a partially allocated run. */
 			for (i = 0; i < shift; i++)
 				vm_page_free(bp->b_pages[i]);
-			shift = 0;
+			shift = *rbehind = 0;
 		} else
 			count += *rbehind;
 	} else
@@ -1154,7 +1154,7 @@ swap_pager_getpages(vm_object_t object, vm_page_t *ma, int count, int *rbehind,
 	if (rahead != NULL && *rahead > 0) {
 		*rahead = vm_page_alloc_pages_after(object,
 		    ma[reqcount - 1]->pindex + 1, VM_ALLOC_NORMAL,
-		    &bp->b_pages[reqcount], *rahead, ma[reqcount - 1]);
+		    &bp->b_pages[reqcount + shift], *rahead, ma[reqcount - 1]);
 		count += *rahead;
 	}
 

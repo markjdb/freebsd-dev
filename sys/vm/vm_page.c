@@ -2003,6 +2003,9 @@ again:
 	}
 
 done:
+	for (i = 0; i < nalloc; i++)
+		vm_page_alloc_check(ma[i]);
+
 	/*
 	 * Initialize the pages.  Only the PG_ZERO flag is inherited.
 	 */
@@ -2038,10 +2041,12 @@ done:
 		if (object != NULL) {
 			if (vm_page_insert_after(m, object, pindex + i,
 			    mpred)) {
-				m->wire_count = 0;
 				avail = i;
 				for (; i < nalloc; i++) {
 					m = ma[i];
+					m->busy_lock = VPB_UNBUSIED;
+					m->oflags = VPO_UNMANAGED;
+					m->wire_count = 0;
 					KASSERT(m->object == NULL,
 					    ("page %p has object", m));
 					/* Don't change PG_ZERO. */
