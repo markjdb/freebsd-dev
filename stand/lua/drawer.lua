@@ -45,7 +45,7 @@ local orb
 local none
 local none_shifted = false
 
-local function menu_entry_name(drawing_menu, entry)
+local function menuEntryName(drawing_menu, entry)
 	local name_handler = drawer.menu_name_handlers[entry.entry_type]
 
 	if name_handler ~= nil then
@@ -57,7 +57,7 @@ local function menu_entry_name(drawing_menu, entry)
 	return entry.name
 end
 
-local function shift_brand_text(shift)
+local function shiftBrandText(shift)
 	drawer.brand_position.x = drawer.brand_position.x + shift.x
 	drawer.brand_position.y = drawer.brand_position.y + shift.y
 	drawer.menu_position.x = drawer.menu_position.x + shift.x
@@ -256,6 +256,36 @@ drawer.logodefs = {
 	},
 }
 
+drawer.frame_styles = {
+	-- Indexed by valid values for loader_menu_frame in loader.conf(5).
+	-- All of the keys appearing below must be set for any menu frame style
+	-- added to drawer.frame_styles.
+	["ascii"] = {
+		horizontal	= "-",
+		vertical	= "|",
+		top_left	= "+",
+		bottom_left	= "+",
+		top_right	= "+",
+		bottom_right	= "+",
+	},
+	["single"] = {
+		horizontal	= "\xC4",
+		vertical	= "\xB3",
+		top_left	= "\xDA",
+		bottom_left	= "\xC0",
+		top_right	= "\xBF",
+		bottom_right	= "\xD9",
+	},
+	["double"] = {
+		horizontal	= "\xCD",
+		vertical	= "\xBA",
+		top_left	= "\xC9",
+		bottom_left	= "\xC8",
+		top_right	= "\xBB",
+		bottom_right	= "\xBC",
+	},
+}
+
 function drawer.drawscreen(menu_opts)
 	-- drawlogo() must go first.
 	-- it determines the positions of other elements
@@ -265,14 +295,14 @@ function drawer.drawscreen(menu_opts)
 	return drawer.drawmenu(menu_opts)
 end
 
-function drawer.drawmenu(m)
+function drawer.drawmenu(menudef)
 	local x = drawer.menu_position.x
 	local y = drawer.menu_position.y
 
 	-- print the menu and build the alias table
 	local alias_table = {}
 	local entry_num = 0
-	local menu_entries = m.entries
+	local menu_entries = menudef.entries
 	local effective_line_num = 0
 	if type(menu_entries) == "function" then
 		menu_entries = menu_entries()
@@ -288,7 +318,7 @@ function drawer.drawmenu(m)
 			entry_num = entry_num + 1
 			screen.setcursor(x, y + effective_line_num)
 
-			print(entry_num .. ". " .. menu_entry_name(m, e))
+			print(entry_num .. ". " .. menuEntryName(menudef, e))
 
 			-- fill the alias table
 			alias_table[tostring(entry_num)] = e
@@ -299,13 +329,12 @@ function drawer.drawmenu(m)
 			end
 		else
 			screen.setcursor(x, y + effective_line_num)
-			print(menu_entry_name(m, e))
+			print(menuEntryName(menudef, e))
 		end
 		::continue::
 	end
 	return alias_table
 end
-
 
 function drawer.drawbox()
 	local x = drawer.box_pos_dim.x
@@ -313,35 +342,46 @@ function drawer.drawbox()
 	local w = drawer.box_pos_dim.w
 	local h = drawer.box_pos_dim.h
 
-	local hl = string.char(0xCD)
-	local vl = string.char(0xBA)
-
-	local tl = string.char(0xC9)
-	local bl = string.char(0xC8)
-	local tr = string.char(0xBB)
-	local br = string.char(0xBC)
-
-	screen.setcursor(x, y); print(tl)
-	screen.setcursor(x, y+h); print(bl)
-	screen.setcursor(x+w, y); print(tr)
-	screen.setcursor(x+w, y+h); print(br)
-
-	for i = 1, w-1 do
-		screen.setcursor(x+i, y)
-		print(hl)
-		screen.setcursor(x+i, y+h)
-		print(hl)
+	local framestyle = loader.getenv("loader_menu_frame") or "double"
+	local framespec = drawer.frame_styles[framestyle]
+	-- If we don't have a framespec for the current frame style, just don't
+	-- draw a box.
+	if framespec == nil then
+		return
 	end
 
-	for i = 1, h-1 do
-		screen.setcursor(x, y+i)
-		print(vl)
-		screen.setcursor(x+w, y+i)
-		print(vl)
+	local hl = framespec.horizontal
+	local vl = framespec.vertical
+
+	local tl = framespec.top_left
+	local bl = framespec.bottom_left
+	local tr = framespec.top_right
+	local br = framespec.bottom_right
+
+	screen.setcursor(x, y); printc(tl)
+	screen.setcursor(x, y + h); printc(bl)
+	screen.setcursor(x + w, y); printc(tr)
+	screen.setcursor(x + w, y + h); printc(br)
+
+	screen.setcursor(x + 1, y)
+	for _ = 1, w - 1 do
+		printc(hl)
 	end
 
-	screen.setcursor(x+(w/2)-9, y)
-	print("Welcome to FreeBSD")
+	screen.setcursor(x + 1, y + h)
+	for _ = 1, w - 1 do
+		printc(hl)
+	end
+
+	for i = 1, h - 1 do
+		screen.setcursor(x, y + i)
+		printc(vl)
+		screen.setcursor(x + w, y + i)
+		printc(vl)
+	end
+
+	screen.setcursor(x + (w / 2) - 9, y)
+	printc("Welcome to FreeBSD")
 end
 
 function drawer.draw(x, y, logo)
@@ -379,7 +419,7 @@ function drawer.drawlogo()
 	if logodef ~= nil and logodef.graphic == none then
 		-- centre brand and text if no logo
 		if not none_shifted then
-			shift_brand_text(logodef.shift)
+			shiftBrandText(logodef.shift)
 			none_shifted = true
 		end
 	elseif logodef == nil or logodef.graphic == nil or

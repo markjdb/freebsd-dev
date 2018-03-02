@@ -1398,7 +1398,7 @@ drop_page:
 	 */
 	inactq_shortage = vmd->vmd_inactive_target - (pq->pq_cnt +
 	    vmd->vmd_pagequeues[PQ_LAUNDRY].pq_cnt / act_scan_laundry_weight) +
-	    shortage + deficit + addl_page_shortage;
+	    vm_paging_target(vmd) + deficit + addl_page_shortage;
 	inactq_shortage *= act_scan_laundry_weight;
 
 	pq = &vmd->vmd_pagequeues[PQ_ACTIVE];
@@ -1935,6 +1935,7 @@ vm_pageout(void)
 	int i;
 
 	swap_pager_swap_init();
+	snprintf(curthread->td_name, sizeof(curthread->td_name), "dom0");
 	error = kthread_add(vm_pageout_laundry_worker, NULL, curproc, NULL,
 	    0, 0, "laundry: dom0");
 	if (error != 0)

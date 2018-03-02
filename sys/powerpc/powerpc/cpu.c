@@ -89,7 +89,7 @@ int powerpc_pow_enabled;
 void (*cpu_idle_hook)(sbintime_t) = NULL;
 static void	cpu_idle_60x(sbintime_t);
 static void	cpu_idle_booke(sbintime_t);
-#ifdef __powerpc64__
+#if defined(__powerpc64__) && defined(AIM)
 static void	cpu_idle_powerx(sbintime_t);
 #endif
 
@@ -561,7 +561,7 @@ cpu_booke_setup(int cpuid, uint16_t vers)
 	case FSL_E500v2:
 		/* Only e500v1/v2 support HID0 power management setup. */
 
-		/* Programe power-management mode. */
+		/* Program power-management mode. */
 		hid0 &= ~(HID0_DOZE | HID0_NAP | HID0_SLEEP);
 		hid0 |= HID0_DOZE;
 
@@ -620,7 +620,7 @@ static void
 cpu_powerx_setup(int cpuid, uint16_t vers)
 {
 
-#ifdef __powerpc64__
+#if defined(__powerpc64__) && defined(AIM)
 	if ((mfmsr() & PSL_HV) == 0)
 		return;
 
@@ -745,7 +745,7 @@ cpu_idle_booke(sbintime_t sbt)
 #endif
 }
 
-#ifdef __powerpc64__
+#if defined(__powerpc64__) && defined(AIM)
 static void
 cpu_idle_powerx(sbintime_t sbt)
 {
@@ -768,3 +768,10 @@ cpu_idle_powerx(sbintime_t sbt)
 	spinlock_exit();
 }
 #endif
+
+int
+cpu_idle_wakeup(int cpu)
+{
+
+	return (0);
+}
