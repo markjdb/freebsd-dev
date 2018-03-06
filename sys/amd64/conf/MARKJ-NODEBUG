@@ -1,0 +1,9 @@
+include MARKJ
+
+ident MARKJ-NODEBUG
+
+nooptions       INVARIANTS
+nooptions       INVARIANT_SUPPORT
+nooptions       WITNESS
+nooptions       WITNESS_SKIPSPIN
+nooptions       DEADLKRES
