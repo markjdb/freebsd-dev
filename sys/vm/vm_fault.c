@@ -663,6 +663,12 @@ RetryFault:;
 		fs.m = vm_page_lookup(fs.object, fs.pindex);
 		if (fs.m != NULL) {
 			/*
+			 * Reference the page so that the page daemon doesn't
+			 * reclaim it too quickly.
+			 */
+			vm_page_aflag_set(fs.m, PGA_REFERENCED);
+
+			/*
 			 * Wait/Retry if the page is busy.  We have to do this
 			 * if the page is either exclusive or shared busy
 			 * because the vm_pager may be using read busy for
@@ -679,12 +685,6 @@ RetryFault:;
 			 * to pmap it.
 			 */
 			if (vm_page_busied(fs.m)) {
-				/*
-				 * Reference the page before unlocking and
-				 * sleeping so that the page daemon is less
-				 * likely to reclaim it. 
-				 */
-				vm_page_aflag_set(fs.m, PGA_REFERENCED);
 				if (fs.object != fs.first_object) {
 					if (!VM_OBJECT_TRYWLOCK(
 					    fs.first_object)) {
@@ -710,9 +710,6 @@ RetryFault:;
 				vm_object_deallocate(fs.first_object);
 				goto RetryFault;
 			}
-			vm_page_lock(fs.m);
-			vm_page_remque(fs.m);
-			vm_page_unlock(fs.m);
 
 			/*
 			 * Mark page busy for other processes, and the 
@@ -723,7 +720,7 @@ RetryFault:;
 			vm_page_xbusy(fs.m);
 			if (fs.m->valid != VM_PAGE_BITS_ALL)
 				goto readrest;
-			break;
+			break; /* break to PAGE HAS BEEN FOUND */
 		}
 		KASSERT(fs.m == NULL, ("fs.m should be NULL, not %p", fs.m));
 
