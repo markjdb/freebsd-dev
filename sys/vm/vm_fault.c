@@ -710,9 +710,6 @@ RetryFault:;
 				vm_object_deallocate(fs.first_object);
 				goto RetryFault;
 			}
-			vm_page_lock(fs.m);
-			vm_page_remque(fs.m);
-			vm_page_unlock(fs.m);
 
 			/*
 			 * Mark page busy for other processes, and the 
@@ -723,7 +720,7 @@ RetryFault:;
 			vm_page_xbusy(fs.m);
 			if (fs.m->valid != VM_PAGE_BITS_ALL)
 				goto readrest;
-			break;
+			break; /* break to PAGE HAS BEEN FOUND */
 		}
 		KASSERT(fs.m == NULL, ("fs.m should be NULL, not %p", fs.m));
 
