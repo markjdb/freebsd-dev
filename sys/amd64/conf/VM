@@ -67,6 +67,7 @@ options 	GZIO
 options 	ZSTDIO
 options 	GEOM_MIRROR
 options 	NETDUMP
+options 	EKCD
 
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.
