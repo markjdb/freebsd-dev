@@ -1506,7 +1506,9 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 	KASSERT(mnew->object == NULL,
 	    ("vm_page_replace: page %p already in object", mnew));
 	KASSERT(mnew->queue == PQ_NONE,
-	    ("vm_page_replace: page %p is on a page queue", mnew));
+	    ("vm_page_replace: new page %p is on a paging queue", mnew));
+	KASSERT(mold->queue == PQ_NONE,
+	    ("vm_page_replace: old page %p is on a paging queue", mold));
 
 	/*
 	 * This function mostly follows vm_page_insert() and
@@ -1517,8 +1519,6 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 	mnew->object = object;
 	mnew->pindex = pindex;
 	mold = vm_radix_replace(&object->rtree, mnew);
-	KASSERT(mold->queue == PQ_NONE,
-	    ("vm_page_replace: mold is on a paging queue"));
 
 	/* Keep the resident page list in sorted order. */
 	TAILQ_INSERT_AFTER(&object->memq, mold, mnew, listq);
