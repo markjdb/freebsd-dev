@@ -1361,7 +1361,7 @@ mlx5e_sq_send_nops_locked(struct mlx5e_sq *sq, int can_sleep)
 		}
 		/* send a single NOP */
 		mlx5e_send_nop(sq, 1);
-		wmb();
+		atomic_thread_fence_rel();
 	}
 done:
 	/* Check if we need to write the doorbell */
@@ -2442,15 +2442,29 @@ mlx5e_set_dev_port_mtu(struct ifnet *ifp, int sw_mtu)
 	int hw_mtu;
 	int err;
 
-	err = mlx5_set_port_mtu(mdev, MLX5E_SW2HW_MTU(sw_mtu));
+	hw_mtu = MLX5E_SW2HW_MTU(sw_mtu);
+
+	err = mlx5_set_port_mtu(mdev, hw_mtu);
 	if (err) {
 		if_printf(ifp, "%s: mlx5_set_port_mtu failed setting %d, err=%d\n",
 		    __func__, sw_mtu, err);
 		return (err);
 	}
 
+	/* Update vport context MTU */
+	err = mlx5_set_vport_mtu(mdev, hw_mtu);
+	if (err) {
+		if_printf(ifp, "%s: Failed updating vport context with MTU size, err=%d\n",
+		    __func__, err);
+	}
+
 	ifp->if_mtu = sw_mtu;
-	err = mlx5_query_port_oper_mtu(mdev, &hw_mtu);
+
+	err = mlx5_query_vport_mtu(mdev, &hw_mtu);
+	if (err || !hw_mtu) {
+		/* fallback to port oper mtu */
+		err = mlx5_query_port_oper_mtu(mdev, &hw_mtu);
+	}
 	if (err) {
 		if_printf(ifp, "Query port MTU, after setting new "
 		    "MTU value, failed\n");
@@ -3442,7 +3456,6 @@ mlx5e_setup_pauseframes(struct mlx5e_priv *priv)
 static void *
 mlx5e_create_ifp(struct mlx5_core_dev *mdev)
 {
-	static volatile int mlx5_en_unit;
 	struct ifnet *ifp;
 	struct mlx5e_priv *priv;
 	u8 dev_addr[ETHER_ADDR_LEN] __aligned(4);
@@ -3466,7 +3479,7 @@ mlx5e_create_ifp(struct mlx5_core_dev *mdev)
 		goto err_free_priv;
 	}
 	ifp->if_softc = priv;
-	if_initname(ifp, "mce", atomic_fetchadd_int(&mlx5_en_unit, 1));
+	if_initname(ifp, "mce", device_get_unit(mdev->pdev->dev.bsddev));
 	ifp->if_mtu = ETHERMTU;
 	ifp->if_init = mlx5e_open;
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
