@@ -731,13 +731,17 @@ scan:
 		KASSERT(queue_locked, ("unlocked laundry queue"));
 		KASSERT(vm_page_in_laundry(m),
 		    ("page %p has an inconsistent queue", m));
+
+		VM_CNT_INC(v_pdpages);
 		next = TAILQ_NEXT(m, plinks.q);
 		if ((m->flags & PG_MARKER) != 0)
 			continue;
+
 		KASSERT((m->flags & PG_FICTITIOUS) == 0,
 		    ("PG_FICTITIOUS page %p cannot be in laundry queue", m));
 		KASSERT((m->oflags & VPO_UNMANAGED) == 0,
 		    ("VPO_UNMANAGED page %p cannot be in laundry queue", m));
+
 		if (!vm_pageout_page_lock(m, &next) || m->hold_count != 0) {
 			vm_page_unlock(m);
 			continue;
@@ -1172,11 +1176,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage)
 
 		VM_CNT_INC(v_pdpages);
 		next = TAILQ_NEXT(m, plinks.q);
-
-		/*
-		 * skip marker pages
-		 */
-		if (m->flags & PG_MARKER)
+		if ((m->flags & PG_MARKER) != 0)
 			continue;
 
 		KASSERT((m->flags & PG_FICTITIOUS) == 0,
@@ -1429,23 +1429,21 @@ drop_page:
 	    scanned++) {
 		KASSERT(m->queue == PQ_ACTIVE,
 		    ("vm_pageout_scan: page %p isn't active", m));
+
+		VM_CNT_INC(v_pdpages);
 		next = TAILQ_NEXT(m, plinks.q);
 		if ((m->flags & PG_MARKER) != 0)
 			continue;
+
 		KASSERT((m->flags & PG_FICTITIOUS) == 0,
 		    ("Fictitious page %p cannot be in active queue", m));
 		KASSERT((m->oflags & VPO_UNMANAGED) == 0,
 		    ("Unmanaged page %p cannot be in active queue", m));
+
 		if (!vm_pageout_page_lock(m, &next)) {
 			vm_page_unlock(m);
 			continue;
 		}
-
-		/*
-		 * The count for page daemon pages is updated after checking
-		 * the page for eligibility.
-		 */
-		VM_CNT_INC(v_pdpages);
 
 		/*
 		 * Wired pages are dequeued lazily.
