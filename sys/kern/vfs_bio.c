@@ -3199,7 +3199,7 @@ buf_flush(struct vnode *vp, int target)
 		 */
 		if (vp != NULL && target > 2)
 			target /= 2;
-		flushed = flushbufqueues(vp, target, 1);
+		flushbufqueues(vp, target, 1);
 	}
 	return (flushed);
 }
