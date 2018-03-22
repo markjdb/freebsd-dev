@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * Copyright (c) 2018 Conrad Meyer <cem@FreeBSD.org>
+ * Copyright (c) 1994-1996 Søren Schmidt
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,64 +24,125 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+/*
+ * Linux syscalls return negative errno's, we do positive and map them
+ * Reference:
+ *   FreeBSD: src/sys/sys/errno.h
+ *   Linux:   include/uapi/asm-generic/errno-base.h
+ *            include/uapi/asm-generic/errno.h
+ */
+const int linux_errtbl[ELAST + 1] = {
+	-0,
+	-1,
+	-2,
+	-3,
+	-4,
+	-5,
+	-6,
+	-7,
+	-8,
+	-9,
 
-#include <sys/param.h>
-#include <errno.h>
-#include <signal.h>
-#include <unistd.h>
+	-10,
+	-35,	/* EDEADLK */
+	-12,
+	-13,
+	-14,
+	-15,
+	-16,
+	-17,
+	-18,
+	-19,
 
-#include <atf-c.h>
+	-20,
+	-21,
+	-22,
+	-23,
+	-24,
+	-25,
+	-26,
+	-27,
+	-28,
+	-29,
 
-ATF_TC_WITHOUT_HEAD(getentropy_count);
-ATF_TC_BODY(getentropy_count, tc)
-{
-	char buf[2];
-	int ret;
+	-30,
+	-31,
+	-32,
+	-33,
+	-34,
+	-11,	/* EAGAIN */
+	-115,
+	-114,
+	-88,
+	-89,
 
-	/* getentropy(2) does not modify buf past the requested length */
-	buf[1] = 0x7C;
-	ret = getentropy(buf, 1);
-	ATF_REQUIRE_EQ(ret, 0);
-	ATF_REQUIRE_EQ(buf[1], 0x7C);
-}
+	-90,
+	-91,
+	-92,
+	-93,
+	-94,
+	-95,
+	-96,
+	-97,
+	-98,
+	-99,
 
-ATF_TC_WITHOUT_HEAD(getentropy_fault);
-ATF_TC_BODY(getentropy_fault, tc)
-{
-	int ret;
+	-100,
+	-101,
+	-102,
+	-103,
+	-104,
+	-105,
+	-106,
+	-107,
+	-108,
+	-109,
 
-	ret = getentropy(NULL, 1);
-	ATF_REQUIRE_EQ(ret, -1);
-	ATF_REQUIRE_EQ(errno, EFAULT);
-}
+	-110,
+	-111,
+	-40,
+	-36,
+	-112,
+	-113,
+	-39,
+	-11,
+	-87,
+	-122,
 
-ATF_TC_WITHOUT_HEAD(getentropy_sizes);
-ATF_TC_BODY(getentropy_sizes, tc)
-{
-	char buf[512];
+	-116,
+	-66,
+	-6,	/* EBADRPC -> ENXIO */
+	-6,	/* ERPCMISMATCH -> ENXIO */
+	-6,	/* EPROGUNAVAIL -> ENXIO */
+	-6,	/* EPROGMISMATCH -> ENXIO */
+	-6,	/* EPROCUNAVAIL -> ENXIO */
+	-37,
+	-38,
+	-9,
 
-	ATF_REQUIRE_EQ(getentropy(buf, sizeof(buf)), -1);
-	ATF_REQUIRE_EQ(errno, EIO);
-	ATF_REQUIRE_EQ(getentropy(buf, 257), -1);
-	ATF_REQUIRE_EQ(errno, EIO);
+	-6,	/* EAUTH -> ENXIO */
+	-6,	/* ENEEDAUTH -> ENXIO */
+	-43,
+	-42,
+	-75,
+	-125,
+	-84,
+	-61,
+	-16,	/* EDOOFUS -> EBUSY */
+	-74,
 
-	/* Smaller sizes always succeed: */
-	ATF_REQUIRE_EQ(getentropy(buf, 256), 0);
-	ATF_REQUIRE_EQ(getentropy(buf, 128), 0);
-	ATF_REQUIRE_EQ(getentropy(buf, 0), 0);
-}
+	-72,
+	-67,
+	-71,
+	-1,	/* ENOTCAPABLE -> EPERM */
+	-1,	/* ECAPMODE -> EPERM */
+	-131,	/* ENOTRECOVERABLE */
+	-130,	/* EOWNERDEAD */
+};
 
-ATF_TP_ADD_TCS(tp)
-{
-
-	signal(SIGSYS, SIG_IGN);
-
-	ATF_TP_ADD_TC(tp, getentropy_count);
-	ATF_TP_ADD_TC(tp, getentropy_fault);
-	ATF_TP_ADD_TC(tp, getentropy_sizes);
-	return (atf_no_error());
-}
+_Static_assert(ELAST == 96,
+    "missing errno entries in linux_errtbl");
