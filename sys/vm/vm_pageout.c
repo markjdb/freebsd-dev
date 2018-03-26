@@ -1512,7 +1512,7 @@ reenqueue:
 	    TAILQ_NEXT(marker, plinks.q) != NULL && (scanned < min_scan ||
 	    (inactq_shortage > 0 && scanned < maxscan)); scanned += bq.bq_cnt) {
 		vm_pageout_collect_batch(pq, &bq, marker,
-		    (inactq_shortage == 0 ? min_scan : maxscan) - scanned,
+		    (inactq_shortage > 0 ? maxscan : min_scan) - scanned,
 		    false);
 		vm_pagequeue_unlock(pq);
 
@@ -1616,7 +1616,6 @@ reenqueue:
 		}
 		if (mtx != NULL)
 			mtx_unlock(mtx);
-		vm_batchqueue_init(&bq);
 
 		vm_pagequeue_lock(pq);
 		/*
