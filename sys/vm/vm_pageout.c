@@ -257,7 +257,6 @@ vm_pageout_collect_batch(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
 	vm_batchqueue_init(bq);
 	for (m = TAILQ_NEXT(marker, plinks.q); m != NULL && maxscan > 0;
 	    m = TAILQ_NEXT(m, plinks.q), maxscan--) {
-		VM_CNT_INC(v_pdpages);
 		if (__predict_false((m->flags & PG_MARKER) != 0))
 			continue;
 
@@ -663,11 +662,12 @@ vm_pageout_launder(struct vm_domain *vmd, int launder, bool in_shortfall)
 	struct vm_pagequeue *pq;
 	struct mtx *mtx;
 	vm_object_t object;
-	vm_page_t m;
-	int act_delta, error, maxscan, numpagedout, queue, starting_target;
-	int vnodes_skipped;
+	vm_page_t m, marker;
+	int act_delta, error, freed, maxscan, numpagedout, queue, reactivated;
+	int scanned, starting_target, vnodes_skipped;
 	bool obj_locked, pageout_ok;
 
+	marker = &vmd->vmd_laundry_marker;
 	starting_target = launder;
 	vnodes_skipped = 0;
 
@@ -691,13 +691,14 @@ vm_pageout_launder(struct vm_domain *vmd, int launder, bool in_shortfall)
 	pq = &vmd->vmd_pagequeues[queue];
 
 scan:
+	freed = reactivated = 0;
 	vm_pagequeue_lock(pq);
-	TAILQ_INSERT_HEAD(&pq->pq_pl, &vmd->vmd_laundry_marker, plinks.q);
-	for (maxscan = pq->pq_cnt; maxscan > 0 && launder > 0 &&
-	    TAILQ_NEXT(&vmd->vmd_laundry_marker, plinks.q) != NULL;
-	    maxscan -= bq.bq_cnt) {
-		vm_pageout_collect_batch(pq, &bq, &vmd->vmd_laundry_marker,
-		    min(maxscan, launder), false);
+	TAILQ_INSERT_HEAD(&pq->pq_pl, marker, plinks.q);
+	for (maxscan = pq->pq_cnt, scanned = 0; scanned < maxscan &&
+	    launder > 0 && TAILQ_NEXT(marker, plinks.q) != NULL;
+	    scanned += bq.bq_cnt) {
+		vm_pageout_collect_batch(pq, &bq, marker,
+		    min(maxscan - scanned, launder), false);
 		vm_pagequeue_unlock(pq);
 
 		mtx = NULL;
@@ -780,8 +781,8 @@ recheck:
 			}
 			if (act_delta != 0) {
 				if (object->ref_count != 0) {
-					VM_CNT_INC(v_reactivated);
 					vm_page_activate(m);
+					reactivated++;
 
 					/*
 					 * Increase the activation count if the
@@ -834,7 +835,7 @@ recheck:
 			if (m->dirty == 0) {
 free_page:
 				vm_page_free(m);
-				VM_CNT_INC(v_dfree);
+				freed++;
 			} else if ((object->flags & OBJ_DEAD) == 0) {
 				if (object->type != OBJT_SWAP &&
 				    object->type != OBJT_DEFAULT)
@@ -893,19 +894,30 @@ reenqueue:
 					    plinks.q);
 					vm_page_aflag_clear(m, PGA_REQUEUE);
 				} else
-					TAILQ_INSERT_BEFORE(&vmd->vmd_marker, m,
+					TAILQ_INSERT_BEFORE(marker, m,
 					    plinks.q);
 				vm_pagequeue_cnt_inc(pq);
 			}
 		}
 	}
-	TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_laundry_marker, plinks.q);
+	TAILQ_REMOVE(&pq->pq_pl, marker, plinks.q);
 	vm_pagequeue_unlock(pq);
 
-	if (launder > 0 && pq == &vmd->vmd_pagequeues[PQ_UNSWAPPABLE]) {
-		queue = PQ_LAUNDRY;
-		pq = &vmd->vmd_pagequeues[queue];
-		goto scan;
+	/* Update page daemon stats. */
+	VM_PQSTAT_ADD(pq, ps_pdreactivated, reactivated);
+	VM_CNT_ADD(v_reactivated, reactivated);
+	VM_PQSTAT_ADD(pq, ps_pdfreed, freed);
+	VM_CNT_ADD(v_dfree, freed);
+	VM_PQSTAT_ADD(pq, ps_pdpages, scanned);
+	VM_CNT_ADD(v_pdpages, scanned);
+
+	if (launder > 0) {
+		VM_PQSTAT_INC(pq, ps_pdshortfalls);
+		if (queue == PQ_UNSWAPPABLE) {
+			queue = PQ_LAUNDRY;
+			pq = &vmd->vmd_pagequeues[queue];
+			goto scan;
+		}
 	}
 
 	/*
@@ -1111,10 +1123,9 @@ vm_pageout_free_pages(vm_object_t object, vm_page_t m, struct mtx **mtxp)
 	int pcount, count;
 
 	pcount = MAX(object->iosize / PAGE_SIZE, 1);
-	count = 1;
 	if (pcount == 1) {
 		vm_page_free(m);
-		goto out;
+		return (1);
 	}
 
 	/* Find the first page in the block. */
@@ -1126,6 +1137,7 @@ vm_pageout_free_pages(vm_object_t object, vm_page_t m, struct mtx **mtxp)
 	if (p == m)
 		p = vm_page_next(m);
 	vm_page_free(m);
+	count = 1;
 	/* Iterate through the block range and free compatible pages. */
 	/* XXX Fix cache miss on last page. */
 	for (m = p; m != NULL && m->pindex < start + pcount; m = p) {
@@ -1156,8 +1168,6 @@ free_page:
 		vm_page_free(m);
 		count++;
 	}
-out:
-	VM_CNT_ADD(v_dfree, count);
 
 	return (count);
 }
@@ -1176,13 +1186,17 @@ vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage)
 {
 	struct vm_batchqueue bq, rq;
 	struct mtx *mtx;
-	vm_page_t m;
+	vm_page_t m, marker;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
 	long min_scan;
 	int act_delta, addl_page_shortage, deficit, inactq_shortage;
-	int maxscan, page_shortage, scan_tick, scanned, starting_page_shortage;
+	int maxscan, page_shortage, reactivated, scan_tick, scanned;
+	int starting_page_shortage;
 	bool obj_locked;
+
+	marker = &vmd->vmd_marker;
+	reactivated = 0;
 
 	/*
 	 * If we need to reclaim memory ask kernel caches to return
@@ -1231,12 +1245,12 @@ vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage)
 	 */
 	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 	vm_pagequeue_lock(pq);
-	TAILQ_INSERT_HEAD(&pq->pq_pl, &vmd->vmd_marker, plinks.q);
-	for (maxscan = pq->pq_cnt; maxscan > 0 && page_shortage > 0 &&
-	    TAILQ_NEXT(&vmd->vmd_marker, plinks.q) != NULL;
-	    maxscan -= bq.bq_cnt) {
-		vm_pageout_collect_batch(pq, &bq, &vmd->vmd_marker,
-		    min(maxscan, page_shortage), true);
+	TAILQ_INSERT_HEAD(&pq->pq_pl, marker, plinks.q);
+	for (maxscan = pq->pq_cnt, scanned = 0; scanned < maxscan &&
+	    page_shortage > 0 && TAILQ_NEXT(marker, plinks.q) != NULL;
+	    scanned += bq.bq_cnt) {
+		vm_pageout_collect_batch(pq, &bq, marker,
+		    min(maxscan - scanned, page_shortage), true);
 		vm_pagequeue_unlock(pq);
 
 		mtx = NULL;
@@ -1329,8 +1343,8 @@ recheck:
 			}
 			if (act_delta != 0) {
 				if (object->ref_count != 0) {
-					VM_CNT_INC(v_reactivated);
 					vm_page_activate(m);
+					reactivated++;
 
 					/*
 					 * Increase the activation count if the
@@ -1394,14 +1408,22 @@ reenqueue:
 					    plinks.q);
 					vm_page_aflag_clear(m, PGA_REQUEUE);
 				} else
-					TAILQ_INSERT_BEFORE(&vmd->vmd_marker, m,
+					TAILQ_INSERT_BEFORE(marker, m,
 					    plinks.q);
 				vm_pagequeue_cnt_inc(pq);
 			}
 		}
 	}
-	TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_marker, plinks.q);
+	TAILQ_REMOVE(&pq->pq_pl, marker, plinks.q);
 	vm_pagequeue_unlock(pq);
+
+	/* Update stats. */
+	VM_PQSTAT_ADD(pq, ps_pdreactivated, reactivated);
+	VM_CNT_ADD(v_reactivated, reactivated);
+	VM_PQSTAT_ADD(pq, ps_pdfreed, starting_page_shortage - page_shortage);
+	VM_CNT_ADD(v_dfree, starting_page_shortage - page_shortage);
+	VM_PQSTAT_ADD(pq, ps_pdpages, scanned);
+	VM_CNT_ADD(v_pdpages, scanned);
 
 	/*
 	 * Wake up the laundry thread so that it can perform any needed
@@ -1421,7 +1443,8 @@ reenqueue:
 		    (pq->pq_cnt > 0 || atomic_load_acq_int(&swapdev_enabled))) {
 			if (page_shortage > 0) {
 				vmd->vmd_laundry_request = VM_LAUNDRY_SHORTFALL;
-				VM_CNT_INC(v_pdshortfalls);
+				VM_PQSTAT_INC(&vmd->vmd_pagequeues[PQ_INACTIVE],
+				    ps_pdshortfalls);
 			} else if (vmd->vmd_laundry_request !=
 			    VM_LAUNDRY_SHORTFALL)
 				vmd->vmd_laundry_request =
@@ -1484,13 +1507,13 @@ reenqueue:
 	 * the per-page activity counter and use it to identify deactivation
 	 * candidates.  Held pages may be deactivated.
 	 */
-	TAILQ_INSERT_HEAD(&pq->pq_pl, &vmd->vmd_marker, plinks.q);
+	TAILQ_INSERT_HEAD(&pq->pq_pl, marker, plinks.q);
 	for (maxscan = pq->pq_cnt, scanned = 0;
-	    TAILQ_NEXT(&vmd->vmd_marker, plinks.q) != NULL &&
-	    (scanned < min_scan || (inactq_shortage > 0 && scanned < maxscan));
-	    scanned += bq.bq_cnt) {
-		vm_pageout_collect_batch(pq, &bq, &vmd->vmd_marker,
-		    inactq_shortage == 0 ? min_scan : maxscan, false);
+	    TAILQ_NEXT(marker, plinks.q) != NULL && (scanned < min_scan ||
+	    (inactq_shortage > 0 && scanned < maxscan)); scanned += bq.bq_cnt) {
+		vm_pageout_collect_batch(pq, &bq, marker,
+		    (inactq_shortage == 0 ? min_scan : maxscan) - scanned,
+		    false);
 		vm_pagequeue_unlock(pq);
 
 		mtx = NULL;
@@ -1610,8 +1633,17 @@ reenqueue:
 			}
 		}
 	}
-	TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_marker, plinks.q);
+	TAILQ_REMOVE(&pq->pq_pl, marker, plinks.q);
 	vm_pagequeue_unlock(pq);
+
+	/* Update page daemon stats. */
+	VM_PQSTAT_ADD(pq, ps_pdpages, scanned);
+	VM_CNT_ADD(v_pdpages, scanned);
+	if (inactq_shortage > 0) {
+		VM_PQSTAT_INC(pq, ps_pdshortfalls);
+		VM_CNT_INC(v_pdshortfalls);
+	}
+
 	if (pass > 0)
 		vm_swapout_run_idle();
 	return (page_shortage <= 0);

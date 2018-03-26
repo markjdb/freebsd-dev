@@ -438,8 +438,7 @@ vm_free_count(void)
 	return (v);
 }
 
-static
-u_int
+static u_int
 vm_pagequeue_count(int pq)
 {
 	u_int v;
@@ -456,21 +455,46 @@ u_int
 vm_active_count(void)
 {
 
-	return vm_pagequeue_count(PQ_ACTIVE);
+	return (vm_pagequeue_count(PQ_ACTIVE));
 }
 
 u_int
 vm_inactive_count(void)
 {
 
-	return vm_pagequeue_count(PQ_INACTIVE);
+	return (vm_pagequeue_count(PQ_INACTIVE));
 }
 
 u_int
 vm_laundry_count(void)
 {
 
-	return vm_pagequeue_count(PQ_LAUNDRY);
+	return (vm_pagequeue_count(PQ_LAUNDRY));
+}
+
+static void
+vm_domain_pqstats_init(struct vm_pagequeue *pq, struct sysctl_oid *parent,
+    const char *oidname)
+{
+	struct sysctl_oid *oid;
+
+	oid = SYSCTL_ADD_NODE(NULL, SYSCTL_CHILDREN(parent), OID_AUTO,
+	    oidname, CTLFLAG_RD, NULL, "");
+
+	SYSCTL_ADD_UINT(NULL, SYSCTL_CHILDREN(oid), OID_AUTO, "pages",
+	    CTLFLAG_RD, &pq->pq_cnt, 0, "Pages in queue");
+	SYSCTL_ADD_U64(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
+	    "pdpages", CTLFLAG_RD, &pq->pq_stats.ps_pdpages, 0,
+	    "Pages analyzed by pagedaemon");
+	SYSCTL_ADD_U64(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
+	    "pdfreed", CTLFLAG_RD, &pq->pq_stats.ps_pdfreed, 0,
+	    "Pages freed by pagedaemon");
+	SYSCTL_ADD_U64(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
+	    "pdreactivated", CTLFLAG_RD, &pq->pq_stats.ps_pdreactivated, 0,
+	    "Pages reactivated by pagedaemon");
+	SYSCTL_ADD_U64(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
+	    "pdshortfalls", CTLFLAG_RD, &pq->pq_stats.ps_pdshortfalls, 0,
+	    "Page reclamation shortfalls");
 }
 
 static void
@@ -482,21 +506,15 @@ vm_domain_stats_init(struct vm_domain *vmd, struct sysctl_oid *parent)
 	    vmd->vmd_name, CTLFLAG_RD, NULL, "");
 	oid = SYSCTL_ADD_NODE(NULL, SYSCTL_CHILDREN(vmd->vmd_oid), OID_AUTO,
 	    "stats", CTLFLAG_RD, NULL, "");
-	SYSCTL_ADD_UINT(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
-	    "free_count", CTLFLAG_RD, &vmd->vmd_free_count, 0,
-	    "Free pages");
-	SYSCTL_ADD_UINT(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
-	    "active", CTLFLAG_RD, &vmd->vmd_pagequeues[PQ_ACTIVE].pq_cnt, 0,
-	    "Active pages");
-	SYSCTL_ADD_UINT(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
-	    "inactive", CTLFLAG_RD, &vmd->vmd_pagequeues[PQ_INACTIVE].pq_cnt, 0,
-	    "Inactive pages");
-	SYSCTL_ADD_UINT(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
-	    "laundry", CTLFLAG_RD, &vmd->vmd_pagequeues[PQ_LAUNDRY].pq_cnt, 0,
-	    "laundry pages");
-	SYSCTL_ADD_UINT(NULL, SYSCTL_CHILDREN(oid), OID_AUTO, "unswappable",
-	    CTLFLAG_RD, &vmd->vmd_pagequeues[PQ_UNSWAPPABLE].pq_cnt, 0,
-	    "Unswappable pages");
+
+	vm_domain_pqstats_init(&vmd->vmd_pagequeues[PQ_ACTIVE], oid,
+	    "active");
+	vm_domain_pqstats_init(&vmd->vmd_pagequeues[PQ_INACTIVE], oid,
+	    "inactive");
+	vm_domain_pqstats_init(&vmd->vmd_pagequeues[PQ_LAUNDRY], oid,
+	    "laundry");
+	vm_domain_pqstats_init(&vmd->vmd_pagequeues[PQ_UNSWAPPABLE], oid,
+	    "unswappable");
 	SYSCTL_ADD_UINT(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
 	    "inactive_target", CTLFLAG_RD, &vmd->vmd_inactive_target, 0,
 	    "Target inactive pages");
@@ -512,7 +530,6 @@ vm_domain_stats_init(struct vm_domain *vmd, struct sysctl_oid *parent)
 	SYSCTL_ADD_UINT(NULL, SYSCTL_CHILDREN(oid), OID_AUTO,
 	    "free_severe", CTLFLAG_RD, &vmd->vmd_free_severe, 0,
 	    "Severe free pages");
-
 }
 
 static void

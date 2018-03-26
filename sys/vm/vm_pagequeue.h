@@ -71,7 +71,17 @@ struct vm_pagequeue {
 	struct pglist	pq_pl;
 	int		pq_cnt;
 	const char	* const pq_name;
+	struct {
+		/* Updated only by a single page daemon thread. */
+		uint64_t	ps_pdpages;
+		uint64_t	ps_pdfreed;
+		uint64_t	ps_pdreactivated;
+		uint64_t	ps_pdshortfalls;
+	} pq_stats;
 } __aligned(CACHE_LINE_SIZE);
+
+#define	VM_PQSTAT_ADD(pq, var, count)	((pq)->pq_stats.var += (count))
+#define	VM_PQSTAT_INC(pq, var)		VM_PQSTAT_ADD(pq, var, 1)
 
 #ifndef VM_BATCHQUEUE_SIZE
 #define	VM_BATCHQUEUE_SIZE	7
