@@ -3298,7 +3298,7 @@ vm_pqbatch_process(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
 }
 
 /*
- *	vm_page_dequeue_lazy:
+ *	vm_page_dequeue_lazy:		[ internal use only ]
  *
  *	Request removal of the given page from its current page
  *	queue.  Physical removal from the queue may be deferred
@@ -3307,7 +3307,7 @@ vm_pqbatch_process(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
  *
  *	The page must be locked.
  */
-static void
+void
 vm_page_dequeue_lazy(vm_page_t m)
 {
 	struct vm_batchqueue *bq;
