@@ -81,17 +81,18 @@ struct sysctl_oid;
  * and accounting.
  *
  * Lock Key:
- * f   vmd_free_mtx
- * p   vmd_pageout_mtx
- * d   vm_domainset_lock
- * a   atomic
- * c   const after boot
- * q   page queue lock
+ * f	vmd_free_mtx
+ * p	vmd_pageout_mtx
+ * d	vm_domainset_lock
+ * a	atomic
+ * c	const after boot
+ * q	page queue lock
 */
 struct vm_domain {
 	struct vm_pagequeue vmd_pagequeues[PQ_COUNT];
 	struct mtx_padalign vmd_free_mtx;
 	struct mtx_padalign vmd_pageout_mtx;
+	uma_zone_t vmd_pgcache;		/* (c) per-domain page free cache. */
 	struct vmem *vmd_kernel_arena;	/* (c) per-domain kva arena. */
 	u_int vmd_domain;		/* (c) Domain number. */
 	u_int vmd_page_count;		/* (c) Total page count. */
