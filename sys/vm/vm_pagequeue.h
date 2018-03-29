@@ -91,12 +91,12 @@ struct sysctl_oid;
  * and accounting.
  *
  * Lock Key:
- * f   vmd_free_mtx
- * p   vmd_pageout_mtx
- * d   vm_domainset_lock
- * a   atomic
- * c   const after boot
- * q   page queue lock
+ * f	vmd_free_mtx
+ * p	vmd_pageout_mtx
+ * d	vm_domainset_lock
+ * a	atomic
+ * c	const after boot
+ * q	page queue lock
 */
 struct vm_domain {
 	struct vm_pagequeue vmd_pagequeues[PQ_COUNT];
