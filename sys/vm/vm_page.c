@@ -3467,36 +3467,6 @@ vm_page_free_prep(vm_page_t m)
 	return (true);
 }
 
-void
-vm_page_free_phys_pglist(struct pglist *tq)
-{
-	struct vm_domain *vmd;
-	vm_page_t m;
-	int cnt;
-
-	if (TAILQ_EMPTY(tq))
-		return;
-	vmd = NULL;
-	cnt = 0;
-	TAILQ_FOREACH(m, tq, listq) {
-		if (vmd != vm_pagequeue_domain(m)) {
-			if (vmd != NULL) {
-				vm_domain_free_unlock(vmd);
-				vm_domain_freecnt_inc(vmd, cnt);
-				cnt = 0;
-			}
-			vmd = vm_pagequeue_domain(m);
-			vm_domain_free_lock(vmd);
-		}
-		vm_phys_free_pages(m, 0);
-		cnt++;
-	}
-	if (vmd != NULL) {
-		vm_domain_free_unlock(vmd);
-		vm_domain_freecnt_inc(vmd, cnt);
-	}
-}
-
 /*
  *	vm_page_free_toq:
  *
