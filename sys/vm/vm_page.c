@@ -450,8 +450,6 @@ vm_page_init_marker(vm_page_t marker, int queue)
 	marker->busy_lock = VPB_SINGLE_EXCLUSIVER;
 	marker->queue = queue;
 	marker->hold_count = 1;
-	if (queue != PQ_NONE)
-		marker->aflags = PGA_ENQUEUED;
 }
 
 static void
@@ -488,6 +486,14 @@ vm_page_domain_init(int domain)
 	vm_page_init_marker(&vmd->vmd_inacthead, PQ_INACTIVE);
 	TAILQ_INSERT_HEAD(&vmd->vmd_pagequeues[PQ_INACTIVE].pq_pl,
 	    &vmd->vmd_inacthead, plinks.q);
+	vm_page_init_marker(&vmd->vmd_clock[0], PQ_ACTIVE);
+	vm_page_init_marker(&vmd->vmd_clock[1], PQ_ACTIVE);
+	TAILQ_INSERT_HEAD(&vmd->vmd_pagequeues[PQ_ACTIVE].pq_pl,
+	    &vmd->vmd_clock[0], plinks.q);
+	vm_page_aflag_set(&vmd->vmd_clock[0], PGA_ENQUEUED);
+	TAILQ_INSERT_TAIL(&vmd->vmd_pagequeues[PQ_ACTIVE].pq_pl,
+	    &vmd->vmd_clock[1], plinks.q);
+	vm_page_aflag_set(&vmd->vmd_clock[1], PGA_ENQUEUED);
 	snprintf(vmd->vmd_name, sizeof(vmd->vmd_name), "%d", domain);
 }
 
@@ -3657,7 +3663,7 @@ _vm_page_deactivate(vm_page_t m, bool noreuse)
 		return;
 
 	if (noreuse) {
-		/* This is slower than it could be. */
+		/* XXXMJ this is slower than it should be. */
 		vm_page_remque(m);
 		pq = &vm_pagequeue_domain(m)->vmd_pagequeues[PQ_INACTIVE];
 		vm_pagequeue_lock(pq);
