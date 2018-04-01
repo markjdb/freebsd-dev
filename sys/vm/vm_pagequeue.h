@@ -82,11 +82,6 @@ struct vm_batchqueue {
 	int		bq_cnt;
 } __aligned(CACHE_LINE_SIZE);
 
-#define	VM_BATCHQ_FOREACH(batchqp, page)				\
-	for (vm_page_t *__mp = &(batchqp)->bq_pa[0];			\
-	    (page) = *__mp, __mp != &(batchqp)->bq_pa[(batchqp)->bq_cnt]; \
-	    __mp++)
-
 #include <vm/uma.h>
 #include <sys/pidctrl.h>
 struct sysctl_oid;

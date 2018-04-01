@@ -1198,7 +1198,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage)
 	struct scan_state ss;
 	struct vm_batchqueue rq;
 	struct mtx *mtx;
-	vm_page_t m, m1, marker;
+	vm_page_t m, marker;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
 	long min_scan;
@@ -1404,11 +1404,17 @@ free_page:
 		} else if ((object->flags & OBJ_DEAD) == 0)
 			vm_page_launder(m);
 		continue;
+
+		/*
+		 * Re-add stuck pages to the queue.  We will examine them again
+		 * during the next scan.  If the queue state of a page has
+		 * changed since it was physically removed from the page queue,
+		 * don't do anything with that page.
+		 */
 reinsert:
 		if (!vm_batchqueue_insert(&rq, m)) {
-			m1 = m;
 			vm_pagequeue_lock(pq);
-			VM_BATCHQ_FOREACH(&rq, m) {
+			do {
 				if (!vm_page_inactive(m) ||
 				    (m->aflags & PGA_ENQUEUED) != 0)
 					continue;
@@ -1421,11 +1427,9 @@ reinsert:
 					TAILQ_INSERT_BEFORE(ss.marker, m,
 					    plinks.q);
 				vm_pagequeue_cnt_inc(pq);
-			}
+			} while ((m = vm_batchqueue_pop(&rq)) != NULL);
 			vm_pagequeue_unlock(pq);
-
 			vm_batchqueue_init(&rq);
-			(void)vm_batchqueue_insert(&rq, m1);
 		}
 	}
 	if (mtx != NULL) {
@@ -1526,8 +1530,8 @@ reinsert:
 act_scan:
 	TAILQ_INSERT_AFTER(&pq->pq_pl, &vmd->vmd_clock[0], marker, plinks.q);
 	vm_page_aflag_set(marker, PGA_ENQUEUED);
-	vm_pageout_init_scan(&ss, pq, marker,
-	    inactq_shortage > 0 ? pq->pq_cnt : min_scan);
+	vm_pageout_init_scan(&ss, pq, marker, inactq_shortage > 0 ?
+	    pq->pq_cnt : min_scan);
 	while ((m = vm_pageout_next(&ss, false)) != NULL) {
 		if (__predict_false(m == &vmd->vmd_clock[1])) {
 			vm_pagequeue_lock(pq);

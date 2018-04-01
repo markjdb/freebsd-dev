@@ -134,7 +134,7 @@ extern int	vmem_startup_count(void);
 struct vm_domain vm_dom[MAXMEMDOM];
 
 static DPCPU_DEFINE(struct vm_batchqueue, pqbatch[MAXMEMDOM][PQ_COUNT]);
-static DPCPU_DEFINE(struct vm_batchqueue, freeqbatch[MAXMEMDOM]);
+static DPCPU_DEFINE(struct vm_batchqueue, noreuseq[MAXMEMDOM]);
 
 struct mtx_padalign __exclusive_cache_line pa_lock[PA_LOCK_COUNT];
 
@@ -483,9 +483,23 @@ vm_page_domain_init(int domain)
 	}
 	mtx_init(&vmd->vmd_free_mtx, "vm page free queue", NULL, MTX_DEF);
 	mtx_init(&vmd->vmd_pageout_mtx, "vm pageout lock", NULL, MTX_DEF);
+	snprintf(vmd->vmd_name, sizeof(vmd->vmd_name), "%d", domain);
+
+	/*
+	 * inacthead is used to provide FIFO ordering for LRU-bypassing
+	 * insertions.
+	 */
 	vm_page_init_marker(&vmd->vmd_inacthead, PQ_INACTIVE);
 	TAILQ_INSERT_HEAD(&vmd->vmd_pagequeues[PQ_INACTIVE].pq_pl,
 	    &vmd->vmd_inacthead, plinks.q);
+	vm_page_aflag_set(&vmd->vmd_inacthead, PGA_ENQUEUED);
+
+	/*
+	 * The clock pages are used to implement active queue scanning without
+	 * requeues.  Scans start at clock[0], which is advanced after the scan
+	 * ends.  When the two clock hands meet, they are reset and scanning
+	 * resumes from the head of the queue.
+	 */
 	vm_page_init_marker(&vmd->vmd_clock[0], PQ_ACTIVE);
 	vm_page_init_marker(&vmd->vmd_clock[1], PQ_ACTIVE);
 	TAILQ_INSERT_HEAD(&vmd->vmd_pagequeues[PQ_ACTIVE].pq_pl,
@@ -494,7 +508,6 @@ vm_page_domain_init(int domain)
 	TAILQ_INSERT_TAIL(&vmd->vmd_pagequeues[PQ_ACTIVE].pq_pl,
 	    &vmd->vmd_clock[1], plinks.q);
 	vm_page_aflag_set(&vmd->vmd_clock[1], PGA_ENQUEUED);
-	snprintf(vmd->vmd_name, sizeof(vmd->vmd_name), "%d", domain);
 }
 
 /*
@@ -3091,13 +3104,14 @@ vm_pqbatch_process(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
     uint8_t queue)
 {
 	vm_page_t m;
-	int delta;
+	int delta, i;
 	uint8_t aflags;
 
 	vm_pagequeue_assert_locked(pq);
 
 	delta = 0;
-	VM_BATCHQ_FOREACH(bq, m) {
+	for (i = 0; i < bq->bq_cnt; i++) {
+		m = bq->bq_pa[i];
 		if (__predict_false(m->queue != queue))
 			continue;
 
@@ -3122,7 +3136,7 @@ vm_pqbatch_process(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
 			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 			delta++;
 			vm_page_aflag_set(m, PGA_ENQUEUED);
-			if (__predict_false((aflags & PGA_REQUEUE) != 0))
+			if ((aflags & PGA_REQUEUE) != 0)
 				vm_page_aflag_clear(m, PGA_REQUEUE);
 		} else if ((aflags & PGA_REQUEUE) != 0) {
 			TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
@@ -3641,50 +3655,8 @@ vm_page_unwire_noq(vm_page_t m)
 }
 
 /*
- * Move the specified page to the inactive queue, or requeue the page if it is
- * already in the inactive queue.
- *
- * Normally, "noreuse" is FALSE, resulting in LRU ordering of the inactive
- * queue.  However, setting "noreuse" to TRUE will accelerate the specified
- * page's reclamation, but it will not unmap the page from any address space.
- * This is implemented by inserting the page near the head of the inactive
- * queue, using a marker page to guide FIFO insertion ordering.
- *
- * The page must be locked.
- */
-static inline void
-_vm_page_deactivate(vm_page_t m, bool noreuse)
-{
-	struct vm_pagequeue *pq;
-
-	vm_page_assert_locked(m);
-
-	if (m->wire_count > 0 || (m->oflags & VPO_UNMANAGED) != 0)
-		return;
-
-	if (noreuse) {
-		/* XXXMJ this is slower than it should be. */
-		vm_page_remque(m);
-		pq = &vm_pagequeue_domain(m)->vmd_pagequeues[PQ_INACTIVE];
-		vm_pagequeue_lock(pq);
-		m->queue = PQ_INACTIVE;
-		TAILQ_INSERT_BEFORE(&vm_pagequeue_domain(m)->vmd_inacthead, m,
-		    plinks.q);
-		vm_pagequeue_cnt_inc(pq);
-		vm_page_aflag_set(m, PGA_ENQUEUED);
-		if ((m->aflags & PGA_REQUEUE) != 0)
-			vm_page_aflag_clear(m, PGA_REQUEUE);
-		vm_pagequeue_unlock(pq);
-	} else if (!vm_page_inactive(m)) {
-		vm_page_remque(m);
-		vm_page_enqueue_lazy(m, PQ_INACTIVE);
-	} else
-		vm_page_requeue(m);
-}
-
-/*
- * Move the specified page to the inactive queue, or requeue the page if it is
- * already in the inactive queue.
+ * Move the specified page to the tail of the inactive queue, or requeue
+ * the page if it is already in the inactive queue.
  *
  * The page must be locked.
  */
@@ -3692,20 +3664,76 @@ void
 vm_page_deactivate(vm_page_t m)
 {
 
-	_vm_page_deactivate(m, false);
+	vm_page_assert_locked(m);
+
+	if (m->wire_count > 0 || (m->oflags & VPO_UNMANAGED) != 0)
+		return;
+
+	if (!vm_page_inactive(m)) {
+		vm_page_remque(m);
+		vm_page_enqueue_lazy(m, PQ_INACTIVE);
+	} else
+		vm_page_requeue(m);
 }
 
 /*
- * Move the specified page to the inactive queue with the expectation
- * that it is unlikely to be reused.
+ * Move the specified page close to the head of the inactive queue,
+ * bypassing LRU.  A marker page is used to maintain FIFO ordering.
+ * As with regular enqueues, we use a per-CPU batch queue to reduce
+ * contention on the page queue lock.
  *
  * The page must be locked.
  */
 void
 vm_page_deactivate_noreuse(vm_page_t m)
 {
+	struct vm_batchqueue *bq;
+	struct vm_domain *vmd;
+	struct vm_pagequeue *pq;
+	vm_page_t marker;
+	int domain;
 
-	_vm_page_deactivate(m, true);
+	vm_page_assert_locked(m);
+
+	if (m->wire_count > 0 || (m->oflags & VPO_UNMANAGED) != 0)
+		return;
+
+	domain = vm_phys_domain(m);
+	vmd = VM_DOMAIN(domain);
+	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
+
+	if (!vm_page_inactive(m))
+		vm_page_remque(m);
+
+	m->queue = PQ_INACTIVE;
+
+	critical_enter();
+	bq = DPCPU_PTR(noreuseq[domain]);
+	if (vm_batchqueue_insert(bq, m)) {
+		critical_exit();
+		return;
+	}
+	if (!vm_pagequeue_trylock(pq)) {
+		critical_exit();
+		vm_pagequeue_lock(pq);
+		critical_enter();
+		bq = DPCPU_PTR(noreuseq[domain]);
+	}
+	marker = &vmd->vmd_inacthead;
+	do {
+		if (m->queue != PQ_INACTIVE)
+			continue;
+		if ((m->aflags & PGA_ENQUEUED) != 0)
+			TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
+		else {
+			vm_page_aflag_set(m, PGA_ENQUEUED);
+			vm_pagequeue_cnt_inc(pq);
+		}
+		TAILQ_INSERT_BEFORE(marker, m, plinks.q);
+	} while ((m = vm_batchqueue_pop(bq)) != NULL);
+	vm_pagequeue_unlock(pq);
+	vm_batchqueue_init(bq);
+	critical_exit();
 }
 
 /*
