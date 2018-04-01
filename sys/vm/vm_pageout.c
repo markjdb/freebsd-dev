@@ -1148,9 +1148,12 @@ vm_pageout_free_pages(vm_object_t object, vm_page_t m, struct mtx **mtxp)
 		p = vm_page_next(m);
 	vm_page_free(m);
 	/* Iterate through the block range and free compatible pages. */
-	/* XXX Fix cache miss on last page. */
-	for (m = p; m != NULL && m->pindex < start + pcount; m = p) {
-		p = TAILQ_NEXT(m, listq);
+	for (m = p; m != NULL; m = p) {
+		/* Don't cache miss for the next page after the tail. */
+		if (m->pindex < start + pcount)
+			p = TAILQ_NEXT(m, listq);
+		else
+			p = NULL;
 		vm_page_change_lock(m, mtxp);
 		if (vm_page_held(m) || vm_page_busied(m) ||
 		    m->queue != PQ_INACTIVE)
