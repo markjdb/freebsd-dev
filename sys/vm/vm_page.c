@@ -174,7 +174,7 @@ static uma_zone_t fakepg_zone;
 
 static void vm_page_alloc_check(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
-static void vm_page_enqueue_lazy(vm_page_t m, uint8_t queue);
+static void vm_page_enqueue(vm_page_t m, uint8_t queue);
 static void vm_page_init(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
     vm_pindex_t pindex, vm_page_t mpred);
@@ -442,11 +442,12 @@ sysctl_vm_page_blacklist(SYSCTL_HANDLER_ARGS)
  * safety precautions.
  */
 static void
-vm_page_init_marker(vm_page_t marker, int queue)
+vm_page_init_marker(vm_page_t marker, int queue, uint8_t aflags)
 {
 
 	bzero(marker, sizeof(*marker));
 	marker->flags = PG_MARKER;
+	marker->aflags = aflags;
 	marker->busy_lock = VPB_SINGLE_EXCLUSIVER;
 	marker->queue = queue;
 	marker->hold_count = 1;
@@ -479,7 +480,7 @@ vm_page_domain_init(int domain)
 		TAILQ_INIT(&pq->pq_pl);
 		mtx_init(&pq->pq_mutex, pq->pq_name, "vm pagequeue",
 		    MTX_DEF | MTX_DUPOK);
-		vm_page_init_marker(&vmd->vmd_markers[i], i);
+		vm_page_init_marker(&vmd->vmd_markers[i], i, 0);
 	}
 	mtx_init(&vmd->vmd_free_mtx, "vm page free queue", NULL, MTX_DEF);
 	mtx_init(&vmd->vmd_pageout_mtx, "vm pageout lock", NULL, MTX_DEF);
@@ -489,10 +490,9 @@ vm_page_domain_init(int domain)
 	 * inacthead is used to provide FIFO ordering for LRU-bypassing
 	 * insertions.
 	 */
-	vm_page_init_marker(&vmd->vmd_inacthead, PQ_INACTIVE);
+	vm_page_init_marker(&vmd->vmd_inacthead, PQ_INACTIVE, PGA_ENQUEUED);
 	TAILQ_INSERT_HEAD(&vmd->vmd_pagequeues[PQ_INACTIVE].pq_pl,
 	    &vmd->vmd_inacthead, plinks.q);
-	vm_page_aflag_set(&vmd->vmd_inacthead, PGA_ENQUEUED);
 
 	/*
 	 * The clock pages are used to implement active queue scanning without
@@ -500,14 +500,12 @@ vm_page_domain_init(int domain)
 	 * ends.  When the two clock hands meet, they are reset and scanning
 	 * resumes from the head of the queue.
 	 */
-	vm_page_init_marker(&vmd->vmd_clock[0], PQ_ACTIVE);
-	vm_page_init_marker(&vmd->vmd_clock[1], PQ_ACTIVE);
+	vm_page_init_marker(&vmd->vmd_clock[0], PQ_ACTIVE, PGA_ENQUEUED);
+	vm_page_init_marker(&vmd->vmd_clock[1], PQ_ACTIVE, PGA_ENQUEUED);
 	TAILQ_INSERT_HEAD(&vmd->vmd_pagequeues[PQ_ACTIVE].pq_pl,
 	    &vmd->vmd_clock[0], plinks.q);
-	vm_page_aflag_set(&vmd->vmd_clock[0], PGA_ENQUEUED);
 	TAILQ_INSERT_TAIL(&vmd->vmd_pagequeues[PQ_ACTIVE].pq_pl,
 	    &vmd->vmd_clock[1], plinks.q);
-	vm_page_aflag_set(&vmd->vmd_clock[1], PGA_ENQUEUED);
 }
 
 /*
@@ -3149,17 +3147,16 @@ vm_pqbatch_process(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
 }
 
 /*
- *	vm_page_dequeue_lazy:		[ internal use only ]
+ *	vm_page_dequeue_deferred:	[ internal use only ]
  *
  *	Request removal of the given page from its current page
  *	queue.  Physical removal from the queue may be deferred
- *	arbitrarily, and may be cancelled by later queue operations
- *	on that page.
+ *	indefinitely.
  *
  *	The page must be locked.
  */
 void
-vm_page_dequeue_lazy(vm_page_t m)
+vm_page_dequeue_deferred(vm_page_t m)
 {
 	struct vm_batchqueue *bq;
 	struct vm_pagequeue *pq;
@@ -3173,7 +3170,8 @@ vm_page_dequeue_lazy(vm_page_t m)
 	domain = vm_phys_domain(m);
 	pq = &VM_DOMAIN(domain)->vmd_pagequeues[queue];
 
-	vm_page_aflag_set(m, PGA_DEQUEUE);
+	if ((m->aflags & PGA_DEQUEUE) == 0)
+		vm_page_aflag_set(m, PGA_DEQUEUE);
 
 	critical_enter();
 	bq = DPCPU_PTR(pqbatch[domain][queue]);
@@ -3278,7 +3276,7 @@ vm_page_dequeue(vm_page_t m)
 }
 
 /*
- *	vm_page_enqueue_lazy:
+ *	vm_page_enqueue:
  *
  *	Schedule the given page for insertion into the specified page queue.
  *	Physical insertion of the page may be deferred indefinitely.
@@ -3286,7 +3284,7 @@ vm_page_dequeue(vm_page_t m)
  *	The page must be locked.
  */
 static void
-vm_page_enqueue_lazy(vm_page_t m, uint8_t queue)
+vm_page_enqueue(vm_page_t m, uint8_t queue)
 {
 	struct vm_batchqueue *bq;
 	struct vm_pagequeue *pq;
@@ -3350,7 +3348,8 @@ vm_page_requeue(vm_page_t m)
 	if (queue == PQ_NONE)
 		return;
 
-	vm_page_aflag_set(m, PGA_REQUEUE);
+	if ((m->aflags & PGA_REQUEUE) == 0)
+		vm_page_aflag_set(m, PGA_REQUEUE);
 	critical_enter();
 	bq = DPCPU_PTR(pqbatch[domain][queue]);
 	if (__predict_true(vm_batchqueue_insert(bq, m))) {
@@ -3401,7 +3400,7 @@ vm_page_activate(vm_page_t m)
 	vm_page_remque(m);
 	if (m->act_count < ACT_INIT)
 		m->act_count = ACT_INIT;
-	vm_page_enqueue_lazy(m, PQ_ACTIVE);
+	vm_page_enqueue(m, PQ_ACTIVE);
 }
 
 /*
@@ -3460,7 +3459,7 @@ vm_page_free_prep(vm_page_t m)
 	 * dequeue.
 	 */
 	if ((m->oflags & VPO_UNMANAGED) == 0)
-		vm_page_dequeue_lazy(m);
+		vm_page_dequeue_deferred(m);
 
 	m->valid = 0;
 	vm_page_undirty(m);
@@ -3616,7 +3615,7 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 	} else {
 		vm_page_dequeue(m);
 		if (queue != PQ_NONE) {
-			vm_page_enqueue_lazy(m, queue);
+			vm_page_enqueue(m, queue);
 			if (queue == PQ_ACTIVE)
 				/* Initialize act_count. */
 				vm_page_activate(m);
@@ -3671,7 +3670,7 @@ vm_page_deactivate(vm_page_t m)
 
 	if (!vm_page_inactive(m)) {
 		vm_page_remque(m);
-		vm_page_enqueue_lazy(m, PQ_INACTIVE);
+		vm_page_enqueue(m, PQ_INACTIVE);
 	} else
 		vm_page_requeue(m);
 }
@@ -3753,7 +3752,7 @@ vm_page_launder(vm_page_t m)
 		vm_page_requeue(m);
 	else {
 		vm_page_remque(m);
-		vm_page_enqueue_lazy(m, PQ_LAUNDRY);
+		vm_page_enqueue(m, PQ_LAUNDRY);
 	}
 }
 
@@ -3771,7 +3770,7 @@ vm_page_unswappable(vm_page_t m)
 	    ("page %p already unswappable", m));
 
 	vm_page_remque(m);
-	vm_page_enqueue_lazy(m, PQ_UNSWAPPABLE);
+	vm_page_enqueue(m, PQ_UNSWAPPABLE);
 }
 
 /*

@@ -264,14 +264,16 @@ vm_pageout_page_queued(vm_page_t m, int queue)
 /*
  * Add a small number of queued pages to a batch queue for later processing
  * without the corresponding queue lock held.  The caller must have enqueued a
- * marker page at the desired start point for the scan.
+ * marker page at the desired start point for the scan.  Pages will be
+ * physically dequeued if the caller so requests.  Otherwise, the returned
+ * batch may contain marker pages, and it is up to the caller to handle them.
  *
  * When processing the batch queue, vm_pageout_page_queued() must be used to
  * determine whether the page was logically dequeued by another thread.  Once
  * this check is performed, the page lock guarantees that the page will not be
  * disassociated from the queue.
  */
-static inline void
+static __always_inline void
 vm_pageout_collect_batch(struct scan_state *ss, const bool dequeue)
 {
 	struct vm_pagequeue *pq;
@@ -313,18 +315,14 @@ vm_pageout_collect_batch(struct scan_state *ss, const bool dequeue)
 	vm_pagequeue_unlock(pq);
 }
 
-/* XXX */
-static inline vm_page_t
+/* Return the next page to be scanned, or NULL if the scan is complete. */
+static __always_inline vm_page_t
 vm_pageout_next(struct scan_state *ss, const bool dequeue)
 {
-	vm_page_t m;
 
-	m = vm_batchqueue_pop(&ss->bq);
-	if (m == NULL) {
+	if (ss->bq.bq_cnt == 0)
 		vm_pageout_collect_batch(ss, dequeue);
-		m = vm_batchqueue_pop(&ss->bq);
-	}
-	return (m);
+	return (vm_batchqueue_pop(&ss->bq));
 }
 
 /*
@@ -723,11 +721,6 @@ vm_pageout_launder(struct vm_domain *vmd, int launder, bool in_shortfall)
 	 * we've reached the end of the queue.  A single iteration of this loop
 	 * may cause more than one page to be laundered because of clustering.
 	 *
-	 * maxscan ensures that we don't re-examine requeued pages.  Any
-	 * additional pages written as part of a cluster are subtracted from
-	 * maxscan since they must be taken from the laundry queue.
-	 * XXX
-	 *
 	 * As an optimization, we avoid laundering from PQ_UNSWAPPABLE when no
 	 * swap devices are configured.
 	 */
@@ -774,7 +767,7 @@ recheck:
 		if (m->hold_count != 0)
 			continue;
 		if (m->wire_count != 0) {
-			vm_page_dequeue_lazy(m);
+			vm_page_dequeue_deferred(m);
 			continue;
 		}
 
@@ -788,6 +781,7 @@ recheck:
 		if (!obj_locked) {
 			if (!VM_OBJECT_TRYWLOCK(object)) {
 				mtx_unlock(mtx);
+				/* Depends on type-stability. */
 				VM_OBJECT_WLOCK(object);
 				obj_locked = true;
 				mtx_lock(mtx);
@@ -1187,6 +1181,41 @@ out:
 }
 
 /*
+ * Re-add stuck pages to the inactive queue.  We will examine them again
+ * during the next scan.  If the queue state of a page has changed since
+ * it was physically removed from the page queue in
+ * vm_pageout_collect_batch(), don't do anything with that page.
+ */
+static void
+vm_pageout_reinsert_page(struct scan_state *ss, struct vm_batchqueue *rq,
+    vm_page_t m)
+{
+	struct vm_pagequeue *pq;
+	int delta;
+
+	if (vm_batchqueue_insert(rq, m))
+		return;
+
+	delta = 0;
+	pq = ss->pq;
+	vm_pagequeue_lock(pq);
+	do {
+		if (!vm_page_inactive(m) || (m->aflags & PGA_ENQUEUED) != 0)
+			continue;
+		vm_page_aflag_set(m, PGA_ENQUEUED);
+		if ((m->aflags & PGA_REQUEUE) != 0) {
+			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+			vm_page_aflag_clear(m, PGA_REQUEUE);
+		} else
+			TAILQ_INSERT_BEFORE(ss->marker, m, plinks.q);
+		delta++;
+	} while ((m = vm_batchqueue_pop(rq)) != NULL);
+	vm_pagequeue_cnt_add(pq, delta);
+	vm_pagequeue_unlock(pq);
+	vm_batchqueue_init(rq);
+}
+
+/*
  *	vm_pageout_scan does the dirty work for the pageout daemon.
  *
  *	pass == 0: Update active LRU/deactivate pages
@@ -1264,8 +1293,8 @@ vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage)
 	vm_pagequeue_lock(pq);
 	vm_pageout_init_scan(&ss, pq, marker, min(pq->pq_cnt, page_shortage));
 	while ((m = vm_pageout_next(&ss, true)) != NULL) {
-		if (__predict_false((m->flags & PG_MARKER) != 0))
-			continue;
+		KASSERT((m->flags & PG_MARKER) == 0,
+		    ("marker page %p was dequeued", m));
 
 		vm_page_change_lock(m, &mtx);
 
@@ -1302,7 +1331,7 @@ recheck:
 		}
 		if (m->wire_count != 0) {
 			addl_page_shortage++;
-			vm_page_dequeue_lazy(m);
+			vm_page_dequeue_deferred(m);
 			continue;
 		}
 
@@ -1316,6 +1345,7 @@ recheck:
 		if (!obj_locked) {
 			if (!VM_OBJECT_TRYWLOCK(object)) {
 				mtx_unlock(mtx);
+				/* Depends on type-stability. */
 				VM_OBJECT_WLOCK(object);
 				obj_locked = true;
 				mtx_lock(mtx);
@@ -1407,33 +1437,8 @@ free_page:
 		} else if ((object->flags & OBJ_DEAD) == 0)
 			vm_page_launder(m);
 		continue;
-
-		/*
-		 * Re-add stuck pages to the queue.  We will examine them again
-		 * during the next scan.  If the queue state of a page has
-		 * changed since it was physically removed from the page queue,
-		 * don't do anything with that page.
-		 */
 reinsert:
-		if (!vm_batchqueue_insert(&rq, m)) {
-			vm_pagequeue_lock(pq);
-			do {
-				if (!vm_page_inactive(m) ||
-				    (m->aflags & PGA_ENQUEUED) != 0)
-					continue;
-				vm_page_aflag_set(m, PGA_ENQUEUED);
-				if ((m->aflags & PGA_REQUEUE) != 0) {
-					TAILQ_INSERT_TAIL(&pq->pq_pl, m,
-					    plinks.q);
-					vm_page_aflag_clear(m, PGA_REQUEUE);
-				} else
-					TAILQ_INSERT_BEFORE(ss.marker, m,
-					    plinks.q);
-				vm_pagequeue_cnt_inc(pq);
-			} while ((m = vm_batchqueue_pop(&rq)) != NULL);
-			vm_pagequeue_unlock(pq);
-			vm_batchqueue_init(&rq);
-		}
+		vm_pageout_reinsert_page(&ss, &rq, m);
 	}
 	if (mtx != NULL) {
 		mtx_unlock(mtx);
@@ -1563,7 +1568,7 @@ act_scan:
 		 * Wired pages are dequeued lazily.
 		 */
 		if (m->wire_count != 0) {
-			vm_page_dequeue_lazy(m);
+			vm_page_dequeue_deferred(m);
 			continue;
 		}
 
@@ -1602,10 +1607,6 @@ act_scan:
 		} else
 			m->act_count -= min(m->act_count, ACT_DECLINE);
 
-		/*
-		 * Move this page to the tail of the active, inactive or laundry
-		 * queue depending on usage.
-		 */
 		if (m->act_count == 0) {
 			/*
 			 * When not short for inactive pages, let dirty pages go
