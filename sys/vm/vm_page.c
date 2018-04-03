@@ -3301,6 +3301,8 @@ vm_page_enqueue(vm_page_t m, uint8_t queue)
 	 * be a no-op.
 	 */
 	m->queue = queue;
+	/* XXX */
+	vm_page_aflag_set(m, PGA_REQUEUE);
 
 	critical_enter();
 	bq = DPCPU_PTR(pqbatch[domain][queue]);
