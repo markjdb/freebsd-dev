@@ -1370,6 +1370,12 @@ recheck:
 		 */
 		if (m->dirty == 0) {
 free_page:
+			/*
+			 * Because the page has already been dequeued, we can
+			 * update the queue field without the page queue lock
+			 * held.
+			 */
+			m->queue = PQ_NONE;
 			vm_page_free(m);
 			page_shortage--;
 			VM_CNT_INC(v_dfree);
