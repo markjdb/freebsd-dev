@@ -1118,6 +1118,21 @@ dolaundry:
 	}
 }
 
+static int
+_vm_pageout_reinsert_inactive(struct scan_state *ss, vm_page_t m)
+{
+
+	if (!vm_page_inactive(m) || (m->aflags & PGA_ENQUEUED) != 0)
+		return (0);
+	vm_page_aflag_set(m, PGA_ENQUEUED);
+	if ((m->aflags & PGA_REQUEUE) != 0) {
+		TAILQ_INSERT_TAIL(&ss->pq->pq_pl, m, plinks.q);
+		vm_page_aflag_clear(m, PGA_REQUEUE);
+	} else
+		TAILQ_INSERT_BEFORE(ss->marker, m, plinks.q);
+	return (1);
+}
+
 /*
  * Re-add stuck pages to the inactive queue.  We will examine them again
  * during the next scan.  If the queue state of a page has changed since
@@ -1125,32 +1140,27 @@ dolaundry:
  * vm_pageout_collect_batch(), don't do anything with that page.
  */
 static void
-vm_pageout_reinsert_page(struct scan_state *ss, struct vm_batchqueue *rq,
+vm_pageout_reinsert_inactive(struct scan_state *ss, struct vm_batchqueue *bq,
     vm_page_t m)
 {
 	struct vm_pagequeue *pq;
 	int delta;
 
-	if (vm_batchqueue_insert(rq, m))
-		return;
-
 	delta = 0;
 	pq = ss->pq;
-	vm_pagequeue_lock(pq);
-	do {
-		if (!vm_page_inactive(m) || (m->aflags & PGA_ENQUEUED) != 0)
-			continue;
-		vm_page_aflag_set(m, PGA_ENQUEUED);
-		if ((m->aflags & PGA_REQUEUE) != 0) {
-			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-			vm_page_aflag_clear(m, PGA_REQUEUE);
-		} else
-			TAILQ_INSERT_BEFORE(ss->marker, m, plinks.q);
-		delta++;
-	} while ((m = vm_batchqueue_pop(rq)) != NULL);
+
+	if (m != NULL) {
+		if (vm_batchqueue_insert(bq, m))
+			return;
+		vm_pagequeue_lock(pq);
+		delta += _vm_pageout_reinsert_inactive(ss, m);
+	} else
+		vm_pagequeue_lock(pq);
+	while ((m = vm_batchqueue_pop(bq)) != NULL)
+		delta += _vm_pageout_reinsert_inactive(ss, m);
 	vm_pagequeue_cnt_add(pq, delta);
 	vm_pagequeue_unlock(pq);
-	vm_batchqueue_init(rq);
+	vm_batchqueue_init(bq);
 }
 
 /*
@@ -1229,8 +1239,8 @@ vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage)
 	marker = &vmd->vmd_markers[PQ_INACTIVE];
 	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 	vm_pagequeue_lock(pq);
-	vm_pageout_init_scan(&ss, pq, marker, min(pq->pq_cnt, page_shortage));
-	while ((m = vm_pageout_next(&ss, true)) != NULL) {
+	vm_pageout_init_scan(&ss, pq, marker, pq->pq_cnt);
+	while (page_shortage > 0 && (m = vm_pageout_next(&ss, true)) != NULL) {
 		KASSERT((m->flags & PG_MARKER) == 0,
 		    ("marker page %p was dequeued", m));
 
@@ -1383,7 +1393,7 @@ free_page:
 			vm_page_launder(m);
 		continue;
 reinsert:
-		vm_pageout_reinsert_page(&ss, &rq, m);
+		vm_pageout_reinsert_inactive(&ss, &rq, m);
 	}
 	if (mtx != NULL) {
 		mtx_unlock(mtx);
@@ -1393,6 +1403,8 @@ reinsert:
 		VM_OBJECT_WUNLOCK(object);
 		obj_locked = false;
 	}
+	vm_pageout_reinsert_inactive(&ss, &rq, NULL);
+	vm_pageout_reinsert_inactive(&ss, &ss.bq, NULL);
 	vm_pagequeue_lock(pq);
 	vm_pageout_end_scan(&ss);
 	vm_pagequeue_unlock(pq);
