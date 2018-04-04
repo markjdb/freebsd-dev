@@ -174,6 +174,7 @@ static uma_zone_t fakepg_zone;
 
 static void vm_page_alloc_check(vm_page_t m);
 static void vm_page_clear_dirty_mask(vm_page_t m, vm_page_bits_t pagebits);
+static void vm_page_dequeue_complete(vm_page_t m);
 static void vm_page_enqueue(vm_page_t m, uint8_t queue);
 static void vm_page_init(void *dummy);
 static int vm_page_insert_after(vm_page_t m, vm_object_t object,
@@ -3117,22 +3118,17 @@ vm_pqbatch_process(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
 				TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 				delta--;
 			}
-
-			/*
-			 * Synchronize with the page daemon, which may be
-			 * simultaneously scanning this page with only the page
-			 * lock held.  We must be careful to avoid leaving the
-			 * page in a state where it appears to belong to a page
-			 * queue.
-			 */
-			m->queue = PQ_NONE;
-			atomic_thread_fence_rel();
-			vm_page_aflag_clear(m, PGA_QUEUE_STATE_MASK);
+			vm_page_dequeue_complete(m);
 		} else if ((aflags & PGA_ENQUEUED) == 0) {
 			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
 			delta++;
 			vm_page_aflag_set(m, PGA_ENQUEUED);
 			if ((aflags & PGA_REQUEUE) != 0)
+				/*
+				 * PGA_REQUEUE must be cleared after setting
+				 * PGA_ENQUEUED to synchronize with the page
+				 * daemon.
+				 */
 				vm_page_aflag_clear(m, PGA_REQUEUE);
 		} else if ((aflags & PGA_REQUEUE) != 0) {
 			TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
@@ -3142,6 +3138,21 @@ vm_pqbatch_process(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
 	}
 	vm_batchqueue_init(bq);
 	vm_pagequeue_cnt_add(pq, delta);
+}
+
+/*
+ * Complete removal of a page from a page queue.  We must be careful to
+ * synchronize with the page daemon, which may be concurrently examining the
+ * page with only the page lock held.  The page must not be in a state where
+ * it appears to be enqueued.
+ */
+static void
+vm_page_dequeue_complete(vm_page_t m)
+{
+
+	m->queue = PQ_NONE;
+	atomic_thread_fence_rel();
+	vm_page_aflag_clear(m, PGA_QUEUE_STATE_MASK);
 }
 
 /*
@@ -3219,28 +3230,21 @@ vm_page_dequeue_locked(vm_page_t m)
 {
 	struct vm_pagequeue *pq;
 
+	pq = vm_page_pagequeue(m);
+
 	KASSERT(m->queue != PQ_NONE,
 	    ("%s: page %p queue field is PQ_NONE", __func__, m));
-	vm_pagequeue_assert_locked(vm_page_pagequeue(m));
+	vm_pagequeue_assert_locked(pq);
 	KASSERT((m->aflags & PGA_DEQUEUE) != 0 ||
 	    mtx_owned(vm_page_lockptr(m)),
 	    ("%s: queued unlocked page %p", __func__, m));
 
 	if ((m->aflags & PGA_ENQUEUED) != 0) {
-		pq = vm_page_pagequeue(m);
 		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_dec(pq);
 	}
 
-	/*
-	 * Synchronize with the page daemon, which may be simultaneously
-	 * scanning this page with only the page lock held.  We must be careful
-	 * to avoid leaving the page in a state where it appears to belong to a
-	 * page queue.
-	 */
-	m->queue = PQ_NONE;
-	atomic_thread_fence_rel();
-	vm_page_aflag_clear(m, PGA_QUEUE_STATE_MASK);
+	vm_page_dequeue_complete(m);
 }
 
 /*
@@ -3274,12 +3278,8 @@ vm_page_dequeue(vm_page_t m)
 }
 
 /*
- *	vm_page_enqueue:
- *
- *	Schedule the given page for insertion into the specified page queue.
- *	Physical insertion of the page may be deferred indefinitely.
- *
- *	The page must be locked.
+ * Schedule the given page for insertion into the specified page queue.
+ * Physical insertion of the page may be deferred indefinitely.
  */
 static void
 vm_page_enqueue(vm_page_t m, uint8_t queue)
@@ -3299,9 +3299,11 @@ vm_page_enqueue(vm_page_t m, uint8_t queue)
 	 * The queue field might be changed back to PQ_NONE by a concurrent
 	 * call to vm_page_dequeue().  In that case the batch queue entry will
 	 * be a no-op.
+	 *
+	 * Set PGA_REQUEUE while the page lock is held to ensure that the page
+	 * daemon does not attempt to free the page.
 	 */
 	m->queue = queue;
-	/* XXX */
 	vm_page_aflag_set(m, PGA_REQUEUE);
 
 	critical_enter();
@@ -3704,7 +3706,16 @@ vm_page_deactivate_noreuse(vm_page_t m)
 	if (!vm_page_inactive(m))
 		vm_page_remque(m);
 
+	/*
+	 * The queue field might be changed back to PQ_NONE by a concurrent
+	 * call to vm_page_dequeue().  In that case the batch queue entry will
+	 * be a no-op.
+	 *
+	 * Set PGA_REQUEUE while the page lock is held to ensure that the page
+	 * daemon does not attempt to free the page.
+	 */
 	m->queue = PQ_INACTIVE;
+	vm_page_aflag_set(m, PGA_REQUEUE);
 
 	critical_enter();
 	bq = DPCPU_PTR(noreuseq[domain]);
@@ -3719,6 +3730,8 @@ vm_page_deactivate_noreuse(vm_page_t m)
 		bq = DPCPU_PTR(noreuseq[domain]);
 	}
 	marker = &vmd->vmd_inacthead;
+	KASSERT((marker->aflags & PGA_ENQUEUED) != 0,
+	    ("marker %p isn't enqueued", marker));
 	do {
 		if (m->queue != PQ_INACTIVE)
 			continue;
@@ -3729,6 +3742,7 @@ vm_page_deactivate_noreuse(vm_page_t m)
 			vm_pagequeue_cnt_inc(pq);
 		}
 		TAILQ_INSERT_BEFORE(marker, m, plinks.q);
+		vm_page_aflag_clear(m, PGA_REQUEUE);
 	} while ((m = vm_batchqueue_pop(bq)) != NULL);
 	vm_pagequeue_unlock(pq);
 	vm_batchqueue_init(bq);

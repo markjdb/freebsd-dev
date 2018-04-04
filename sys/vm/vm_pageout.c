@@ -215,15 +215,19 @@ struct scan_state {
 
 static void
 vm_pageout_init_scan(struct scan_state *ss, struct vm_pagequeue *pq,
-    vm_page_t marker, int maxscan)
+    vm_page_t marker, vm_page_t after, int maxscan)
 {
 
 	vm_pagequeue_assert_locked(pq);
+	KASSERT((marker->aflags & PGA_ENQUEUED) == 0,
+	    ("marker %p already enqueued", marker));
 
-	if ((marker->aflags & PGA_ENQUEUED) == 0) {
+	if (after == NULL)
 		TAILQ_INSERT_HEAD(&pq->pq_pl, marker, plinks.q);
-		vm_page_aflag_set(marker, PGA_ENQUEUED);
-	}
+	else
+		TAILQ_INSERT_AFTER(&pq->pq_pl, after, marker, plinks.q);
+	vm_page_aflag_set(marker, PGA_ENQUEUED);
+
 	vm_batchqueue_init(&ss->bq);
 	ss->pq = pq;
 	ss->marker = marker;
@@ -242,13 +246,15 @@ vm_pageout_end_scan(struct scan_state *ss)
 	KASSERT((ss->marker->aflags & PGA_ENQUEUED) != 0,
 	    ("marker %p not enqueued", ss->marker));
 
-	if ((ss->marker->aflags & PGA_ENQUEUED) != 0) {
-		TAILQ_REMOVE(&pq->pq_pl, ss->marker, plinks.q);
-		vm_page_aflag_clear(ss->marker, PGA_ENQUEUED);
-	}
+	TAILQ_REMOVE(&pq->pq_pl, ss->marker, plinks.q);
+	vm_page_aflag_clear(ss->marker, PGA_ENQUEUED);
 	VM_CNT_ADD(v_pdpages, ss->scanned);
 }
 
+/*
+ * Ensure that the page has not been dequeued after a pageout batch was
+ * collected.  See vm_page_dequeue_complete().
+ */
 static inline bool
 vm_pageout_page_queued(vm_page_t m, int queue)
 {
@@ -279,11 +285,11 @@ vm_pageout_collect_batch(struct scan_state *ss, const bool dequeue)
 	struct vm_pagequeue *pq;
 	vm_page_t m, marker;
 
-	KASSERT((ss->marker->aflags & PGA_ENQUEUED) != 0,
-	    ("marker %p not enqueued", ss->marker));
-
 	marker = ss->marker;
 	pq = ss->pq;
+
+	KASSERT((marker->aflags & PGA_ENQUEUED) != 0,
+	    ("marker %p not enqueued", ss->marker));
 
 	vm_pagequeue_lock(pq);
 	for (m = TAILQ_NEXT(marker, plinks.q); m != NULL &&
@@ -733,7 +739,7 @@ scan:
 	marker = &vmd->vmd_markers[queue];
 	pq = &vmd->vmd_pagequeues[queue];
 	vm_pagequeue_lock(pq);
-	vm_pageout_init_scan(&ss, pq, marker, pq->pq_cnt);
+	vm_pageout_init_scan(&ss, pq, marker, NULL, pq->pq_cnt);
 	while ((m = vm_pageout_next(&ss, false)) != NULL) {
 		if (__predict_false((m->flags & PG_MARKER) != 0))
 			continue;
@@ -1239,7 +1245,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage)
 	marker = &vmd->vmd_markers[PQ_INACTIVE];
 	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 	vm_pagequeue_lock(pq);
-	vm_pageout_init_scan(&ss, pq, marker, pq->pq_cnt);
+	vm_pageout_init_scan(&ss, pq, marker, NULL, pq->pq_cnt);
 	while (page_shortage > 0 && (m = vm_pageout_next(&ss, true)) != NULL) {
 		KASSERT((m->flags & PG_MARKER) == 0,
 		    ("marker page %p was dequeued", m));
@@ -1257,10 +1263,11 @@ recheck:
 		}
 
 		/*
-		 * A requeue was requested, so this page gets a second
+		 * The page was re-enqueued after the page queue lock was
+		 * dropped, or a requeue was requested.  This page gets a second
 		 * chance.
 		 */
-		if ((m->aflags & PGA_REQUEUE) != 0)
+		if ((m->aflags & (PGA_ENQUEUED | PGA_REQUEUE)) != 0)
 			goto reinsert;
 
 		/*
@@ -1381,14 +1388,16 @@ recheck:
 		if (m->dirty == 0) {
 free_page:
 			/*
-			 * Because the page has already been dequeued, we can
-			 * update the queue field without the page queue lock
-			 * held.
+			 * Because we dequeued the page and have already
+			 * checked for concurrent dequeue and enqueue
+			 * requests, we can safely disassociate the page
+			 * from the inactive queue.
 			 */
+			KASSERT((m->aflags & PGA_QUEUE_STATE_MASK) == 0,
+			    ("page %p has queue state", m));
 			m->queue = PQ_NONE;
 			vm_page_free(m);
 			page_shortage--;
-			VM_CNT_INC(v_dfree);
 		} else if ((object->flags & OBJ_DEAD) == 0)
 			vm_page_launder(m);
 		continue;
@@ -1408,6 +1417,8 @@ reinsert:
 	vm_pagequeue_lock(pq);
 	vm_pageout_end_scan(&ss);
 	vm_pagequeue_unlock(pq);
+
+	VM_CNT_ADD(v_dfree, starting_page_shortage - page_shortage);
 
 	/*
 	 * Wake up the laundry thread so that it can perform any needed
@@ -1491,12 +1502,18 @@ reinsert:
 	 * Scan the active queue for pages that can be deactivated.  Update
 	 * the per-page activity counter and use it to identify deactivation
 	 * candidates.  Held pages may be deactivated.
+	 *
+	 * To avoid requeuing each page that remains in the active queue, we
+	 * implement the CLOCK algorithm.  To maintain consistency in the
+	 * generic page queue code, pages are inserted at the tail of the
+	 * active queue.  We thus use two hands, represented by marker pages:
+	 * scans begin at the first hand, which precedes the second hand in
+	 * the queue.  When the two hands meet, they are moved back to the
+	 * head and tail of the queue, respectively, and scanning resumes.
 	 */
 act_scan:
-	TAILQ_INSERT_AFTER(&pq->pq_pl, &vmd->vmd_clock[0], marker, plinks.q);
-	vm_page_aflag_set(marker, PGA_ENQUEUED);
-	vm_pageout_init_scan(&ss, pq, marker, inactq_shortage > 0 ?
-	    pq->pq_cnt : min_scan);
+	vm_pageout_init_scan(&ss, pq, marker, &vmd->vmd_clock[0],
+	    inactq_shortage > 0 ? pq->pq_cnt : min_scan);
 	while ((m = vm_pageout_next(&ss, false)) != NULL) {
 		if (__predict_false(m == &vmd->vmd_clock[1])) {
 			vm_pagequeue_lock(pq);
@@ -1602,7 +1619,6 @@ act_scan:
 		mtx_unlock(mtx);
 		mtx = NULL;
 	}
-
 	vm_pagequeue_lock(pq);
 	TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_clock[0], plinks.q);
 	TAILQ_INSERT_AFTER(&pq->pq_pl, marker, &vmd->vmd_clock[0], plinks.q);

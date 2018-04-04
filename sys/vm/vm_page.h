@@ -352,9 +352,9 @@ extern struct mtx_padalign pa_lock[];
  * actually inserted into the page queue.  The page lock must be held to set
  * this flag, and the queue lock for the page must be held to clear it.
  *
- * PGA_REQUEUE is set when the page is scheduled to be requeued in its page
- * queue.  The page lock must be held to set this flag, and the queue lock
- * for the page must be held to clear it.
+ * PGA_REQUEUE is set when the page is scheduled to be enqueued or requeued
+ * in its page queue.  The page lock must be held to set this flag, and the
+ * queue lock for the page must be held to clear it.
  */
 #define	PGA_WRITEABLE	0x01		/* page may be mapped writeable */
 #define	PGA_REFERENCED	0x02		/* page has been referenced */

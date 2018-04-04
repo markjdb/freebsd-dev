@@ -116,7 +116,7 @@ struct vm_domain {
 	boolean_t vmd_oom;
 	int vmd_oom_seq;
 	int vmd_last_active_scan;
-	struct vm_page vmd_markers[PQ_COUNT]; /* markers for queue scans */
+	struct vm_page vmd_markers[PQ_COUNT]; /* (q) markers for queue scans */
 	struct vm_page vmd_inacthead; /* marker for LRU-defeating insertions */
 	struct vm_page vmd_clock[2]; /* markers for active queue scan */
 
