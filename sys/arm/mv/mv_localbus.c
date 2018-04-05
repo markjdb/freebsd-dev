@@ -272,10 +272,10 @@ localbus_attach(device_t dev)
 	    dt_child = OF_peer(dt_child)) {
 
 		/* Check and process 'status' property. */
-		if (!(fdt_is_enabled(dt_child)))
+		if (!(ofw_bus_node_status_okay(dt_child)))
 			continue;
 
-		if (!(fdt_pm_is_enabled(dt_child)))
+		if (!(mv_fdt_pm(dt_child)))
 			continue;
 
 		di = malloc(sizeof(*di), M_LOCALBUS, M_WAITOK | M_ZERO);

@@ -1393,11 +1393,15 @@ tcp_fill_info(struct tcpcb *tp, struct tcp_info *ti)
 	ti->tcpi_snd_nxt = tp->snd_nxt;
 	ti->tcpi_snd_mss = tp->t_maxseg;
 	ti->tcpi_rcv_mss = tp->t_maxseg;
-	if (tp->t_flags & TF_TOE)
-		ti->tcpi_options |= TCPI_OPT_TOE;
 	ti->tcpi_snd_rexmitpack = tp->t_sndrexmitpack;
 	ti->tcpi_rcv_ooopack = tp->t_rcvoopack;
 	ti->tcpi_snd_zerowin = tp->t_sndzerowin;
+#ifdef TCP_OFFLOAD
+	if (tp->t_flags & TF_TOE) {
+		ti->tcpi_options |= TCPI_OPT_TOE;
+		tcp_offload_tcp_info(tp, ti);
+	}
+#endif
 }
 
 /*
@@ -1529,7 +1533,9 @@ tcp_ctloutput(struct socket *so, struct sockopt *sopt)
 		return (error);
 	} else if ((sopt->sopt_dir == SOPT_GET) && 
 	    (sopt->sopt_name == TCP_FUNCTION_BLK)) {
-		strcpy(fsn.function_set_name, tp->t_fb->tfb_tcp_block_name);
+		strncpy(fsn.function_set_name, tp->t_fb->tfb_tcp_block_name,
+		    TCP_FUNCTION_NAME_LEN_MAX);
+		fsn.function_set_name[TCP_FUNCTION_NAME_LEN_MAX - 1] = '\0';
 		fsn.pcbcnt = tp->t_fb->tfb_refcnt;
 		INP_WUNLOCK(inp);
 		error = sooptcopyout(sopt, &fsn, sizeof fsn);
