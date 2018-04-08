@@ -798,6 +798,24 @@ vm_page_in_laundry(vm_page_t m)
 }
 
 /*
+ *	vm_page_enqueued:
+ *
+ *	Return true if the page is logically enqueued and no deferred
+ *	dequeue is pending.
+ */
+static inline bool
+vm_page_enqueued(vm_page_t m)
+{
+
+	vm_page_assert_locked(m);
+
+	if ((m->aflags & PGA_DEQUEUE) != 0)
+		return (false);
+	atomic_thread_fence_acq();
+	return (m->queue != PQ_NONE);
+}
+
+/*
  *	vm_page_held:
  *
  *	Return true if a reference prevents the page from being reclaimable.

@@ -2403,8 +2403,7 @@ retry:
 				    vm_reserv_size(level)) - pa);
 #endif
 			} else if (object->memattr == VM_MEMATTR_DEFAULT &&
-			    m->queue != PQ_NONE &&
-			    (m->aflags & PGA_DEQUEUE) == 0 && !vm_page_busied(m)) {
+			    vm_page_enqueued(m) && !vm_page_busied(m)) {
 				/*
 				 * The page is allocated but eligible for
 				 * relocation.  Extend the current run by one
@@ -2555,9 +2554,7 @@ retry:
 				error = EINVAL;
 			else if (object->memattr != VM_MEMATTR_DEFAULT)
 				error = EINVAL;
-			else if (m->queue != PQ_NONE &&
-			    (m->aflags & PGA_DEQUEUE) == 0 &&
-			    !vm_page_busied(m)) {
+			else if (vm_page_enqueued(m) && !vm_page_busied(m)) {
 				KASSERT(pmap_page_get_memattr(m) ==
 				    VM_MEMATTR_DEFAULT,
 				    ("page %p has an unexpected memattr", m));
