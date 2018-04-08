@@ -134,7 +134,6 @@ extern int	vmem_startup_count(void);
 struct vm_domain vm_dom[MAXMEMDOM];
 
 static DPCPU_DEFINE(struct vm_batchqueue, pqbatch[MAXMEMDOM][PQ_COUNT]);
-static DPCPU_DEFINE(struct vm_batchqueue, noreuseq[MAXMEMDOM]);
 
 struct mtx_padalign __exclusive_cache_line pa_lock[PA_LOCK_COUNT];
 
@@ -3096,6 +3095,7 @@ vm_page_pagequeue_lockptr(vm_page_t m)
 static inline void
 vm_pqbatch_process_page(struct vm_pagequeue *pq, vm_page_t m)
 {
+	struct vm_domain *vmd;
 	uint8_t aflags;
 
 	vm_pagequeue_assert_locked(pq);
@@ -3109,21 +3109,27 @@ vm_pqbatch_process_page(struct vm_pagequeue *pq, vm_page_t m)
 			vm_pagequeue_cnt_dec(pq);
 		}
 		vm_page_dequeue_complete(m);
-	} else if ((aflags & PGA_ENQUEUED) == 0) {
-		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-		vm_pagequeue_cnt_inc(pq);
-		vm_page_aflag_set(m, PGA_ENQUEUED);
-		if ((aflags & PGA_REQUEUE) != 0)
-			/*
-			 * PGA_REQUEUE must be cleared after setting
-			 * PGA_ENQUEUED to synchronize with the page
-			 * daemon.
-			 */
-			vm_page_aflag_clear(m, PGA_REQUEUE);
-	} else if ((aflags & PGA_REQUEUE) != 0) {
-		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
-		TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
-		vm_page_aflag_clear(m, PGA_REQUEUE);
+	} else if ((aflags & (PGA_REQUEUE | PGA_REQUEUE_HEAD)) != 0) {
+		if ((aflags & PGA_ENQUEUED) != 0)
+			TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
+		else {
+			vm_pagequeue_cnt_inc(pq);
+			vm_page_aflag_set(m, PGA_ENQUEUED);
+		}
+		if ((aflags & PGA_REQUEUE_HEAD) != 0) {
+			KASSERT(m->queue == PQ_INACTIVE,
+			    ("head enqueue not supported for page %p", m));
+			vmd = vm_pagequeue_domain(m);
+			TAILQ_INSERT_BEFORE(&vmd->vmd_inacthead, m, plinks.q);
+		} else
+			TAILQ_INSERT_TAIL(&pq->pq_pl, m, plinks.q);
+
+		/*
+		 * PGA_REQUEUE and PGA_REQUEUE_HEAD must be cleared after
+		 * setting PGA_ENQUEUED in order to synchronize with the
+		 * page daemon.
+		 */
+		vm_page_aflag_clear(m, PGA_REQUEUE | PGA_REQUEUE_HEAD);
 	}
 }
 
@@ -3248,7 +3254,6 @@ vm_page_dequeue_locked(vm_page_t m)
 		TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
 		vm_pagequeue_cnt_dec(pq);
 	}
-
 	vm_page_dequeue_complete(m);
 }
 
@@ -3326,6 +3331,8 @@ vm_page_enqueue(vm_page_t m, uint8_t queue)
 	vm_pqbatch_process(pq, bq, queue);
 	if (m->queue == queue)
 		vm_pqbatch_process_page(pq, m);
+	else
+		vm_page_aflag_clear(m, PGA_REQUEUE);
 	vm_pagequeue_unlock(pq);
 	critical_exit();
 }
@@ -3692,17 +3699,12 @@ vm_page_deactivate_noreuse(vm_page_t m)
 	struct vm_batchqueue *bq;
 	struct vm_domain *vmd;
 	struct vm_pagequeue *pq;
-	vm_page_t marker;
 	int domain;
 
 	vm_page_assert_locked(m);
 
 	if (m->wire_count > 0 || (m->oflags & VPO_UNMANAGED) != 0)
 		return;
-
-	domain = vm_phys_domain(m);
-	vmd = VM_DOMAIN(domain);
-	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 
 	if (!vm_page_inactive(m))
 		vm_page_remque(m);
@@ -3716,11 +3718,15 @@ vm_page_deactivate_noreuse(vm_page_t m)
 	 * daemon does not attempt to free the page.
 	 */
 	m->queue = PQ_INACTIVE;
-	vm_page_aflag_set(m, PGA_REQUEUE);
+	vm_page_aflag_set(m, PGA_REQUEUE_HEAD);
+
+	domain = vm_phys_domain(m);
+	vmd = VM_DOMAIN(domain);
+	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 
 	critical_enter();
-	bq = DPCPU_PTR(noreuseq[domain]);
-	if (vm_batchqueue_insert(bq, m)) {
+	bq = DPCPU_PTR(pqbatch[domain][PQ_INACTIVE]);
+	if (__predict_true(vm_batchqueue_insert(bq, m))) {
 		critical_exit();
 		return;
 	}
@@ -3728,25 +3734,14 @@ vm_page_deactivate_noreuse(vm_page_t m)
 		critical_exit();
 		vm_pagequeue_lock(pq);
 		critical_enter();
-		bq = DPCPU_PTR(noreuseq[domain]);
+		bq = DPCPU_PTR(pqbatch[domain][PQ_INACTIVE]);
 	}
-	marker = &vmd->vmd_inacthead;
-	KASSERT((marker->aflags & PGA_ENQUEUED) != 0,
-	    ("marker %p isn't enqueued", marker));
-	do {
-		if (m->queue != PQ_INACTIVE)
-			continue;
-		if ((m->aflags & PGA_ENQUEUED) != 0)
-			TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
-		else {
-			vm_page_aflag_set(m, PGA_ENQUEUED);
-			vm_pagequeue_cnt_inc(pq);
-		}
-		TAILQ_INSERT_BEFORE(marker, m, plinks.q);
-		vm_page_aflag_clear(m, PGA_REQUEUE);
-	} while ((m = vm_batchqueue_pop(bq)) != NULL);
+	vm_pqbatch_process(pq, bq, PQ_INACTIVE);
+	if (m->queue == PQ_INACTIVE)
+		vm_pqbatch_process_page(pq, m);
+	else
+		vm_page_aflag_clear(m, PGA_REQUEUE_HEAD);
 	vm_pagequeue_unlock(pq);
-	vm_batchqueue_init(bq);
 	critical_exit();
 }
 

@@ -1127,13 +1127,18 @@ dolaundry:
 static int
 _vm_pageout_reinsert_inactive(struct scan_state *ss, vm_page_t m)
 {
+	struct vm_domain *vmd;
 
 	if (!vm_page_inactive(m) || (m->aflags & PGA_ENQUEUED) != 0)
 		return (0);
 	vm_page_aflag_set(m, PGA_ENQUEUED);
-	if ((m->aflags & PGA_REQUEUE) != 0) {
+	if ((m->aflags & PGA_REQUEUE_HEAD) != 0) {
+		vmd = vm_pagequeue_domain(m);
+		TAILQ_INSERT_BEFORE(&vmd->vmd_inacthead, m, plinks.q);
+		vm_page_aflag_clear(m, PGA_REQUEUE | PGA_REQUEUE_HEAD);
+	} else if ((m->aflags & PGA_REQUEUE) != 0) {
 		TAILQ_INSERT_TAIL(&ss->pq->pq_pl, m, plinks.q);
-		vm_page_aflag_clear(m, PGA_REQUEUE);
+		vm_page_aflag_clear(m, PGA_REQUEUE | PGA_REQUEUE_HEAD);
 	} else
 		TAILQ_INSERT_BEFORE(ss->marker, m, plinks.q);
 	return (1);
@@ -1267,7 +1272,8 @@ recheck:
 		 * dropped, or a requeue was requested.  This page gets a second
 		 * chance.
 		 */
-		if ((m->aflags & (PGA_ENQUEUED | PGA_REQUEUE)) != 0)
+		if ((m->aflags & (PGA_ENQUEUED | PGA_REQUEUE |
+		    PGA_REQUEUE_HEAD)) != 0)
 			goto reinsert;
 
 		/*
