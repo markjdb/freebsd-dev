@@ -3158,7 +3158,6 @@ vm_pqbatch_submit_page(vm_page_t m, uint8_t queue)
 
 	vm_page_assert_locked(m);
 	KASSERT(queue < PQ_COUNT, ("invalid queue %d", queue));
-	KASSERT(m->queue == queue, ("page %p not logically enqueued", m));
 
 	domain = vm_phys_domain(m);
 	pq = &vm_pagequeue_domain(m)->vmd_pagequeues[queue];
