@@ -3196,10 +3196,10 @@ vm_pqbatch_submit_page(vm_page_t m, uint8_t queue)
 }
 
 /*
- * Complete removal of a page from a page queue.  We must be careful to
- * synchronize with the page daemon, which may be concurrently examining the
- * page with only the page lock held.  The page must not be in a state where
- * it appears to be enqueued.
+ * Complete the logical removal of a page from a page queue.  We must be
+ * careful to synchronize with the page daemon, which may be concurrently
+ * examining the page with only the page lock held.  The page must not be
+ * in a state where it appears to be logically enqueued.
  */
 static void
 vm_page_dequeue_complete(vm_page_t m)
