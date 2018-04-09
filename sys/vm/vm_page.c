@@ -3149,6 +3149,52 @@ vm_pqbatch_process(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
 	vm_batchqueue_init(bq);
 }
 
+static void
+vm_pqbatch_submit_page(vm_page_t m, uint8_t queue)
+{
+	struct vm_batchqueue *bq;
+	struct vm_pagequeue *pq;
+	int domain;
+
+	vm_page_assert_locked(m);
+	KASSERT(queue < PQ_COUNT, ("invalid queue %d", queue));
+	KASSERT(m->queue == queue, ("page %p not logically enqueued", m));
+
+	domain = vm_phys_domain(m);
+	pq = &vm_pagequeue_domain(m)->vmd_pagequeues[queue];
+
+	critical_enter();
+	bq = DPCPU_PTR(pqbatch[domain][queue]);
+	if (vm_batchqueue_insert(bq, m)) {
+		critical_exit();
+		return;
+	}
+	if (!vm_pagequeue_trylock(pq)) {
+		critical_exit();
+		vm_pagequeue_lock(pq);
+		critical_enter();
+		bq = DPCPU_PTR(pqbatch[domain][queue]);
+	}
+	vm_pqbatch_process(pq, bq, queue);
+
+	/*
+	 * The page may have been logically dequeued before we acquired the
+	 * page queue lock.  In this case, the page lock prevents the page
+	 * from being logically enqueued elsewhere.
+	 */
+	if (__predict_true(m->queue == queue))
+		vm_pqbatch_process_page(pq, m);
+	else {
+		KASSERT(m->queue == PQ_NONE,
+		    ("invalid queue transition for page %p", m));
+		KASSERT((m->aflags & PGA_ENQUEUED) == 0,
+		    ("page %p is enqueued with invalid queue index", m));
+		vm_page_aflag_clear(m, PGA_QUEUE_STATE_MASK);
+	}
+	vm_pagequeue_unlock(pq);
+	critical_exit();
+}
+
 /*
  * Complete removal of a page from a page queue.  We must be careful to
  * synchronize with the page daemon, which may be concurrently examining the
@@ -3176,9 +3222,7 @@ vm_page_dequeue_complete(vm_page_t m)
 void
 vm_page_dequeue_deferred(vm_page_t m)
 {
-	struct vm_batchqueue *bq;
-	struct vm_pagequeue *pq;
-	int domain, queue;
+	int queue;
 
 	vm_page_assert_locked(m);
 
@@ -3188,40 +3232,9 @@ vm_page_dequeue_deferred(vm_page_t m)
 		    ("page %p has queue state", m));
 		return;
 	}
-	domain = vm_phys_domain(m);
-	pq = &VM_DOMAIN(domain)->vmd_pagequeues[queue];
-
 	if ((m->aflags & PGA_DEQUEUE) == 0)
 		vm_page_aflag_set(m, PGA_DEQUEUE);
-
-	critical_enter();
-	bq = DPCPU_PTR(pqbatch[domain][queue]);
-	if (vm_batchqueue_insert(bq, m)) {
-		critical_exit();
-		return;
-	}
-	if (!vm_pagequeue_trylock(pq)) {
-		critical_exit();
-		vm_pagequeue_lock(pq);
-		critical_enter();
-		bq = DPCPU_PTR(pqbatch[domain][queue]);
-	}
-	vm_pqbatch_process(pq, bq, queue);
-
-	/*
-	 * The page may have been dequeued by another thread before we
-	 * acquired the page queue lock.  However, since we hold the
-	 * page lock, the page's queue field cannot change a second
-	 * time and we can safely clear PGA_DEQUEUE.
-	 */
-	KASSERT(m->queue == queue || m->queue == PQ_NONE,
-	    ("%s: page %p migrated between queues", __func__, m));
-	if (m->queue == queue)
-		vm_pqbatch_process_page(pq, m);
-	else
-		vm_page_aflag_clear(m, PGA_DEQUEUE);
-	vm_pagequeue_unlock(pq);
-	critical_exit();
+	vm_pqbatch_submit_page(m, queue);
 }
 
 /*
@@ -3294,47 +3307,15 @@ vm_page_dequeue(vm_page_t m)
 static void
 vm_page_enqueue(vm_page_t m, uint8_t queue)
 {
-	struct vm_batchqueue *bq;
-	struct vm_pagequeue *pq;
-	int domain;
 
 	vm_page_assert_locked(m);
 	KASSERT(m->queue == PQ_NONE && (m->aflags & PGA_QUEUE_STATE_MASK) == 0,
 	    ("%s: page %p is already enqueued", __func__, m));
 
-	domain = vm_phys_domain(m);
-	pq = &vm_pagequeue_domain(m)->vmd_pagequeues[queue];
-
-	/*
-	 * The queue field might be changed back to PQ_NONE by a concurrent
-	 * call to vm_page_dequeue().  In that case the batch queue entry will
-	 * be a no-op.
-	 *
-	 * Set PGA_REQUEUE while the page lock is held to ensure that the page
-	 * daemon does not attempt to free the page.
-	 */
 	m->queue = queue;
-	vm_page_aflag_set(m, PGA_REQUEUE);
-
-	critical_enter();
-	bq = DPCPU_PTR(pqbatch[domain][queue]);
-	if (__predict_true(vm_batchqueue_insert(bq, m))) {
-		critical_exit();
-		return;
-	}
-	if (!vm_pagequeue_trylock(pq)) {
-		critical_exit();
-		vm_pagequeue_lock(pq);
-		critical_enter();
-		bq = DPCPU_PTR(pqbatch[domain][queue]);
-	}
-	vm_pqbatch_process(pq, bq, queue);
-	if (m->queue == queue)
-		vm_pqbatch_process_page(pq, m);
-	else
-		vm_page_aflag_clear(m, PGA_REQUEUE);
-	vm_pagequeue_unlock(pq);
-	critical_exit();
+	if ((m->aflags & PGA_REQUEUE) == 0)
+		vm_page_aflag_set(m, PGA_REQUEUE);
+	vm_pqbatch_submit_page(m, queue);
 }
 
 /*
@@ -3347,41 +3328,14 @@ vm_page_enqueue(vm_page_t m, uint8_t queue)
 void
 vm_page_requeue(vm_page_t m)
 {
-	struct vm_batchqueue *bq;
-	struct vm_pagequeue *pq;
-	int domain, queue;
 
-	vm_page_lock_assert(m, MA_OWNED);
+	vm_page_assert_locked(m);
 	KASSERT(m->queue != PQ_NONE,
-	    ("%s: page %p is not enqueued", __func__, m));
-
-	domain = vm_phys_domain(m);
-	queue = m->queue;
-	pq = vm_page_pagequeue(m);
+	    ("%s: page %p is not logically enqueued", __func__, m));
 
 	if ((m->aflags & PGA_REQUEUE) == 0)
 		vm_page_aflag_set(m, PGA_REQUEUE);
-	critical_enter();
-	bq = DPCPU_PTR(pqbatch[domain][queue]);
-	if (__predict_true(vm_batchqueue_insert(bq, m))) {
-		critical_exit();
-		return;
-	}
-	if (!vm_pagequeue_trylock(pq)) {
-		critical_exit();
-		vm_pagequeue_lock(pq);
-		critical_enter();
-		bq = DPCPU_PTR(pqbatch[domain][queue]);
-	}
-	vm_pqbatch_process(pq, bq, queue);
-	KASSERT(m->queue == queue || m->queue == PQ_NONE,
-	    ("%s: page %p migrated between queues", __func__, m));
-	if (m->queue == queue)
-		vm_pqbatch_process_page(pq, m);
-	else
-		vm_page_aflag_clear(m, PGA_REQUEUE);
-	vm_pagequeue_unlock(pq);
-	critical_exit();
+	vm_pqbatch_submit_page(m, m->queue);
 }
 
 /*
@@ -3696,10 +3650,6 @@ vm_page_deactivate(vm_page_t m)
 void
 vm_page_deactivate_noreuse(vm_page_t m)
 {
-	struct vm_batchqueue *bq;
-	struct vm_domain *vmd;
-	struct vm_pagequeue *pq;
-	int domain;
 
 	vm_page_assert_locked(m);
 
@@ -3708,41 +3658,10 @@ vm_page_deactivate_noreuse(vm_page_t m)
 
 	if (!vm_page_inactive(m))
 		vm_page_remque(m);
-
-	/*
-	 * The queue field might be changed back to PQ_NONE by a concurrent
-	 * call to vm_page_dequeue().  In that case the batch queue entry will
-	 * be a no-op.
-	 *
-	 * Set PGA_REQUEUE while the page lock is held to ensure that the page
-	 * daemon does not attempt to free the page.
-	 */
 	m->queue = PQ_INACTIVE;
-	vm_page_aflag_set(m, PGA_REQUEUE_HEAD);
-
-	domain = vm_phys_domain(m);
-	vmd = VM_DOMAIN(domain);
-	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
-
-	critical_enter();
-	bq = DPCPU_PTR(pqbatch[domain][PQ_INACTIVE]);
-	if (__predict_true(vm_batchqueue_insert(bq, m))) {
-		critical_exit();
-		return;
-	}
-	if (!vm_pagequeue_trylock(pq)) {
-		critical_exit();
-		vm_pagequeue_lock(pq);
-		critical_enter();
-		bq = DPCPU_PTR(pqbatch[domain][PQ_INACTIVE]);
-	}
-	vm_pqbatch_process(pq, bq, PQ_INACTIVE);
-	if (m->queue == PQ_INACTIVE)
-		vm_pqbatch_process_page(pq, m);
-	else
-		vm_page_aflag_clear(m, PGA_REQUEUE_HEAD);
-	vm_pagequeue_unlock(pq);
-	critical_exit();
+	if ((m->aflags & PGA_REQUEUE_HEAD) == 0)
+		vm_page_aflag_set(m, PGA_REQUEUE_HEAD);
+	vm_pqbatch_submit_page(m, PQ_INACTIVE);
 }
 
 /*
