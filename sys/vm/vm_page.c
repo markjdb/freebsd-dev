@@ -102,6 +102,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/proc.h>
 #include <sys/rwlock.h>
 #include <sys/sbuf.h>
+#include <sys/sched.h>
 #include <sys/smp.h>
 #include <sys/sysctl.h>
 #include <sys/vmmeter.h>
@@ -3192,6 +3193,45 @@ vm_pqbatch_submit_page(vm_page_t m, uint8_t queue)
 	}
 	vm_pagequeue_unlock(pq);
 	critical_exit();
+}
+
+/*
+ *	vm_page_drain_pqbatch:		[ internal use only ]
+ *
+ *	Force all per-CPU page queue batch queues to be drained.  This is
+ *	intended for use in severe memory shortages, to ensure that pages
+ *	do not remain stuck in the batch queues.
+ */
+void
+vm_page_drain_pqbatch(void)
+{
+	struct thread *td;
+	struct vm_domain *vmd;
+	struct vm_pagequeue *pq;
+	int domain, i, queue;
+
+	td = curthread;
+	CPU_FOREACH(i) {
+		thread_lock(td);
+		sched_bind(td, i);
+		thread_unlock(td);
+
+		for (domain = 0; domain < vm_ndomains; domain++) {
+			vmd = VM_DOMAIN(domain);
+			for (queue = 0; queue < PQ_COUNT; queue++) {
+				pq = &vmd->vmd_pagequeues[queue];
+				vm_pagequeue_lock(pq);
+				critical_enter();
+				vm_pqbatch_process(pq,
+				    DPCPU_PTR(pqbatch[domain][queue]), queue);
+				critical_exit();
+				vm_pagequeue_unlock(pq);
+			}
+		}
+	}
+	thread_lock(td);
+	sched_unbind(td);
+	thread_unlock(td);
 }
 
 /*

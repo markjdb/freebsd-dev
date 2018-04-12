@@ -538,6 +538,7 @@ void vm_page_deactivate_noreuse(vm_page_t);
 void vm_page_dequeue(vm_page_t m);
 void vm_page_dequeue_deferred(vm_page_t m);
 void vm_page_dequeue_locked(vm_page_t m);
+void vm_page_drain_pqbatch(void);
 vm_page_t vm_page_find_least(vm_object_t, vm_pindex_t);
 bool vm_page_free_prep(vm_page_t m);
 vm_page_t vm_page_getfake(vm_paddr_t paddr, vm_memattr_t memattr);
