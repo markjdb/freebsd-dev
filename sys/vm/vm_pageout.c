@@ -740,7 +740,7 @@ scan:
 	pq = &vmd->vmd_pagequeues[queue];
 	vm_pagequeue_lock(pq);
 	vm_pageout_init_scan(&ss, pq, marker, NULL, pq->pq_cnt);
-	while ((m = vm_pageout_next(&ss, false)) != NULL) {
+	while (launder > 0 && (m = vm_pageout_next(&ss, false)) != NULL) {
 		if (__predict_false((m->flags & PG_MARKER) != 0))
 			continue;
 
