@@ -1125,7 +1125,7 @@ dolaundry:
 }
 
 static int
-_vm_pageout_reinsert_inactive(struct scan_state *ss, vm_page_t m)
+vm_pageout_reinsert_inactive_page(struct scan_state *ss, vm_page_t m)
 {
 	struct vm_domain *vmd;
 
@@ -1164,11 +1164,11 @@ vm_pageout_reinsert_inactive(struct scan_state *ss, struct vm_batchqueue *bq,
 		if (vm_batchqueue_insert(bq, m))
 			return;
 		vm_pagequeue_lock(pq);
-		delta += _vm_pageout_reinsert_inactive(ss, m);
+		delta += vm_pageout_reinsert_inactive_page(ss, m);
 	} else
 		vm_pagequeue_lock(pq);
 	while ((m = vm_batchqueue_pop(bq)) != NULL)
-		delta += _vm_pageout_reinsert_inactive(ss, m);
+		delta += vm_pageout_reinsert_inactive_page(ss, m);
 	vm_pagequeue_cnt_add(pq, delta);
 	vm_pagequeue_unlock(pq);
 	vm_batchqueue_init(bq);
