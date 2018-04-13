@@ -93,10 +93,11 @@
  *
  *	In general, operations on this structure's mutable fields are
  *	synchronized using either one of or a combination of the lock on the
- *	object that the page belongs to (O), the pool lock for the page (P),
+ *	object that the page belongs to (O), the page lock (P),
  *	the per-domain lock for the free queues (F), or the page's queue
- *	lock (Q).  The queue lock for a page depends on the value of its
- *	queue field and described in detail below.  If a field is
+ *	lock (Q).  The physical address of a page is used to select its page
+ *	lock from a pool.  The queue lock for a page depends on the value of
+ *	its queue field and described in detail below.  If a field is
  *	annotated below with two of these locks, then holding either lock is
  *	sufficient for read access, but both locks are required for write
  *	access.  An annotation of (C) indicates that the field is immutable.
@@ -149,11 +150,12 @@
  *	The queue field is the index of the page queue containing the
  *	page, or PQ_NONE if the page is not enqueued.  The queue lock of a
  *	page is the page queue lock corresponding to the page queue index,
- *	or the page lock (P) for the page.  To modify the queue field, the
- *	queue lock for the old value of the field must be held.  It is
- *	invalid for a page's queue field to transition between two distinct
- *	page queue indices.  That is, when updating the queue field, either
- *	the new value or the old value must be PQ_NONE.
+ *	or the page lock (P) for the page if it is not enqueued.  To modify
+ *	the queue field, the queue lock for the old value of the field must
+ *	be held.  It is invalid for a page's queue field to transition
+ *	between two distinct page queue indices.  That is, when updating
+ *	the queue field, either the new value or the old value must be
+ *	PQ_NONE.
  *
  *	To avoid contention on page queue locks, page queue operations
  *	(enqueue, dequeue, requeue) are batched using per-CPU queues.
