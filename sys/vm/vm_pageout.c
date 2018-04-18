@@ -1193,7 +1193,7 @@ vm_pageout_scan(struct vm_domain *vmd, int pass, int shortage)
 	struct vm_pagequeue *pq;
 	vm_object_t object;
 	long min_scan;
-	int act_delta, addl_page_shortage, deficit, inactq_shortage;
+	int act_delta, addl_page_shortage, deficit, inactq_shortage, max_scan;
 	int page_shortage, scan_tick, starting_page_shortage;
 	bool obj_locked;
 
@@ -1517,9 +1517,9 @@ reinsert:
 	 * the queue.  When the two hands meet, they are moved back to the
 	 * head and tail of the queue, respectively, and scanning resumes.
 	 */
+	max_scan = inactq_shortage > 0 ? pq->pq_cnt : min_scan;
 act_scan:
-	vm_pageout_init_scan(&ss, pq, marker, &vmd->vmd_clock[0],
-	    inactq_shortage > 0 ? pq->pq_cnt : min_scan);
+	vm_pageout_init_scan(&ss, pq, marker, &vmd->vmd_clock[0], max_scan);
 	while ((m = vm_pageout_next(&ss, false)) != NULL) {
 		if (__predict_false(m == &vmd->vmd_clock[1])) {
 			vm_pagequeue_lock(pq);
@@ -1529,6 +1529,7 @@ act_scan:
 			    plinks.q);
 			TAILQ_INSERT_TAIL(&pq->pq_pl, &vmd->vmd_clock[1],
 			    plinks.q);
+			max_scan -= ss.scanned;
 			vm_pageout_end_scan(&ss);
 			goto act_scan;
 		}
