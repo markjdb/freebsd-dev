@@ -1,10 +1,7 @@
-/*	$NetBSD: exect.S,v 1.9 2003/08/07 16:42:17 agc Exp $	*/
+#ifndef __kern_prefetch_h__
 /*-
- * Copyright (c) 1991, 1993
- *	The Regents of the University of California.  All rights reserved.
- *
- * This code is derived from software contributed to Berkeley by
- * Ralph Campbell.
+ * Copyright (c) 2016-8
+ *	Netflix Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -14,9 +11,6 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of the University nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -29,23 +23,28 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * __FBSDID("$FreeBSD$")
  */
+#define __kern_prefetch_h__
+#ifdef _KERNEL
+#if defined(__amd64__)
+#include <vm/vm.h>
+#include <vm/vm_extern.h>
+#include <vm/vm_page.h>
+#include <vm/vm_map.h>
+#include <vm/pmap.h>
+#endif 
 
-#include <machine/asm.h>
-__FBSDID("$FreeBSD$");
-#include "SYS.h"
+static __inline void
+kern_prefetch(const volatile void *addr, void* before)
+{
+#if defined(__amd64__)
+	__asm __volatile("prefetcht1 (%1)":"=rm"(*((int32_t *)before)):"r"(addr):);
+#else
+	__builtin_prefetch(addr);
+#endif
+}
 
-#if defined(LIBC_SCCS) && !defined(lint)
-	ASMSTR("from: @(#)exect.s	8.1 (Berkeley) 6/4/93")
-	ASMSTR("$NetBSD: exect.S,v 1.9 2003/08/07 16:42:17 agc Exp $")
-#endif /* LIBC_SCCS and not lint */
-
-LEAF(exect)
-	PIC_PROLOGUE(exect)
-	li	v0, SYS_execve
-	syscall
-	bne	a3, zero, 1f
-	PIC_RETURN()
-1:
-	PIC_TAILCALL(__cerror)
-END(exect)
+#endif
+#endif
