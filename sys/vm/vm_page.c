@@ -3208,12 +3208,12 @@ vm_page_drain_pqbatch(void)
 	struct thread *td;
 	struct vm_domain *vmd;
 	struct vm_pagequeue *pq;
-	int domain, i, queue;
+	int cpu, domain, queue;
 
 	td = curthread;
-	CPU_FOREACH(i) {
+	CPU_FOREACH(cpu) {
 		thread_lock(td);
-		sched_bind(td, i);
+		sched_bind(td, cpu);
 		thread_unlock(td);
 
 		for (domain = 0; domain < vm_ndomains; domain++) {
