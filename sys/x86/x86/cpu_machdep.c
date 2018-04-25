@@ -163,12 +163,12 @@ acpi_cpu_idle_mwait(uint32_t mwait_hint)
 	 */
 
 	state = (int *)PCPU_PTR(monitorbuf);
-	KASSERT(*state == STATE_SLEEPING,
-		("cpu_mwait_cx: wrong monitorbuf state"));
-	*state = STATE_MWAIT;
+	KASSERT(atomic_load_int(state) == STATE_SLEEPING,
+	    ("cpu_mwait_cx: wrong monitorbuf state"));
+	atomic_store_int(state, STATE_MWAIT);
 	handle_ibrs_entry();
 	cpu_monitor(state, 0, 0);
-	if (*state == STATE_MWAIT)
+	if (atomic_load_int(state) == STATE_MWAIT)
 		cpu_mwait(MWAIT_INTRBREAK, mwait_hint);
 	handle_ibrs_exit();
 
@@ -176,7 +176,7 @@ acpi_cpu_idle_mwait(uint32_t mwait_hint)
 	 * We should exit on any event that interrupts mwait, because
 	 * that event might be a wanted interrupt.
 	 */
-	*state = STATE_RUNNING;
+	atomic_store_int(state, STATE_RUNNING);
 }
 
 /* Get current clock frequency for the given cpu id. */
@@ -408,7 +408,7 @@ cpu_idle_acpi(sbintime_t sbt)
 	int *state;
 
 	state = (int *)PCPU_PTR(monitorbuf);
-	*state = STATE_SLEEPING;
+	atomic_store_int(state, STATE_SLEEPING);
 
 	/* See comments in cpu_idle_hlt(). */
 	disable_intr();
@@ -418,7 +418,7 @@ cpu_idle_acpi(sbintime_t sbt)
 		cpu_idle_hook(sbt);
 	else
 		acpi_cpu_c1();
-	*state = STATE_RUNNING;
+	atomic_store_int(state, STATE_RUNNING);
 }
 
 static void
@@ -427,7 +427,7 @@ cpu_idle_hlt(sbintime_t sbt)
 	int *state;
 
 	state = (int *)PCPU_PTR(monitorbuf);
-	*state = STATE_SLEEPING;
+	atomic_store_int(state, STATE_SLEEPING);
 
 	/*
 	 * Since we may be in a critical section from cpu_idle(), if
@@ -450,7 +450,7 @@ cpu_idle_hlt(sbintime_t sbt)
 		enable_intr();
 	else
 		acpi_cpu_c1();
-	*state = STATE_RUNNING;
+	atomic_store_int(state, STATE_RUNNING);
 }
 
 static void
@@ -459,21 +459,22 @@ cpu_idle_mwait(sbintime_t sbt)
 	int *state;
 
 	state = (int *)PCPU_PTR(monitorbuf);
-	*state = STATE_MWAIT;
+	atomic_store_int(state, STATE_MWAIT);
 
 	/* See comments in cpu_idle_hlt(). */
 	disable_intr();
 	if (sched_runnable()) {
+		atomic_store_int(state, STATE_RUNNING);
 		enable_intr();
-		*state = STATE_RUNNING;
 		return;
 	}
+
 	cpu_monitor(state, 0, 0);
-	if (*state == STATE_MWAIT)
+	if (atomic_load_int(state) == STATE_MWAIT)
 		__asm __volatile("sti; mwait" : : "a" (MWAIT_C1), "c" (0));
 	else
 		enable_intr();
-	*state = STATE_RUNNING;
+	atomic_store_int(state, STATE_RUNNING);
 }
 
 static void
@@ -483,7 +484,7 @@ cpu_idle_spin(sbintime_t sbt)
 	int i;
 
 	state = (int *)PCPU_PTR(monitorbuf);
-	*state = STATE_RUNNING;
+	atomic_store_int(state, STATE_RUNNING);
 
 	/*
 	 * The sched_runnable() call is racy but as long as there is
@@ -577,20 +578,21 @@ out:
 int
 cpu_idle_wakeup(int cpu)
 {
-	struct pcpu *pcpu;
 	int *state;
 
-	pcpu = pcpu_find(cpu);
-	state = (int *)pcpu->pc_monitorbuf;
-	/*
-	 * This doesn't need to be atomic since missing the race will
-	 * simply result in unnecessary IPIs.
-	 */
-	if (*state == STATE_SLEEPING)
+	state = (int *)pcpu_find(cpu)->pc_monitorbuf;
+	switch (atomic_load_int(state)) {
+	case STATE_SLEEPING:
 		return (0);
-	if (*state == STATE_MWAIT)
-		*state = STATE_RUNNING;
-	return (1);
+	case STATE_MWAIT:
+		atomic_store_int(state, STATE_RUNNING);
+		return (1);
+	case STATE_RUNNING:
+		return (1);
+	default:
+		panic("bad monitor state");
+		return (1);
+	}
 }
 
 /*
@@ -634,13 +636,33 @@ idle_sysctl_available(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_machdep, OID_AUTO, idle_available, CTLTYPE_STRING | CTLFLAG_RD,
     0, 0, idle_sysctl_available, "A", "list of available idle functions");
 
+static bool
+idle_selector(const char *new_idle_name)
+{
+	int i;
+
+	for (i = 0; idle_tbl[i].id_name != NULL; i++) {
+		if (strstr(idle_tbl[i].id_name, "mwait") &&
+		    (cpu_feature2 & CPUID2_MON) == 0)
+			continue;
+		if (strcmp(idle_tbl[i].id_name, "acpi") == 0 &&
+		    cpu_idle_hook == NULL)
+			continue;
+		if (strcmp(idle_tbl[i].id_name, new_idle_name))
+			continue;
+		cpu_idle_fn = idle_tbl[i].id_fn;
+		if (bootverbose)
+			printf("CPU idle set to %s\n", idle_tbl[i].id_name);
+		return (true);
+	}
+	return (false);
+}
+
 static int
 idle_sysctl(SYSCTL_HANDLER_ARGS)
 {
-	char buf[16];
-	int error;
-	char *p;
-	int i;
+	char buf[16], *p;
+	int error, i;
 
 	p = "unknown";
 	for (i = 0; idle_tbl[i].id_name != NULL; i++) {
@@ -653,23 +675,21 @@ idle_sysctl(SYSCTL_HANDLER_ARGS)
 	error = sysctl_handle_string(oidp, buf, sizeof(buf), req);
 	if (error != 0 || req->newptr == NULL)
 		return (error);
-	for (i = 0; idle_tbl[i].id_name != NULL; i++) {
-		if (strstr(idle_tbl[i].id_name, "mwait") &&
-		    (cpu_feature2 & CPUID2_MON) == 0)
-			continue;
-		if (strcmp(idle_tbl[i].id_name, "acpi") == 0 &&
-		    cpu_idle_hook == NULL)
-			continue;
-		if (strcmp(idle_tbl[i].id_name, buf))
-			continue;
-		cpu_idle_fn = idle_tbl[i].id_fn;
-		return (0);
-	}
-	return (EINVAL);
+	return (idle_selector(buf) ? 0 : EINVAL);
 }
 
 SYSCTL_PROC(_machdep, OID_AUTO, idle, CTLTYPE_STRING | CTLFLAG_RW, 0, 0,
     idle_sysctl, "A", "currently selected idle function");
+
+static void
+idle_tun(void *unused __unused)
+{
+	char tunvar[16];
+
+	if (TUNABLE_STR_FETCH("machdep.idle", tunvar, sizeof(tunvar)))
+		idle_selector(tunvar);
+}
+SYSINIT(idle_tun, SI_SUB_CPU, SI_ORDER_MIDDLE, idle_tun, NULL);
 
 static int panic_on_nmi = 1;
 SYSCTL_INT(_machdep, OID_AUTO, panic_on_nmi, CTLFLAG_RWTUN,
