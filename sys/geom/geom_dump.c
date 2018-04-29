@@ -232,10 +232,10 @@ g_conf_provider(struct sbuf *sb, struct g_provider *pp)
 
 
 static void
-g_conf_geom(struct sbuf *sb, struct g_geom *gp, struct g_provider *pp, struct g_consumer *cp)
+g_conf_geom(struct sbuf *sb, struct g_geom *gp)
 {
-	struct g_consumer *cp2;
-	struct g_provider *pp2;
+	struct g_consumer *cp;
+	struct g_provider *pp;
 	struct g_geom_alias *gap;
 
 	sbuf_printf(sb, "    <geom id=\"%p\">\n", gp);
@@ -251,17 +251,10 @@ g_conf_geom(struct sbuf *sb, struct g_geom *gp, struct g_provider *pp, struct g_
 		gp->dumpconf(sb, "\t", gp, NULL, NULL);
 		sbuf_printf(sb, "      </config>\n");
 	}
-	LIST_FOREACH(cp2, &gp->consumer, consumer) {
-		if (cp != NULL && cp != cp2)
-			continue;
-		g_conf_consumer(sb, cp2);
-	}
-
-	LIST_FOREACH(pp2, &gp->provider, provider) {
-		if (pp != NULL && pp != pp2)
-			continue;
-		g_conf_provider(sb, pp2);
-	}
+	LIST_FOREACH(cp, &gp->consumer, consumer)
+		g_conf_consumer(sb, cp);
+	LIST_FOREACH(pp, &gp->provider, provider)
+		g_conf_provider(sb, pp);
 	LIST_FOREACH(gap, &gp->aliases, ga_next) {
 		sbuf_printf(sb, "      <alias>\n");
 		g_conf_printf_escaped(sb, "%s", gap->ga_alias);
@@ -271,45 +264,34 @@ g_conf_geom(struct sbuf *sb, struct g_geom *gp, struct g_provider *pp, struct g_
 }
 
 static void
-g_conf_class(struct sbuf *sb, struct g_class *mp, struct g_geom *gp, struct g_provider *pp, struct g_consumer *cp)
+g_conf_class(struct sbuf *sb, struct g_class *mp)
 {
-	struct g_geom *gp2;
+	struct g_geom *gp;
 
 	sbuf_printf(sb, "  <class id=\"%p\">\n", mp);
 	sbuf_printf(sb, "    <name>");
 	g_conf_printf_escaped(sb, "%s", mp->name);
 	sbuf_printf(sb, "</name>\n");
-	LIST_FOREACH(gp2, &mp->geom, geom) {
-		if (gp != NULL && gp != gp2)
-			continue;
-		g_conf_geom(sb, gp2, pp, cp);
-	}
+	LIST_FOREACH(gp, &mp->geom, geom)
+		g_conf_geom(sb, gp);
 	sbuf_printf(sb, "  </class>\n");
-}
-
-void
-g_conf_specific(struct sbuf *sb, struct g_class *mp, struct g_geom *gp, struct g_provider *pp, struct g_consumer *cp)
-{
-	struct g_class *mp2;
-
-	g_topology_assert();
-	sbuf_printf(sb, "<mesh>\n");
-	LIST_FOREACH(mp2, &g_classes, class) {
-		if (mp != NULL && mp != mp2)
-			continue;
-		g_conf_class(sb, mp2, gp, pp, cp);
-	}
-	sbuf_printf(sb, "</mesh>\n");
-	sbuf_finish(sb);
 }
 
 void
 g_confxml(void *p, int flag)
 {
+	struct g_class *mp;
+	struct sbuf *sb;
 
 	KASSERT(flag != EV_CANCEL, ("g_confxml was cancelled"));
 	g_topology_assert();
-	g_conf_specific(p, NULL, NULL, NULL, NULL);
+
+	sb = p;
+	sbuf_printf(sb, "<mesh>\n");
+	LIST_FOREACH(mp, &g_classes, class)
+		g_conf_class(sb, mp);
+	sbuf_printf(sb, "</mesh>\n");
+	sbuf_finish(sb);
 }
 
 void
