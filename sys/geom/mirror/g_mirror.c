@@ -522,6 +522,8 @@ static void
 g_mirror_free_device(struct g_mirror_softc *sc)
 {
 
+	g_topology_assert();
+
 	mtx_destroy(&sc->sc_queue_mtx);
 	mtx_destroy(&sc->sc_events_mtx);
 	mtx_destroy(&sc->sc_done_mtx);
@@ -3328,24 +3330,20 @@ g_mirror_dumpconf(struct sbuf *sb, const char *indent, struct g_geom *gp,
 		disk = cp->private;
 		if (disk == NULL)
 			return;
-		g_topology_unlock();
-		sx_xlock(&sc->sc_lock);
 		sbuf_printf(sb, "%s<ID>%u</ID>\n", indent, (u_int)disk->d_id);
 		if (disk->d_state == G_MIRROR_DISK_STATE_SYNCHRONIZING) {
 			sbuf_printf(sb, "%s<Synchronized>", indent);
 			if (disk->d_sync.ds_offset == 0)
 				sbuf_printf(sb, "0%%");
-			else {
+			else
 				sbuf_printf(sb, "%u%%",
 				    (u_int)((disk->d_sync.ds_offset * 100) /
-				    sc->sc_provider->mediasize));
-			}
+				    sc->sc_mediasize));
 			sbuf_printf(sb, "</Synchronized>\n");
-			if (disk->d_sync.ds_offset > 0) {
+			if (disk->d_sync.ds_offset > 0)
 				sbuf_printf(sb, "%s<BytesSynced>%jd"
 				    "</BytesSynced>\n", indent,
 				    (intmax_t)disk->d_sync.ds_offset);
-			}
 		}
 		sbuf_printf(sb, "%s<SyncID>%u</SyncID>\n", indent,
 		    disk->d_sync.ds_syncid);
@@ -3380,11 +3378,7 @@ g_mirror_dumpconf(struct sbuf *sb, const char *indent, struct g_geom *gp,
 		    disk->d_priority);
 		sbuf_printf(sb, "%s<State>%s</State>\n", indent,
 		    g_mirror_disk_state2str(disk->d_state));
-		sx_xunlock(&sc->sc_lock);
-		g_topology_lock();
 	} else {
-		g_topology_unlock();
-		sx_xlock(&sc->sc_lock);
 		sbuf_printf(sb, "%s<Type>", indent);
 		switch (sc->sc_type) {
 		case G_MIRROR_TYPE_AUTOMATIC:
@@ -3436,8 +3430,6 @@ g_mirror_dumpconf(struct sbuf *sb, const char *indent, struct g_geom *gp,
 		else
 			sbuf_printf(sb, "%s", "DEGRADED");
 		sbuf_printf(sb, "</State>\n");
-		sx_xunlock(&sc->sc_lock);
-		g_topology_lock();
 	}
 }
 
