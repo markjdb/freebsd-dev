@@ -257,9 +257,10 @@ typedef enum dtrace_probespec {
 #define	DIF_VAR_JID		0x0122	/* process jail id */
 #define	DIF_VAR_JAILNAME	0x0123	/* process jail name */
 
-#ifndef illumos
-#define	DIF_VAR_CPU		0x0200
-#endif
+/* FreeBSD-specific */
+#define	DIF_VAR_CPU		0x0200	/* index of current CPU */
+#define	DIF_VAR_EXT_ARG_START	0x0201	/* first extended argument variable */
+#define	DIF_VAR_EXT_ARG_END	0x0236	/* last extended argument variable */
 
 #define	DIF_SUBR_RAND			0
 #define	DIF_SUBR_MUTEX_OWNED		1

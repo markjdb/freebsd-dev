@@ -23,6 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2013, Joyent, Inc. All rights reserved.
  * Copyright (c) 2012, 2016 by Delphix. All rights reserved.
+ * Copyright (c) 2018 Mark Johnston <markj@FreeBSD.org>
  */
 
 #include <sys/types.h>
@@ -1330,6 +1331,17 @@ alloc:
 
 	dtp->dt_globals = dt_idhash_create("global", _dtrace_globals,
 	    DIF_VAR_OTHER_UBASE, DIF_VAR_OTHER_MAX);
+
+	/* Dynamically define the extended raw argument variables. */
+	for (i = DIF_VAR_EXT_ARG_START; i <= DIF_VAR_EXT_ARG_END; i++) {
+		char argvar[16];
+
+		snprintf(argvar, sizeof(argvar), "arg%d", i -
+		    DIF_VAR_EXT_ARG_START + (DIF_VAR_ARG9 - DIF_VAR_ARG0) + 1);
+		dt_idhash_insert(dtp->dt_globals, argvar, DT_IDENT_SCALAR, 0, i,
+		    _dtrace_defattr, DT_VERS_1_13, &dt_idops_type, "int64_t",
+		    dtp->dt_gen);
+	}
 
 	dtp->dt_tls = dt_idhash_create("thread local", NULL,
 	    DIF_VAR_OTHER_UBASE, DIF_VAR_OTHER_MAX);

@@ -25,6 +25,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2016, Joyent, Inc. All rights reserved.
  * Copyright (c) 2012, 2014 by Delphix. All rights reserved.
+ * Copyright (c) 2018 Mark Johnston <markj@FreeBSD.org>
  */
 
 /*
@@ -3311,6 +3312,10 @@ dtrace_dif_variable(dtrace_mstate_t *mstate, dtrace_state_t *state, uint64_t v,
 	 */
 	if (v >= DIF_VAR_ARG0 && v <= DIF_VAR_ARG9) {
 		ndx = v - DIF_VAR_ARG0;
+		v = DIF_VAR_ARGS;
+	} else if (v >= DIF_VAR_EXT_ARG_START && v <= DIF_VAR_EXT_ARG_END) {
+		ndx = v - DIF_VAR_EXT_ARG_START +
+		    (DIF_VAR_ARG9 - DIF_VAR_ARG0) + 1;
 		v = DIF_VAR_ARGS;
 	}
 
@@ -10291,7 +10296,9 @@ dtrace_difo_validate_helper(dtrace_difo_t *dp)
 			if (v >= DIF_VAR_OTHER_UBASE)
 				break;
 
-			if (v >= DIF_VAR_ARG0 && v <= DIF_VAR_ARG9)
+			if ((v >= DIF_VAR_ARG0 && v <= DIF_VAR_ARG9) ||
+			    (v >= DIF_VAR_EXT_ARG_START &&
+			     v <= DIF_VAR_EXT_ARG_END))
 				break;
 
 			if (v == DIF_VAR_CURTHREAD || v == DIF_VAR_PID ||
