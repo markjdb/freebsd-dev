@@ -1,6 +1,6 @@
 /*-
  * Copyright (c) 2005-2014 Sandvine Incorporated. All rights reserved.
- * Copyright (c) 2000 Darrell Anderson <anderson@cs.duke.edu>
+ * Copyright (c) 2000 Darrell Anderson
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -805,6 +805,7 @@ netdump_handle_arp(struct mbuf **mb)
 static void
 netdump_pkt_in(struct ifnet *ifp, struct mbuf *m)
 {
+	struct ifreq ifr;
 	struct ether_header *eh;
 	u_short etype;
 
@@ -815,7 +816,7 @@ netdump_pkt_in(struct ifnet *ifp, struct mbuf *m)
 	}
 	if (m->m_len < ETHER_HDR_LEN) {
 		NETDDEBUG_IF(ifp,
-		"discard frame without leading eth header (len %u pktlen %u)\n",
+	    "discard frame without leading eth header (len %u pktlen %u)\n",
 		    m->m_len, m->m_pkthdr.len);
 		goto done;
 	}
@@ -829,8 +830,16 @@ netdump_pkt_in(struct ifnet *ifp, struct mbuf *m)
 		NETDDEBUG_IF(ifp, "ignoring vlan packets\n");
 		goto done;
 	}
-
-	/* XXX: Probably must also check if we're the recipient MAC address. */
+	if (if_gethwaddr(ifp, &ifr) != 0) {
+		NETDDEBUG_IF(ifp, "failed to get hw addr for interface\n");
+		goto done;
+	}
+	if (memcmp(ifr.ifr_addr.sa_data, eh->ether_dhost,
+	    ETHER_ADDR_LEN) != 0) {
+		NETDDEBUG_IF(ifp,
+		    "discard frame with incorrect destination addr\n");
+		goto done;
+	}
 
 	/* Done ethernet processing. Strip off the ethernet header. */
 	m_adj(m, ETHER_HDR_LEN);
@@ -930,6 +939,12 @@ netdump_start(struct dumperinfo *di)
 	/* Check if the dumping is allowed to continue. */
 	if (nd_enabled == 0)
 		return (EINVAL);
+
+	if (panicstr == NULL) {
+		printf(
+		    "netdump_start: netdump may only be used after a panic\n");
+		return (EINVAL);
+	}
 
 	MPASS(nd_ifp != NULL);
 
