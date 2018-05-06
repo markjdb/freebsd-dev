@@ -1394,6 +1394,8 @@ dev/cxgb/sys/uipc_mvec.c	optional cxgb pci \
 	compile-with "${NORMAL_C} -I$S/dev/cxgb"
 dev/cxgb/cxgb_t3fw.c		optional cxgb cxgb_t3fw \
 	compile-with "${NORMAL_C} -I$S/dev/cxgb"
+dev/cxgbe/t4_filter.c		optional cxgbe pci \
+	compile-with "${NORMAL_C} -I$S/dev/cxgbe"
 dev/cxgbe/t4_if.m		optional cxgbe pci
 dev/cxgbe/t4_iov.c		optional cxgbe pci \
 	compile-with "${NORMAL_C} -I$S/dev/cxgbe"
@@ -1459,7 +1461,7 @@ t4fw.fwo		optional cxgbe					\
 	no-implicit-rule						\
 	clean		"t4fw.fwo"
 t4fw.fw			optional cxgbe					\
-	dependency	"$S/dev/cxgbe/firmware/t4fw-1.16.63.0.bin.uu"	\
+	dependency	"$S/dev/cxgbe/firmware/t4fw-1.19.1.0.bin.uu"	\
 	compile-with	"${NORMAL_FW}"					\
 	no-obj no-implicit-rule						\
 	clean		"t4fw.fw"
@@ -1493,7 +1495,7 @@ t5fw.fwo		optional cxgbe					\
 	no-implicit-rule						\
 	clean		"t5fw.fwo"
 t5fw.fw			optional cxgbe					\
-	dependency	"$S/dev/cxgbe/firmware/t5fw-1.16.63.0.bin.uu"	\
+	dependency	"$S/dev/cxgbe/firmware/t5fw-1.19.1.0.bin.uu"	\
 	compile-with	"${NORMAL_FW}"					\
 	no-obj no-implicit-rule						\
 	clean		"t5fw.fw"
@@ -1527,7 +1529,7 @@ t6fw.fwo		optional cxgbe					\
 	no-implicit-rule						\
 	clean		"t6fw.fwo"
 t6fw.fw			optional cxgbe					\
-	dependency	"$S/dev/cxgbe/firmware/t6fw-1.16.63.0.bin.uu"	\
+	dependency	"$S/dev/cxgbe/firmware/t6fw-1.19.1.0.bin.uu"	\
 	compile-with	"${NORMAL_FW}"					\
 	no-obj no-implicit-rule						\
 	clean		"t6fw.fw"
@@ -2262,9 +2264,6 @@ iwn6050.fw			optional iwn6050fw | iwnfw		\
 	compile-with	"${NORMAL_FW}"					\
 	no-obj no-implicit-rule						\
 	clean		"iwn6050.fw"
-dev/ixgb/if_ixgb.c		optional ixgb
-dev/ixgb/ixgb_ee.c		optional ixgb
-dev/ixgb/ixgb_hw.c		optional ixgb
 dev/ixgbe/if_ix.c		optional ix inet \
 	compile-with "${NORMAL_C} -I$S/dev/ixgbe -DSMP"
 dev/ixgbe/if_ixv.c		optional ixv inet \
@@ -4373,6 +4372,7 @@ netinet/libalias/alias_mod.c	optional libalias | netgraph_nat
 netinet/libalias/alias_proxy.c	optional libalias inet | netgraph_nat inet
 netinet/libalias/alias_util.c	optional libalias inet | netgraph_nat inet
 netinet/libalias/alias_sctp.c	optional libalias inet | netgraph_nat inet
+netinet/netdump/netdump_client.c optional inet netdump
 netinet6/dest6.c		optional inet6
 netinet6/frag6.c		optional inet6
 netinet6/icmp6.c		optional inet6

@@ -244,7 +244,6 @@ MAN=	aac.4 \
 	iwmfw.4 \
 	iwn.4 \
 	iwnfw.4 \
-	ixgb.4 \
 	ixgbe.4 \
 	ixl.4 \
 	ixlv.4 \
@@ -320,6 +319,7 @@ MAN=	aac.4 \
 	ncv.4 \
 	${_ndis.4} \
 	net80211.4 \
+	netdump.4 \
 	netfpga10g_nf10bmac.4 \
 	netgraph.4 \
 	netintro.4 \
@@ -675,7 +675,6 @@ MLINKS+=ipw.4 if_ipw.4
 MLINKS+=iwi.4 if_iwi.4
 MLINKS+=iwm.4 if_iwm.4
 MLINKS+=iwn.4 if_iwn.4
-MLINKS+=ixgb.4 if_ixgb.4
 MLINKS+=ixgbe.4 ix.4
 MLINKS+=ixgbe.4 if_ix.4
 MLINKS+=ixgbe.4 if_ixgbe.4
