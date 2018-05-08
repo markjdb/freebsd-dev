@@ -1554,6 +1554,16 @@ process_iql:
 	return (0);
 }
 
+#ifdef NETDUMP
+void
+cxgbe_netdump_poll_rx(struct sge_rxq *rxq)
+{
+
+	rxq->iq.state = IQS_BUSY;
+	service_iq(&rxq->iq, 16);
+}
+#endif
+
 static inline int
 cl_has_metadata(struct sge_fl *fl, struct cluster_layout *cll)
 {

@@ -1217,6 +1217,9 @@ void t4_register_an_handler(an_handler_t);
 void t4_register_fw_msg_handler(int, fw_msg_handler_t);
 void t4_register_cpl_handler(int, cpl_handler_t);
 void t4_register_shared_cpl_handler(int, cpl_handler_t, int);
+#ifdef NETDUMP
+void cxgbe_netdump_poll_rx(struct sge_rxq *);
+#endif
 
 /* t4_tracer.c */
 struct t4_tracer;

@@ -62,6 +62,7 @@ __FBSDID("$FreeBSD$");
 #ifdef RSS
 #include <net/rss_config.h>
 #endif
+#include <netinet/netdump/netdump.h>
 #if defined(__i386__) || defined(__amd64__)
 #include <machine/md_var.h>
 #include <machine/cputypes.h>
@@ -220,6 +221,8 @@ static int cxgbe_transmit(struct ifnet *, struct mbuf *);
 static void cxgbe_qflush(struct ifnet *);
 static int cxgbe_media_change(struct ifnet *);
 static void cxgbe_media_status(struct ifnet *, struct ifmediareq *);
+
+NETDUMP_DEFINE(cxgbe);
 
 MALLOC_DEFINE(M_CXGBE, "cxgbe", "Chelsio T4/T5 Ethernet driver and services");
 
@@ -1500,6 +1503,8 @@ cxgbe_vi_attach(device_t dev, struct vi_info *vi)
 	sbuf_delete(sb);
 
 	vi_sysctls(vi);
+
+	NETDUMP_SET(ifp, cxgbe);
 
 	return (0);
 }
@@ -9838,6 +9843,95 @@ DB_FUNC(tcb, db_show_t4tcb, db_t4_table, CS_OWN, NULL)
 	t4_dump_tcb(device_get_softc(dev), tid);
 }
 #endif
+
+#ifdef NETDUMP
+static void
+cxgbe_netdump_init(struct ifnet *ifp, int *nrxr, int *ncl, int *clsize)
+{
+	struct adapter *sc;
+	struct vi_info *vi;
+	struct sge_rxq *rxq;
+
+	vi = if_getsoftc(ifp);
+	sc = vi->pi->adapter;
+
+	begin_synchronized_op(sc, vi, SLEEP_OK, "ndinit");
+	*nrxr = vi->nrxq;
+	*ncl = vi->qsize_rxq;
+	rxq = &vi->pi->adapter->sge.rxq[vi->first_rxq];
+	*clsize = vi->pi->adapter->sge.sw_zone_info[rxq->fl.cll_def.zidx].size;
+	end_synchronized_op(sc, 0);
+}
+
+static void
+cxgbe_netdump_event(struct ifnet *ifp, enum netdump_ev event)
+{
+	struct adapter *sc;
+	struct vi_info *vi;
+	struct sw_zone_info *swz;
+	int i;
+
+	vi = if_getsoftc(ifp);
+	sc = vi->pi->adapter;
+
+	if (event == NETDUMP_START) {
+		for (i = 0; i < SW_ZONE_SIZES; i++) {
+			swz = &sc->sge.sw_zone_info[i];
+			swz->zone = m_getzone(swz->size);
+		}
+	}
+}
+
+static int
+cxgbe_netdump_transmit(struct ifnet *ifp, struct mbuf *m)
+{
+	struct adapter *sc;
+	struct vi_info *vi;
+	struct sge_txq *txq;
+	void *items[1];
+	int rc;
+
+	vi = if_getsoftc(ifp);
+	sc = vi->pi->adapter;
+
+	if ((if_getdrvflags(ifp) & (IFF_DRV_RUNNING | IFF_DRV_OACTIVE)) !=
+	    IFF_DRV_RUNNING || vi->pi->link_cfg.link_ok == 0)
+		return (ENOENT);
+
+	rc = parse_pkt(sc, &m);
+	if (rc != 0)
+		return (rc);
+
+	items[0] = m;
+	txq = &sc->sge.txq[vi->first_txq];
+	rc = mp_ring_enqueue(txq->r, items, 1, 0);
+	if (rc == 0)
+		while (!mp_ring_is_idle(txq->r))
+			mp_ring_check_drainage(txq->r, 0);
+	return (rc);
+}
+
+static int
+cxgbe_netdump_poll(struct ifnet *ifp, int count)
+{
+	struct adapter *sc;
+	struct vi_info *vi;
+	struct sge_rxq *rxq;
+	int i;
+
+	vi = if_getsoftc(ifp);
+	sc = vi->pi->adapter;
+
+	if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) != 0 ||
+	    vi->pi->link_cfg.link_ok == 0)
+		return (ENOENT);
+
+	for_each_rxq(vi, i, rxq) {
+		cxgbe_netdump_poll_rx(rxq);
+	}
+	return (0);
+}
+#endif /* NETDUMP */
 
 /*
  * Borrowed from cesa_prep_aes_key().
