@@ -1846,28 +1846,24 @@ vm_pageout_worker(void *arg)
 {
 	struct vm_domain *vmd;
 	int domain, pass, shortage;
-	bool target_met;
 
 	domain = (uintptr_t)arg;
 	vmd = VM_DOMAIN(domain);
 	pass = 0;
 	shortage = 0;
-	target_met = true;
 
 	/*
 	 * XXXKIB It could be useful to bind pageout daemon threads to
-	 * the cores belonging to the domain, from which vm_page_array
+	 * the cores belonging to the domain from which vm_page_array
 	 * is allocated.
 	 */
 
 	KASSERT(vmd->vmd_segs != 0, ("domain without segments"));
 	vmd->vmd_last_active_scan = ticks;
 
-	/*
-	 * The pageout daemon worker is never done, so loop forever.
-	 */
-	while (TRUE) {
+	for (;;) {
 		vm_domain_pageout_lock(vmd);
+
 		/*
 		 * We need to clear wanted before we check the limits.  This
 		 * prevents races with wakers who will check wanted after they
@@ -1885,7 +1881,7 @@ vm_pageout_worker(void *arg)
 			 * scan, then sleep a bit and try again.
 			 */
 			vm_domain_pageout_unlock(vmd);
-			if (pass > 1)
+			if (pass >= 1)
 				pause("pwait", hz / VM_INACT_SCAN_RATE);
 		} else {
 			/*
@@ -1897,6 +1893,7 @@ vm_pageout_worker(void *arg)
 			    "psleep", hz / VM_INACT_SCAN_RATE) == 0)
 				VM_CNT_INC(v_pdwakeups);
 		}
+
 		/* Prevent spurious wakeups by ensuring that wanted is set. */
 		atomic_store_int(&vmd->vmd_pageout_wanted, 1);
 
@@ -1905,16 +1902,18 @@ vm_pageout_worker(void *arg)
 		 * this interval.
 		 */
 		shortage = pidctrl_daemon(&vmd->vmd_pid, vmd->vmd_free_count);
-		if (shortage && pass == 0)
+		if (shortage > 0 && pass == 0)
 			pass = 1;
 
-		target_met = vm_pageout_scan(vmd, pass, shortage);
 		/*
-		 * If the target was not met we must increase the pass to
-		 * more aggressively reclaim.
+		 * Scan the queues.  "pass" denotes the number of consecutive
+		 * scans of the inactive queue that have failed to meet the
+		 * shortage.
 		 */
-		if (!target_met)
+		if (!vm_pageout_scan(vmd, pass, shortage))
 			pass++;
+		else
+			pass = 0;
 	}
 }
 
