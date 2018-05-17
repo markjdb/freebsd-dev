@@ -8,6 +8,7 @@ makeoptions	WITH_CTF=1		# Run ctfconvert(1) for DTrace support
 
 makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				    netgraph/iface netgraph/socket             \
+				  cpuctl                                       \
 				  opensolaris dtrace ksyms                     \
 				  drm2/drm2 drm2/i915kms i2c/iic i2c/iicbb     \
 				    i2c/iicbus i2c/controllers/ichsmb i2c/smbus\
@@ -27,6 +28,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 
 options 	SCHED_ULE		# ULE scheduler
 options 	PREEMPTION		# Enable kernel thread preemption
+options 	VIMAGE			# Subsystem virtualization, e.g. VNET
 options 	INET			# InterNETworking
 options 	INET6			# IPv6 communications protocols
 options 	IPSEC			# IP (v6/v6) security
