@@ -76,9 +76,11 @@ enum {
 	MODEM_MAX_INDEX,
 };
 
+#define	MODEM_DEFAULT_VENDOR_ID		USB_TEMPLATE_VENDOR
+#define	MODEM_DEFAULT_PRODUCT_ID	0x000E
 #define	MODEM_DEFAULT_INTERFACE		"Modem interface"
 #define	MODEM_DEFAULT_MANUFACTURER	"FreeBSD foundation"
-#define MODEM_DEFAULT_PRODUCT		"Modem Test Device"
+#define	MODEM_DEFAULT_PRODUCT		"Modem Test Device"
 #define	MODEM_DEFAULT_SERIAL_NUMBER	"March 2008"
 
 static struct usb_string_descriptor	modem_interface;
@@ -170,7 +172,7 @@ static const struct usb_temp_interface_desc modem_iface_0 = {
 	.ppEndpoints = modem_iface_0_ep,
 	.bInterfaceClass = UICLASS_CDC,
 	.bInterfaceSubClass = UISUBCLASS_ABSTRACT_CONTROL_MODEL,
-	.bInterfaceProtocol = UIPROTO_CDC_AT,
+	.bInterfaceProtocol = UIPROTO_CDC_NONE,
 	.iInterface = MODEM_INTERFACE_INDEX,
 };
 
@@ -207,8 +209,8 @@ struct usb_temp_device_desc usb_template_modem = {
 	.getStringDesc = &modem_get_string_desc,
 	.getVendorDesc = &modem_get_vendor_desc,
 	.ppConfigDesc = modem_configs,
-	.idVendor = USB_TEMPLATE_VENDOR,
-	.idProduct = 0x000E,
+	.idVendor = MODEM_DEFAULT_VENDOR_ID,
+	.idProduct = MODEM_DEFAULT_PRODUCT_ID,
 	.bcdDevice = 0x0100,
 	.bDeviceClass = UDCLASS_COMM,
 	.bDeviceSubClass = 0,
