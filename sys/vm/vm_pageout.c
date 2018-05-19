@@ -1135,7 +1135,7 @@ vm_pageout_scan_active_target(struct vm_domain *vmd)
  * Scan the active queue.  If there is no shortage of inactive pages, scan a
  * small portion of the queue in order to maintain quasi-LRU.
  */
-static void
+static bool
 vm_pageout_scan_active(struct vm_domain *vmd, int page_shortage)
 {
 	struct scan_state ss;
@@ -1291,6 +1291,8 @@ act_scan:
 	TAILQ_INSERT_AFTER(&pq->pq_pl, marker, &vmd->vmd_clock[0], plinks.q);
 	vm_pageout_end_scan(&ss);
 	vm_pagequeue_unlock(pq);
+
+	return (page_shortage <= 0);
 }
 
 static int
@@ -1869,12 +1871,12 @@ vm_pageout_worker(void *arg)
 {
 	struct vm_domain *vmd;
 	int addl_shortage, domain, shortage;
-	bool target_met;
+	bool actq_target_met, inactq_target_met;
 
 	domain = (uintptr_t)arg;
 	vmd = VM_DOMAIN(domain);
 	shortage = 0;
-	target_met = true;
+	actq_target_met = inactq_target_met = true;
 
 	/*
 	 * XXXKIB It could be useful to bind pageout daemon threads to
@@ -1906,9 +1908,10 @@ vm_pageout_worker(void *arg)
 			 * Yes.  If the scan failed to produce enough free
 			 * pages, sleep uninterruptibly for some time in the
 			 * hope that the laundry thread will clean some pages.
+			 * XXX
 			 */
 			vm_domain_pageout_unlock(vmd);
-			if (!target_met)
+			if (actq_target_met && !inactq_target_met)
 				pause("pwait", hz / VM_INACT_SCAN_RATE);
 		} else {
 			/*
@@ -1931,10 +1934,12 @@ vm_pageout_worker(void *arg)
 		shortage = pidctrl_daemon(&vmd->vmd_pid, vmd->vmd_free_count);
 		if (shortage > 0) {
 			vm_pageout_lowmem(vmd);
-			target_met = vm_pageout_scan_inactive(vmd, shortage,
-			    &addl_shortage);
-		} else
+			inactq_target_met = vm_pageout_scan_inactive(vmd,
+			    shortage, &addl_shortage);
+		} else {
 			addl_shortage = 0;
+			inactq_target_met = true;
+		}
 
 		/*
 		 * Scan the active queue.  A positive value for shortage
@@ -1942,7 +1947,7 @@ vm_pageout_worker(void *arg)
 		 * a shortfall.
 		 */
 		shortage = vm_pageout_scan_active_target(vmd) + addl_shortage;
-		vm_pageout_scan_active(vmd, shortage);
+		actq_target_met = vm_pageout_scan_active(vmd, shortage);
 	}
 }
 
