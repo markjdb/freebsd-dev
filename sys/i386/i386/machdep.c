@@ -133,6 +133,7 @@ __FBSDID("$FreeBSD$");
 #include <machine/specialreg.h>
 #include <machine/sysarch.h>
 #include <machine/trap.h>
+#include <x86/ucode.h>
 #include <machine/vm86.h>
 #include <x86/init.h>
 #ifdef PERFMON
@@ -2339,6 +2340,8 @@ init386(int first)
 	} else {
 		init_static_kenv(NULL, 0);
 	}
+
+	ucode_load_bsp();
 
 	identify_hypervisor();
 
