@@ -1143,7 +1143,7 @@ vm_pageout_scan_active(struct vm_domain *vmd, int page_shortage)
 	vm_page_t m, marker;
 	struct vm_pagequeue *pq;
 	long min_scan;
-	int act_delta, max_scan, scan_tick;
+	int act_delta, max_scan, scan_tick, starting_page_shortage;
 
 	marker = &vmd->vmd_markers[PQ_ACTIVE];
 	pq = &vmd->vmd_pagequeues[PQ_ACTIVE];
@@ -1178,9 +1178,11 @@ vm_pageout_scan_active(struct vm_domain *vmd, int page_shortage)
 	 */
 	max_scan = page_shortage > 0 ? pq->pq_cnt : min_scan;
 	mtx = NULL;
+	starting_page_shortage = page_shortage;
 act_scan:
 	vm_pageout_init_scan(&ss, pq, marker, &vmd->vmd_clock[0], max_scan);
-	while ((m = vm_pageout_next(&ss, false)) != NULL) {
+	while ((starting_page_shortage <= 0 || page_shortage > 0) &&
+	    (m = vm_pageout_next(&ss, false)) != NULL) {
 		if (__predict_false(m == &vmd->vmd_clock[1])) {
 			vm_pagequeue_lock(pq);
 			TAILQ_REMOVE(&pq->pq_pl, &vmd->vmd_clock[0], plinks.q);
