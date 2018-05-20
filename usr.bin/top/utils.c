@@ -16,7 +16,10 @@
  */
 
 #include "top.h"
-#include "os.h"
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
 int atoiwi(str)
 
@@ -337,32 +340,17 @@ long *diffs;
 
 /* externs referenced by errmsg */
 
-#ifndef HAVE_STRERROR
-#ifndef SYS_ERRLIST_DECLARED
-#define SYS_ERRLIST_DECLARED
-extern char *sys_errlist[];
-#endif
-
-extern int sys_nerr;
-#endif
 
 char *errmsg(errnum)
 
 int errnum;
 
 {
-#ifdef HAVE_STRERROR
     char *msg = strerror(errnum);
     if (msg != NULL)
     {
 	return msg;
     }
-#else
-    if (errnum > 0 && errnum < sys_nerr)
-    {
-	return((char *)sys_errlist[errnum]);
-    }
-#endif
     return("No error");
 }
 

@@ -18,14 +18,15 @@
  *  "top" (i.e.:  changing the number of processes to display).
  */
 
-#include "os.h"
-
 #include <sys/time.h>
 #include <sys/resource.h>
 
 #include <ctype.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "commands.h"
@@ -56,7 +57,7 @@ void
 show_help()
 
 {
-    printf("Top version %s, %s\n", version_string(), copyright);
+    printf("Top version FreeBSD, %s\n", copyright);
     fputs("\n\n\
 A top users display for Unix\n\
 \n\
@@ -86,7 +87,6 @@ J       - display processes for only one jail (+ selects all jails)\n\
 k       - kill processes; send a signal to a list of processes\n\
 m       - toggle the display between 'cpu' and 'io' modes\n\
 n or #  - change number of processes to display\n", stdout);
-#ifdef ORDER
 	if (displaymode == DISP_CPU)
 		fputs("\
 o       - specify sort order (pri, size, res, cpu, time, threads, jid, pid)\n",
@@ -95,7 +95,6 @@ o       - specify sort order (pri, size, res, cpu, time, threads, jid, pid)\n",
 		fputs("\
 o       - specify sort order (vcsw, ivcsw, read, write, fault, total, jid, pid)\n",
 	    stdout);
-#endif
 	fputs("\
 P       - toggle the displaying of per-CPU statistics\n\
 r       - renice a process\n\
