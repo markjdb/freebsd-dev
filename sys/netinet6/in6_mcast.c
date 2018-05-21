@@ -539,15 +539,17 @@ in6m_release(struct in6_multi *inm)
 	KASSERT(ifma->ifma_protospec == NULL,
 	    ("%s: ifma_protospec != NULL", __func__));
 
-	if (ifp)
+	if (ifp != NULL) {
 		CURVNET_SET(ifp->if_vnet);
-	in6m_purge(inm);
-	free(inm, M_IP6MADDR);
-
-	if_delmulti_ifma_flags(ifma, 1);
-	if (ifp) {
+		in6m_purge(inm);
+		free(inm, M_IP6MADDR);
+		if_delmulti_ifma_flags(ifma, 1);
 		CURVNET_RESTORE();
 		if_rele(ifp);
+	} else {
+		in6m_purge(inm);
+		free(inm, M_IP6MADDR);
+		if_delmulti_ifma_flags(ifma, 1);
 	}
 }
 
@@ -1626,6 +1628,8 @@ inp_gcmoptions(epoch_context_t ctx)
 {
 	struct ip6_moptions *imo;
 	struct in6_mfilter	*imf;
+	struct in6_multi *inm;
+	struct ifnet *ifp;
 	size_t			 idx, nmships;
 
 	imo =  __containerof(ctx, struct ip6_moptions, imo6_epoch_ctx);
@@ -1635,8 +1639,15 @@ inp_gcmoptions(epoch_context_t ctx)
 		imf = imo->im6o_mfilters ? &imo->im6o_mfilters[idx] : NULL;
 		if (imf)
 			im6f_leave(imf);
-		/* XXX this will thrash the lock(s) */
-		(void)in6_leavegroup(imo->im6o_membership[idx], imf);
+		inm = imo->im6o_membership[idx];
+		ifp = inm->in6m_ifp;
+		if (ifp != NULL) {
+			CURVNET_SET(ifp->if_vnet);
+			(void)in6_leavegroup(inm, imf);
+			CURVNET_RESTORE();
+		} else {
+			(void)in6_leavegroup(inm, imf);
+		}
 		if (imf)
 			im6f_purge(imf);
 	}
