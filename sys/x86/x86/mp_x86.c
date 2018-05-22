@@ -66,6 +66,7 @@ __FBSDID("$FreeBSD$");
 
 #include <x86/apicreg.h>
 #include <machine/clock.h>
+#include <machine/cpu.h>
 #include <machine/cputypes.h>
 #include <x86/mca.h>
 #include <machine/md_var.h>
@@ -73,7 +74,7 @@ __FBSDID("$FreeBSD$");
 #include <machine/psl.h>
 #include <machine/smp.h>
 #include <machine/specialreg.h>
-#include <machine/cpu.h>
+#include <x86/ucode.h>
 
 static MALLOC_DEFINE(M_CPUS, "cpus", "CPU items");
 
@@ -1052,6 +1053,9 @@ init_secondary_tail(void)
 #endif
 
 	mtx_unlock_spin(&ap_boot_mtx);
+
+	/* Update microcode. */
+	ucode_load_ap();
 
 	/* Wait until all the AP's are up. */
 	while (atomic_load_acq_int(&smp_started) == 0)
