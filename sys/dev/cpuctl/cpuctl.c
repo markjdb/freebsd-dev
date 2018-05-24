@@ -390,7 +390,13 @@ fail:
 	return (ret);
 }
 
+static struct mtx amd_update_mtx;
+MTX_SYSINIT(amd_update, &amd_update_mtx, "amd ucode update", MTX_SPIN);
+
 /*
+ * Use a mutex to ensure that multiple hardware threads belonging to the
+ * same core don't attempt the update simultaneously.
+ *
  * NB: MSR 0xc0010020, MSR_K8_UCODE_UPDATE, is not documented by AMD.
  * Coreboot, illumos and Linux source code was used to understand
  * its workings.
@@ -400,8 +406,10 @@ amd_ucode_wrmsr(void *ucode_ptr)
 {
 	uint32_t tmp[4];
 
+	mtx_lock_spin(&amd_update_mtx);
 	wrmsr_safe(MSR_K8_UCODE_UPDATE, (uintptr_t)ucode_ptr);
 	do_cpuid(0, tmp);
+	mtx_unlock_spin(&amd_update_mtx);
 }
 
 static int
