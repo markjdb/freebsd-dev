@@ -92,14 +92,13 @@ ucode_load_ap(void)
 
 	if (CPU_ISSET(curcpu, &logical_cpus_mask))
 		return;
-
 	ucode_intel_load(ucode_data);
 }
 
 static void
 ucode_intel_load_bsp(void *arg __unused)
 {
-	uint32_t *data;
+	uint32_t *ldata, *data;
 	caddr_t file;
 	size_t len;
 
@@ -107,20 +106,26 @@ ucode_intel_load_bsp(void *arg __unused)
 	if (file == 0)
 		return;
 
-	data = preload_fetch_addr(file);
+	ldata = preload_fetch_addr(file);
 	len = preload_fetch_size(file);
 
-	/* Intel microcode must be 16-byte aligned. XXX bad wording */
-	ucode_data = (void *)kmem_malloc(kernel_arena, len, M_WAITOK | M_ZERO);
-	memcpy(ucode_data, data, len);
+	/*
+	 * The loader doesn't provide any alignment guarantees for loaded files,
+	 * while Intel requires 16-byte alignment.  Thus, copy the file into
+	 * a buffer that we know is page-aligned.
+	 */
+	data = (void *)kmem_malloc(kernel_arena, len, M_WAITOK | M_ZERO);
+	memcpy(data, ldata, len);
 
-	if (ucode_intel_verify(ucode_data, len) != 0)
-		goto out;
+	if (ucode_intel_verify(data, len) != 0)
+		goto fail;
 
+	ucode_data = data;
 	ucode_intel_load(ucode_data);
 
-out:
-	kmem_free(kernel_arena, (uintptr_t)ucode_data, len);
-	ucode_data = NULL;
+	return;
+
+fail:
+	kmem_free(kernel_arena, (uintptr_t)data, len);
 }
 SYSINIT(ucode_load, SI_SUB_KMEM + 1, SI_ORDER_ANY, ucode_intel_load_bsp, NULL);
