@@ -338,6 +338,7 @@ dev/vmware/vmci/vmci_queue_pair.c	optional	vmci
 dev/vmware/vmci/vmci_resource.c		optional	vmci
 dev/acpica/acpi_if.m		standard
 dev/acpica/acpi_hpet.c		optional acpi
+dev/acpica/acpi_srat.c		optional acpi
 dev/acpica/acpi_timer.c		optional acpi
 dev/acpi_support/acpi_wmi_if.m	standard
 dev/wbwd/wbwd.c			optional wbwd
@@ -576,7 +577,6 @@ x86/acpica/OsdEnvironment.c	optional acpi
 x86/acpica/acpi_apm.c		optional acpi
 x86/acpica/acpi_wakeup.c	optional acpi
 x86/acpica/madt.c		optional acpi apic
-x86/acpica/srat.c		optional acpi
 x86/bios/smbios.c		optional smbios
 x86/bios/vpd.c			optional vpd
 x86/cpufreq/est.c		optional cpufreq
