@@ -190,6 +190,7 @@ struct cam_doneq {
 static struct cam_doneq cam_doneqs[MAXCPU];
 static int cam_num_doneqs;
 static struct proc *cam_proc;
+static STAILQ_HEAD(, ccb_hdr) cam_nondump_ccbs;
 
 SYSCTL_INT(_kern_cam, OID_AUTO, num_doneqs, CTLFLAG_RDTUN,
            &cam_num_doneqs, 0, "Number of completion queues/threads");
@@ -5478,6 +5479,19 @@ xpt_done_process(struct ccb_hdr *ccb_h)
 			 && (--dev->tag_delay_count == 0))
 				xpt_start_tags(ccb_h->path);
 		}
+	}
+
+	/*
+	 * Don't complete non-dump I/O after we've panicked since that may cause
+	 * us to call into filesystem or pager code, potentially resulting in a
+	 * deadlock.
+	 */
+	if (__predict_false(SCHEDULER_STOPPED() &&
+	    ((ccb_h->xflags & CAM_CCB_DUMP) == 0))) {
+		STAILQ_INSERT_TAIL(&cam_nondump_ccbs, ccb_h, periph_links.stqe);
+		if ((ccb_h->status & CAM_DEV_QFRZN) != 0)
+			(void)cam_release_devq(ccb_h->path, 0, 0, 0, FALSE);
+		return;
 	}
 
 	if ((ccb_h->flags & CAM_UNLOCKED) == 0) {

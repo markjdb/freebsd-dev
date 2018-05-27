@@ -1081,6 +1081,8 @@ adadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t len
 		    (u_int8_t *) virtual,
 		    length,
 		    ada_default_timeout*1000);
+		ataio.ccb_h.xflags |= CAM_CCB_DUMP;
+
 		if ((softc->flags & ADA_FLAG_CAN_48BIT) &&
 		    (lba + count >= ATA_MAX_28BIT_LBA ||
 		    count >= 256)) {
@@ -1113,8 +1115,9 @@ adadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t len
 				    CAM_DIR_NONE,
 				    0,
 				    NULL,
-				    0,
+				    1,
 				    5*1000);
+		ataio.ccb_h.xflags |= CAM_CCB_DUMP;
 
 		if (softc->flags & ADA_FLAG_CAN_48BIT)
 			ata_48bit_cmd(&ataio, ATA_FLUSHCACHE48, 0, 0, 0);
