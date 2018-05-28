@@ -5488,7 +5488,7 @@ xpt_done_process(struct ccb_hdr *ccb_h)
 	 */
 	if (__predict_false(dumping && SCHEDULER_STOPPED() &&
 	    ((ccb_h->xflags & CAM_CCB_DUMP) == 0))) {
-		STAILQ_INSERT_TAIL(&cam_nondump_ccbs, ccb_h, periph_links.stqe);
+		STAILQ_INSERT_TAIL(&cam_nondump_ccbs, ccb_h, sim_links.stqe);
 		if ((ccb_h->status & CAM_DEV_QFRZN) != 0)
 			(void)cam_release_devq(ccb_h->path, 0, 0, 0, FALSE);
 		return;
