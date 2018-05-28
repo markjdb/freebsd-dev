@@ -5486,7 +5486,7 @@ xpt_done_process(struct ccb_hdr *ccb_h)
 	 * us to call into filesystem or pager code, potentially resulting in a
 	 * deadlock.
 	 */
-	if (__predict_false(SCHEDULER_STOPPED() &&
+	if (__predict_false(dumping && SCHEDULER_STOPPED() &&
 	    ((ccb_h->xflags & CAM_CCB_DUMP) == 0))) {
 		STAILQ_INSERT_TAIL(&cam_nondump_ccbs, ccb_h, periph_links.stqe);
 		if ((ccb_h->status & CAM_DEV_QFRZN) != 0)
