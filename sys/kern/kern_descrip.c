@@ -3508,11 +3508,12 @@ export_kinfo_to_sb(struct export_fd_buf *efbuf)
 		if (efbuf->remainder < kif->kf_structsize) {
 			/* Terminate export. */
 			efbuf->remainder = 0;
-			return (0);
+			return (ENOMEM);
 		}
 		efbuf->remainder -= kif->kf_structsize;
 	}
-	return (sbuf_bcat(efbuf->sb, kif, kif->kf_structsize) == 0 ? 0 : ENOMEM);
+	return (sbuf_bcat(efbuf->sb, kif, kif->kf_structsize) == 0 ? 0 :
+	    sbuf_error(sb));
 }
 
 static int
@@ -3522,7 +3523,7 @@ export_file_to_sb(struct file *fp, int fd, cap_rights_t *rightsp,
 	int error;
 
 	if (efbuf->remainder == 0)
-		return (0);
+		return (ENOMEM);
 	export_file_to_kinfo(fp, fd, rightsp, &efbuf->kif, efbuf->fdp,
 	    efbuf->flags);
 	FILEDESC_SUNLOCK(efbuf->fdp);
@@ -3538,7 +3539,7 @@ export_vnode_to_sb(struct vnode *vp, int fd, int fflags,
 	int error;
 
 	if (efbuf->remainder == 0)
-		return (0);
+		return (ENOMEM);
 	if (efbuf->fdp != NULL)
 		FILEDESC_SUNLOCK(efbuf->fdp);
 	export_vnode_to_kinfo(vp, fd, fflags, &efbuf->kif, efbuf->flags);
