@@ -3512,8 +3512,9 @@ export_kinfo_to_sb(struct export_fd_buf *efbuf)
 		}
 		efbuf->remainder -= kif->kf_structsize;
 	}
-	return (sbuf_bcat(efbuf->sb, kif, kif->kf_structsize) == 0 ? 0 :
-	    sbuf_error(sb));
+	if (sbuf_bcat(efbuf->sb, kif, kif->kf_structsize) != 0)
+		return (sbuf_error(sb));
+	return (0);
 }
 
 static int
