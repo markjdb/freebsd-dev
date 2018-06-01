@@ -3513,7 +3513,7 @@ export_kinfo_to_sb(struct export_fd_buf *efbuf)
 		efbuf->remainder -= kif->kf_structsize;
 	}
 	if (sbuf_bcat(efbuf->sb, kif, kif->kf_structsize) != 0)
-		return (sbuf_error(sb));
+		return (sbuf_error(efbuf->sb));
 	return (0);
 }
 
