@@ -69,13 +69,14 @@ struct process_select
     int jail;		/* show jail ID */
     int swap;		/* show swap usage */
     int kidle;		/* show per-CPU idle threads */
+    pid_t pid;		/* only this pid (unless pid == -1) */
     char *command;	/* only this command (unless == NULL) */
 };
 
 /* routines defined by the machine dependent module */
 
 char	*format_header(char *uname_field);
-char	*format_next_process(caddr_t handle, char *(*get_userid)(int),
+char	*format_next_process(caddr_t handle, char *(*get_userid)(uid_t),
 	    int flags);
 void	 toggle_pcpustats(void);
 void	 get_system_info(struct system_info *si);
@@ -83,7 +84,6 @@ int	 machine_init(struct statics *statics);
 int	 proc_owner(int pid);
 
 /* non-int routines typically used by the machine dependent module */
-char	*printable(char *string);
 extern struct process_select ps;
 
 void *

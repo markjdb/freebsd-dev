@@ -15,12 +15,21 @@
 #include "top.h"
 #include "utils.h"
 
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
+#include <paths.h>
+#include <kvm.h>
+
+void quit(int);
 
 int
-atoiwi(char *str)
+atoiwi(const char *str)
 {
     int len;
 
@@ -59,10 +68,7 @@ atoiwi(char *str)
 				 */
 _Static_assert(sizeof(int) <= 4, "buffer too small for this sized int");
 
-char *itoa(val)
-
-int val;
-
+char *itoa(unsigned int val)
 {
     char *ptr;
     static char buffer[16];	/* result is built here */
@@ -90,10 +96,7 @@ int val;
  *	a front end to a more general routine for efficiency.
  */
 
-char *itoa7(val)
-
-int val;
-
+char *itoa7(unsigned int val)
 {
     char *ptr;
     static char buffer[16];	/* result is built here */
@@ -124,10 +127,7 @@ int val;
  *	positive numbers.  If val <= 0 then digits(val) == 0.
  */
 
-int digits(val)
-
-int val;
-
+int digits(int val)
 {
     int cnt = 0;
 
@@ -140,28 +140,13 @@ int val;
 }
 
 /*
- *  strecpy(to, from) - copy string "from" into "to" and return a pointer
- *	to the END of the string "to".
- */
-
-char *
-strecpy(char *to, char *from)
-{
-    while ((*to++ = *from++) != '\0');
-    return(--to);
-}
-
-/*
  * string_index(string, array) - find string in array and return index
  */
 
-int string_index(string, array)
-
-char *string;
-char **array;
-
+int
+string_index(const char *string, char *array[])
 {
-    int i = 0;
+    size_t i = 0;
 
     while (*array != NULL)
     {
@@ -182,13 +167,10 @@ char **array;
  *	squat about quotes.
  */
 
-char **argparse(line, cntp)
-
-char *line;
-int *cntp;
-
+char **
+argparse(char *line, int *cntp)
 {
-    char *from;
+    const char *from;
     char *to;
     int cnt;
     int ch;
@@ -219,10 +201,10 @@ int *cntp;
     cnt += 3;
 
     /* allocate a char * array to hold the pointers */
-    argarray = (char **)malloc(cnt * sizeof(char *));
+    argarray = malloc(cnt * sizeof(char *));
 
     /* allocate another array to hold the strings themselves */
-    args = (char *)malloc(length+2);
+    args = malloc(length+2);
 
     /* initialization for main loop */
     from = line;
@@ -264,17 +246,11 @@ int *cntp;
  *	"cnt" is size of each array and "diffs" is used for scratch space.
  *	The array "old" is updated on each call.
  *	The routine assumes modulo arithmetic.  This function is especially
- *	useful on BSD mchines for calculating cpu state percentages.
+ *	useful on for calculating cpu state percentages.
  */
 
-long percentages(cnt, out, new, old, diffs)
-
-int cnt;
-int *out;
-long *new;
-long *old;
-long *diffs;
-
+long
+percentages(int cnt, int *out, long *new, long *old, long *diffs)
 {
     int i;
     long change;
@@ -336,10 +312,8 @@ long *diffs;
    exceed 9999.9, we use "???".
  */
 
-char *format_time(seconds)
-
-long seconds;
-
+char *
+format_time(long seconds)
 {
     static char result[10];
 
@@ -416,7 +390,7 @@ char *format_k(int amt)
 	}
     }
 
-    p = strecpy(p, itoa(amt));
+    p = stpcpy(p, itoa(amt));
     *p++ = tag;
     *p = '\0';
 
@@ -446,9 +420,37 @@ format_k2(unsigned long long amt)
 	}
     }
 
-    p = strecpy(p, itoa((int)amt));
+    p = stpcpy(p, itoa((int)amt));
     *p++ = tag;
     *p = '\0';
 
     return(ret);
+}
+
+int
+find_pid(pid_t pid)
+{
+	kvm_t *kd = NULL;
+	struct kinfo_proc *pbase = NULL;
+	int nproc;
+	int ret = 0;
+
+	kd = kvm_open(NULL, _PATH_DEVNULL, NULL, O_RDONLY, NULL);
+	if (kd == NULL) {
+		fprintf(stderr, "top: kvm_open() failed.\n");
+		quit(TOP_EX_SYS_ERROR);
+	}
+
+	pbase = kvm_getprocs(kd, KERN_PROC_PID, pid, &nproc);
+	if (pbase == NULL) {
+		goto done;
+	}
+
+	if ((nproc == 1) && (pbase->ki_pid == pid)) {
+		ret = 1;
+	}
+
+done:
+	kvm_close(kd);	
+	return ret;
 }

@@ -7,7 +7,7 @@ MAN=
 
 LIBADD=	kvm pmc m ncursesw pmcstat elf
 
-SRCS=	pmc.c pmc_util.c cmd_pmc_stat.c
+SRCS=	pmc.c pmc_util.c cmd_pmc_stat.c \
+	cmd_pmc_list.c
 
-CWARNFLAGS.cmd_pmc_stat.c=	-Wno-format
 .include <bsd.prog.mk>
