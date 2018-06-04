@@ -18,6 +18,7 @@
  */
 
 #include <sys/resource.h>
+#include <sys/signal.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -43,7 +44,7 @@ struct errs		/* structure for a system-call error */
 
 static char *err_string(void);
 static int str_adderr(char *str, int len, int err);
-static int str_addarg(char *str, int len, char *arg, int first);
+static int str_addarg(char *str, int len, char *arg, bool first);
 
 /*
  *  show_help() - display the help screen; invoked in response to
@@ -63,7 +64,7 @@ These single-character commands are available:\n\
 q       - quit\n\
 h or ?  - help; show this text\n", stdout);
 
-    /* not all commands are availalbe with overstrike terminals */
+    /* not all commands are available with overstrike terminals */
     if (overstrike)
     {
 	fputs("\n\
@@ -199,9 +200,9 @@ static char err_listem[] =
 char *err_string(void)
 {
     struct errs *errp;
-    int  cnt = 0;
-    int  first = true;
-    int  currerr = -1;
+    int cnt = 0;
+    bool first = true;
+    int currerr = -1;
     int stringlen;		/* characters still available in "string" */
     static char string[STRMAX];
 
@@ -279,7 +280,7 @@ str_adderr(char *str, int len, int err)
  */
 
 static int
-str_addarg(char str[], int len, char arg[], int first)
+str_addarg(char str[], int len, char arg[], bool first)
 {
     int arglen;
 

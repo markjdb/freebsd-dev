@@ -13,15 +13,17 @@
  */
 
 #include <sys/types.h>
-#include <sys/param.h>
-#include <sys/jail.h>
 #include <sys/time.h>
+#include <sys/cdefs.h>
+#include <sys/limits.h>
+#include <sys/select.h>
+#include <sys/signal.h>
+#include <time.h>
 
-#include <ctype.h>
-#include <curses.h>
 #include <errno.h>
 #include <jail.h>
-#include <setjmp.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
@@ -78,7 +80,7 @@ static void (*d_arc)(int *stats) = i_arc;
 static void (*d_carc)(int *stats) = i_carc;
 static void (*d_swap)(int *stats) = i_swap;
 static void (*d_message)(void) = i_message;
-static void (*d_header)(char *text) = i_header;
+static void (*d_header)(const char *text) = i_header;
 static void (*d_process)(int line, char *thisline) = i_process;
 
 static void reset_display(void);
@@ -206,11 +208,11 @@ main(int argc, char *argv[])
     int displays = 0;		/* indicates unspecified */
     int sel_ret = 0;
     time_t curr_time;
-    char *(*get_userid)(uid_t) = username;
-    char *uname_field = "USERNAME";
-    char *header_text;
+    char *(*get_userid)(int) = username;
+    const char *uname_field = "USERNAME";
+    const char *header_text;
     char *env_top;
-    char **preset_argv;
+    const char **preset_argv;
     int  preset_argc = 0;
     char **av;
     int  ac;
@@ -228,7 +230,7 @@ main(int argc, char *argv[])
     fd_set readfds;
     char old_system = false;
 
-    static char command_chars[] = "\f qh?en#sdkriIutHmSCajzPJwop";
+    static const char command_chars[] = "\f qh?en#sdkriIutHmSCajzPJwop";
 /* these defines enumerate the "strchr"s of the commands in command_chars */
 #define CMD_redraw	0
 #define CMD_update	1

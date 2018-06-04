@@ -270,7 +270,7 @@ get_screensize(void)
 }
 
 void
-top_standout(char *msg)
+top_standout(const char *msg)
 {
     if (smart_terminal)
     {
