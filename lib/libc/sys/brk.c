@@ -36,17 +36,19 @@ __FBSDID("$FreeBSD$");
 
 void *__sys_break(char *nsize);
 
-static const void *curbrk, *minbrk;
+static uintptr_t curbrk, minbrk;
 static int curbrk_initted;
 
 static int
 initbrk(void)
 {
+	void *newbrk;
 
 	if (!curbrk_initted) {
-		curbrk = minbrk = __sys_break(NULL);
-		if (curbrk == (void *)-1)
+		newbrk = __sys_break(NULL);
+		if (newbrk == (void *)-1)
 			return (-1);
+		curbrk = minbrk = (uintptr_t)newbrk;
 		curbrk_initted = 1;
 	}
 	return (0);
@@ -57,7 +59,7 @@ mvbrk(void *addr)
 {
 	void *newbrk;
 
-	if ((uintptr_t)addr < (uintptr_t)minbrk) {
+	if ((uintptr_t)addr < minbrk) {
 		/* Emulate legacy error handling in the syscall. */
 		errno = EINVAL;
 		return ((void *)-1);
@@ -65,7 +67,7 @@ mvbrk(void *addr)
 	newbrk = __sys_break(addr);
 	if (newbrk == (void *)-1)
 		return (newbrk);
-	curbrk = addr;
+	curbrk = (uintptr_t)addr;
 	return (addr);
 }
 
@@ -75,8 +77,8 @@ brk(const void *addr)
 
 	if (initbrk() == -1)
 		return (-1);
-	if ((uintptr_t)addr < (uintptr_t)minbrk)
-		addr = minbrk;
+	if ((uintptr_t)addr < minbrk)
+		addr = (void *)minbrk;
 	return (mvbrk(__DECONST(void *, addr)) == (void *)-1 ? -1 : 0);
 }
 
@@ -95,11 +97,11 @@ sbrk(intptr_t incr)
 
 	if (initbrk() == -1)
 		return ((void *)-1);
-	if ((incr > 0 && (uintptr_t)curbrk + incr < (uintptr_t)curbrk) ||
-	    (incr < 0 && (uintptr_t)curbrk + incr > (uintptr_t)curbrk)) {
+	if ((incr > 0 && curbrk + incr < curbrk) ||
+	    (incr < 0 && curbrk + incr > curbrk)) {
 		/* Emulate legacy error handling in the syscall. */
 		errno = EINVAL;
 		return ((void *)-1);
 	}
-	return (mvbrk((void *)((uintptr_t)curbrk + incr)));
+	return (mvbrk((void *)(curbrk + incr)));
 }
