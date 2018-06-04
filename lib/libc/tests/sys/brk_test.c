@@ -81,19 +81,20 @@ ATF_TC_BODY(sbrk_basic, tc)
 
 	oldbrk = sbrk(0);
 	ATF_REQUIRE_MSG(oldbrk != (void *)-1, "sbrk: %s", strerror(errno));
-
 	p = sbrk(sizeof(*p));
 	*p = 0;
-	newbrk = sbrk(-sizeof(*p));
-	ATF_REQUIRE(newbrk == oldbrk);
-	ATF_REQUIRE(sbrk(0) == newbrk);
+	ATF_REQUIRE(oldbrk == p);
 
-	newbrk = sbrk(PAGE_SIZE * 2);
-	ATF_REQUIRE(newbrk != (void *)-1);
-	memset(oldbrk, 0, PAGE_SIZE * 2);
-	newbrk = sbrk(-PAGE_SIZE * 2);
-	ATF_REQUIRE(newbrk == oldbrk);
-	ATF_REQUIRE(sbrk(0) == newbrk);
+	newbrk = sbrk(-sizeof(*p));
+	ATF_REQUIRE_MSG(newbrk != (void *)-1, "sbrk: %s", strerror(errno));
+	ATF_REQUIRE(oldbrk == sbrk(0));
+
+	oldbrk = sbrk(PAGE_SIZE * 2 + 1);
+	ATF_REQUIRE_MSG(oldbrk != (void *)-1, "sbrk: %s", strerror(errno));
+	memset(oldbrk, 0, PAGE_SIZE * 2 + 1);
+	newbrk = sbrk(-(PAGE_SIZE * 2 + 1));
+	ATF_REQUIRE_MSG(newbrk != (void *)-1, "sbrk: %s", strerror(errno));
+	ATF_REQUIRE(sbrk(0) == oldbrk);
 }
 
 ATF_TC(mlockfuture);
