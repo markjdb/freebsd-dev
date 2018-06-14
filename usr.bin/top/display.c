@@ -160,11 +160,12 @@ display_resize(void)
     return(smart_terminal ? lines : Largest);
 }
 
-int display_updatecpus(struct statics *statics)
+int
+display_updatecpus(struct statics *statics)
 {
     int lines;
     int i;
-    
+
     /* call resize to do the dirty work */
     lines = display_resize();
     if (pcpu_stats)
@@ -180,11 +181,12 @@ int display_updatecpus(struct statics *statics)
 	for (i = 0; i < num_cpustates * num_cpus; ++i) {
 		lcpustates[i] = -1;
     }
-    
+
     return(lines);
 }
-    
-int display_init(struct statics * statics)
+
+int
+display_init(struct statics * statics)
 {
     int lines;
     char **pp;
@@ -220,7 +222,7 @@ int display_init(struct statics * statics)
 
 	arc_names = statics->arc_names;
 	carc_names = statics->carc_names;
-	
+
 	/* calculate starting columns where needed */
 	cpustate_total_length = 0;
 	pp = cpustate_names;
@@ -306,7 +308,7 @@ i_timeofday(time_t *tod)
     /*
      *  Display the current time.
      *  "ctime" always returns a string that looks like this:
-     *  
+     *
      *	Sun Sep 16 01:03:52 1973
      *      012345678901234567890123
      *	          1         2
@@ -377,12 +379,13 @@ u_procstates(int total, int *brkdn)
     if (ltotal != total)
     {
 	/* move and overwrite */
-#if (x_procstate == 0)
+if (x_procstate == 0) {
 	Move_to(x_procstate, y_procstate);
-#else
+}
+else {
 	/* cursor is already there...no motion needed */
-	/* assert(lastline == 1); */
-#endif
+	assert(lastline == 1);
+}
 	printf("%d", total);
 
 	/* if number of digits differs, rewrite the label */
@@ -641,7 +644,7 @@ u_carc(int *stats)
     summary_format(new, stats, carc_names);
     line_update(carc_buffer, new, x_carc, y_carc);
 }
- 
+
 /*
  *  *_swap(stats) - print "Swap: " followed by the swap summary string
  *
@@ -955,11 +958,14 @@ new_message(int type, const char *msgfmt, ...)
 	    i = strlen(next_msg);
 	    if ((type & MT_delayed) == 0)
 	    {
-		type & MT_standout ? top_standout(next_msg) :
-		                     fputs(next_msg, stdout);
-		(void) clear_eol(msglen - i);
-		msglen = i;
-		next_msg[0] = '\0';
+			if (type & MT_standout) {
+				top_standout(next_msg);
+			} else {
+				fputs(next_msg, stdout);
+			}
+			clear_eol(msglen - i);
+			msglen = i;
+			next_msg[0] = '\0';
 	    }
 	}
     }
@@ -967,7 +973,11 @@ new_message(int type, const char *msgfmt, ...)
     {
 	if ((type & MT_delayed) == 0)
 	{
-	    type & MT_standout ? top_standout(next_msg) : fputs(next_msg, stdout);
+		if (type & MT_standout) {
+			top_standout(next_msg);
+		} else {
+			fputs(next_msg, stdout);
+		}
 	    msglen = strlen(next_msg);
 	    next_msg[0] = '\0';
 	}
@@ -1066,7 +1076,8 @@ readline(char *buffer, int size, int numeric)
 
 /* internal support routines */
 
-static void summary_format(char *str, int *numbers, const char * const *names)
+static void
+summary_format(char *str, int *numbers, const char * const *names)
 {
     char *p;
     int num;
@@ -1095,7 +1106,7 @@ static void summary_format(char *str, int *numbers, const char * const *names)
 	    /* is this number a ratio? */
 	    else if (thisname[0] == ':')
 	    {
-		(void) snprintf(rbuf, sizeof(rbuf), "%.2f", 
+		(void) snprintf(rbuf, sizeof(rbuf), "%.2f",
 		    (float)*(numbers - 2) / (float)num);
 		p = stpcpy(p, rbuf);
 		p = stpcpy(p, thisname);
@@ -1160,7 +1171,7 @@ line_update(char *old, char *new, int start, int line)
 	lastcol = 1;
     }
     old++;
-	
+
     /*
      *  main loop -- check each character.  If the old and new aren't the
      *	same, then update the display.  When the distance from the
@@ -1201,7 +1212,7 @@ line_update(char *old, char *new, int start, int line)
 		/* already there, update position */
 		lastcol++;
 	    }
-		
+
 	    /* write what we need to */
 	    if (ch == '\0')
 	    {
@@ -1216,11 +1227,11 @@ line_update(char *old, char *new, int start, int line)
 	    /* put the new character in the screen buffer */
 	    *old = ch;
 	}
-	    
+
 	/* update working column and screen buffer pointer */
 	newcol++;
 	old++;
-	    
+
     } while (ch != '\0');
 
     /* zero out the rest of the line buffer -- MUST BE DONE! */
