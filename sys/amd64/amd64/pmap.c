@@ -614,10 +614,12 @@ static caddr_t crashdumpmap;
 
 static void	free_pv_chunk(struct pv_chunk *pc);
 static void	free_pv_entry(pmap_t pmap, pv_entry_t pv);
-static pv_entry_t get_pv_entry(pmap_t pmap, struct rwlock **lockp);
+static pv_entry_t get_pv_entry(pmap_t pmap, vm_offset_t va,
+		    struct rwlock **lockp);
 static int	popcnt_pc_map_pq(uint64_t *map);
-static vm_page_t reclaim_pv_chunk(pmap_t locked_pmap, struct rwlock **lockp);
-static void	reserve_pv_entries(pmap_t pmap, int needed,
+static vm_page_t reclaim_pv_chunk(pmap_t locked_pmap, vm_offset_t skip_va,
+		    struct rwlock **lockp);
+static void	reserve_pv_entries(pmap_t pmap, vm_offset_t skip_va, int needed,
 		    struct rwlock **lockp);
 static void	pmap_pv_demote_pde(pmap_t pmap, vm_offset_t va, vm_paddr_t pa,
 		    struct rwlock **lockp);
@@ -3174,7 +3176,9 @@ reclaim_pv_chunk_leave_pmap(pmap_t pmap, pmap_t locked_pmap, bool start_di)
 /*
  * We are in a serious low memory condition.  Resort to
  * drastic measures to free some pages so we can allocate
- * another pv entry chunk.
+ * another pv entry chunk.  Do not free a PV entry for skip_va from
+ * the specified pmap since the caller may be attempting to update
+ * the corresponding page table entry.
  *
  * Returns NULL if PV entries were reclaimed from the specified pmap.
  *
@@ -3183,7 +3187,7 @@ reclaim_pv_chunk_leave_pmap(pmap_t pmap, pmap_t locked_pmap, bool start_di)
  * exacerbating the shortage of free pv entries.
  */
 static vm_page_t
-reclaim_pv_chunk(pmap_t locked_pmap, struct rwlock **lockp)
+reclaim_pv_chunk(pmap_t locked_pmap, vm_offset_t skip_va, struct rwlock **lockp)
 {
 	struct pv_chunk *pc, *pc_marker, *pc_marker_end;
 	struct pv_chunk_header pc_marker_b, pc_marker_end_b;
@@ -3287,6 +3291,8 @@ reclaim_pv_chunk(pmap_t locked_pmap, struct rwlock **lockp)
 				bit = bsfq(inuse);
 				pv = &pc->pc_pventry[field * 64 + bit];
 				va = pv->pv_va;
+				if (pmap == locked_pmap && va == skip_va)
+					continue;
 				pde = pmap_pde(pmap, va);
 				if ((*pde & PG_PS) != 0)
 					continue;
@@ -3428,15 +3434,15 @@ free_pv_chunk(struct pv_chunk *pc)
 }
 
 /*
- * Returns a new PV entry, allocating a new PV chunk from the system when
- * needed.  If this PV chunk allocation fails and a PV list lock pointer was
- * given, a PV chunk is reclaimed from an arbitrary pmap.  Otherwise, NULL is
- * returned.
+ * Returns a new PV entry for the specified virtual address, allocating a new
+ * PV chunk from the system when needed.  If this PV chunk allocation fails
+ * and a PV list lock pointer was given, a PV chunk is reclaimed from an
+ * arbitrary pmap.  Otherwise, NULL is returned.
  *
  * The given PV list lock may be released.
  */
 static pv_entry_t
-get_pv_entry(pmap_t pmap, struct rwlock **lockp)
+get_pv_entry(pmap_t pmap, vm_offset_t va, struct rwlock **lockp)
 {
 	int bit, field;
 	pv_entry_t pv;
@@ -3456,6 +3462,7 @@ retry:
 		}
 		if (field < _NPCM) {
 			pv = &pc->pc_pventry[field * 64 + bit];
+			pv->pv_va = va;
 			pc->pc_map[field] &= ~(1ul << bit);
 			/* If this was the last item, move it to tail */
 			if (pc->pc_map[0] == 0 && pc->pc_map[1] == 0 &&
@@ -3477,7 +3484,7 @@ retry:
 			PV_STAT(pc_chunk_tryfail++);
 			return (NULL);
 		}
-		m = reclaim_pv_chunk(pmap, lockp);
+		m = reclaim_pv_chunk(pmap, va, lockp);
 		if (m == NULL)
 			goto retry;
 	}
@@ -3493,6 +3500,7 @@ retry:
 	TAILQ_INSERT_TAIL(&pv_chunks, pc, pc_lru);
 	mtx_unlock(&pv_chunks_mutex);
 	pv = &pc->pc_pventry[0];
+	pv->pv_va = va;
 	TAILQ_INSERT_HEAD(&pmap->pm_pvchunk, pc, pc_list);
 	PV_STAT(atomic_add_long(&pv_entry_count, 1));
 	PV_STAT(atomic_add_int(&pv_entry_spare, _NPCPV - 1));
@@ -3530,12 +3538,15 @@ popcnt_pc_map_pq(uint64_t *map)
 
 /*
  * Ensure that the number of spare PV entries in the specified pmap meets or
- * exceeds the given count, "needed".
+ * exceeds the given count, "needed".  If it becomes necessary to reclaim a PV
+ * chunk in order to satisfy the reservation, do not reclaim a PV entry for
+ * skip_va.
  *
  * The given PV list lock may be released.
  */
 static void
-reserve_pv_entries(pmap_t pmap, int needed, struct rwlock **lockp)
+reserve_pv_entries(pmap_t pmap, vm_offset_t skip_va, int needed,
+    struct rwlock **lockp)
 {
 	struct pch new_tail;
 	struct pv_chunk *pc;
@@ -3572,7 +3583,7 @@ retry:
 		m = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ |
 		    VM_ALLOC_WIRED);
 		if (m == NULL) {
-			m = reclaim_pv_chunk(pmap, lockp);
+			m = reclaim_pv_chunk(pmap, skip_va, lockp);
 			if (m == NULL)
 				goto retry;
 		}
@@ -3754,8 +3765,7 @@ pmap_try_insert_pv_entry(pmap_t pmap, vm_offset_t va, vm_page_t m,
 
 	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
 	/* Pass NULL instead of the lock pointer to disable reclamation. */
-	if ((pv = get_pv_entry(pmap, NULL)) != NULL) {
-		pv->pv_va = va;
+	if ((pv = get_pv_entry(pmap, va, NULL)) != NULL) {
 		CHANGE_PV_LIST_LOCK_TO_VM_PAGE(lockp, m);
 		TAILQ_INSERT_TAIL(&m->md.pv_list, pv, pv_next);
 		m->md.pv_gen++;
@@ -3779,10 +3789,9 @@ pmap_pv_insert_pde(pmap_t pmap, vm_offset_t va, pd_entry_t pde, u_int flags,
 
 	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
 	/* Pass NULL instead of the lock pointer to disable reclamation. */
-	if ((pv = get_pv_entry(pmap, (flags & PMAP_ENTER_NORECLAIM) != 0 ?
+	if ((pv = get_pv_entry(pmap, va, (flags & PMAP_ENTER_NORECLAIM) != 0 ?
 	    NULL : lockp)) == NULL)
 		return (false);
-	pv->pv_va = va;
 	pa = pde & PG_PS_FRAME;
 	CHANGE_PV_LIST_LOCK_TO_PHYS(lockp, pa);
 	pvh = pa_to_pvh(pa);
@@ -3918,7 +3927,7 @@ pmap_demote_pde_locked(pmap_t pmap, pd_entry_t *pde, vm_offset_t va,
 	 * PV entry for the 2MB page mapping that is being demoted.
 	 */
 	if ((oldpde & PG_MANAGED) != 0)
-		reserve_pv_entries(pmap, NPTEPG - 1, lockp);
+		reserve_pv_entries(pmap, va, NPTEPG - 1, lockp);
 
 	/*
 	 * Demote the mapping.  This pmap is locked.  The old PDE has
@@ -4873,8 +4882,7 @@ retry:
 	 * Enter on the PV list if part of our managed memory.
 	 */
 	if ((newpte & PG_MANAGED) != 0) {
-		pv = get_pv_entry(pmap, &lock);
-		pv->pv_va = va;
+		pv = get_pv_entry(pmap, va, &lock);
 		CHANGE_PV_LIST_LOCK_TO_PHYS(&lock, pa);
 		TAILQ_INSERT_TAIL(&m->md.pv_list, pv, pv_next);
 		m->md.pv_gen++;
