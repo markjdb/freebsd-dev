@@ -50,10 +50,6 @@ typedef void sigret_t;
 /* The buffer that stdio will use */
 static char stdoutbuf[Buffersize];
 
-/* build Signal masks */
-#define Smask(s)	(1 << ((s) - 1))
-
-
 static int fmt_flags = 0;
 int pcpu_stats = false;
 
@@ -233,7 +229,7 @@ main(int argc, char *argv[])
 
     static char tempbuf1[50];
     static char tempbuf2[50];
-    int old_sigmask;		/* only used for BSD-style signals */
+	sigset_t old_sigmask, new_sigmask;
     int topn = Infinity;
     double delay = 2;
     int displays = 0;		/* indicates unspecified */
@@ -285,7 +281,7 @@ main(int argc, char *argv[])
     /* get our name */
     /* initialize some selection options */
     ps.idle    = true;
-    ps.self    = false;
+    ps.self    = true;
     ps.system  = false;
     reset_uids();
     ps.thread  = false;
@@ -591,13 +587,18 @@ main(int argc, char *argv[])
     }
 
     /* hold interrupt signals while setting up the screen and the handlers */
-    old_sigmask = sigblock(Smask(SIGINT) | Smask(SIGQUIT) | Smask(SIGTSTP));
+
+	sigemptyset(&new_sigmask);
+	sigaddset(&new_sigmask, SIGINT);
+	sigaddset(&new_sigmask, SIGQUIT);
+	sigaddset(&new_sigmask, SIGTSTP);
+	sigprocmask(SIG_BLOCK, &new_sigmask, &old_sigmask);
     init_screen();
     signal(SIGINT, leave);
     signal(SIGQUIT, leave);
     signal(SIGTSTP, tstop);
     signal(SIGWINCH, top_winch);
-    sigsetmask(old_sigmask);
+    sigprocmask(SIG_SETMASK, &old_sigmask, NULL);
     if (warnings)
     {
 	fputs("....", stderr);
@@ -851,13 +852,6 @@ restart:
 				break;
 
 			    case CMD_update:	/* merely update display */
-				/* is the load average high? */
-				if (system_info.load_avg[0] > LoadMax)
-				{
-				    /* yes, go home for visual feedback */
-				    go_home();
-				    fflush(stdout);
-				}
 				break;
 
 			    case CMD_quit:
@@ -1168,7 +1162,7 @@ restart:
 					clear_message();
 				break;
 			    case CMD_NONE:
-					assert("reached switch without command");
+					assert(false && "reached switch without command");
 			}
 			}
 		    }
