@@ -82,6 +82,11 @@ readboot(int dosfs, struct bootblock *boot)
 
 	boot->FATsecs = boot->bpbFATsmall;
 
+	if (boot->bpbBytesPerSec % DOSBOOTBLOCKSIZE_REAL != 0 ||
+	    boot->bpbBytesPerSec / DOSBOOTBLOCKSIZE_REAL == 0) {
+		pfatal("Invalid sector size: %u", boot->bpbBytesPerSec);
+		return FSFATAL;
+	}
 	if (!boot->bpbRootDirEnts)
 		boot->flags |= FAT32;
 	if (boot->flags & FAT32) {
@@ -102,6 +107,22 @@ readboot(int dosfs, struct bootblock *boot)
 		boot->bpbFSInfo = block[48] + (block[49] << 8);
 		boot->bpbBackup = block[50] + (block[51] << 8);
 
+		/* If the OEM Name field is EXFAT, it's not FAT32, so bail */
+		if (!memcmp(&block[3], "EXFAT   ", 8)) {
+			pfatal("exFAT filesystem is not supported.");
+			return FSFATAL;
+		}
+
+		/* check basic parameters */
+		if ((boot->bpbFSInfo == 0) || (boot->bpbSecPerClust == 0)) {
+			/*
+			 * Either the BIOS Parameter Block has been corrupted,
+			 * or this is not a FAT32 filesystem, most likely an
+			 * exFAT filesystem.
+			 */
+			pfatal("Invalid FAT32 Extended BIOS Parameter Block");
+			return FSFATAL;
+		}
 		if (lseek(dosfs, boot->bpbFSInfo * boot->bpbBytesPerSec,
 		    SEEK_SET) != boot->bpbFSInfo * boot->bpbBytesPerSec
 		    || read(dosfs, fsinfo, sizeof fsinfo) != sizeof fsinfo) {
@@ -178,15 +199,6 @@ readboot(int dosfs, struct bootblock *boot)
 		/* Check backup bpbFSInfo?					XXX */
 	}
 
-	boot->ClusterOffset = (boot->bpbRootDirEnts * 32 +
-	    boot->bpbBytesPerSec - 1) / boot->bpbBytesPerSec +
-	    boot->bpbResSectors + boot->bpbFATs * boot->FATsecs -
-	    CLUST_FIRST * boot->bpbSecPerClust;
-
-	if (boot->bpbBytesPerSec % DOSBOOTBLOCKSIZE_REAL != 0) {
-		pfatal("Invalid sector size: %u", boot->bpbBytesPerSec);
-		return FSFATAL;
-	}
 	if (boot->bpbSecPerClust == 0) {
 		pfatal("Invalid cluster size: %u", boot->bpbSecPerClust);
 		return FSFATAL;
@@ -196,6 +208,10 @@ readboot(int dosfs, struct bootblock *boot)
 		boot->NumSectors = boot->bpbSectors;
 	} else
 		boot->NumSectors = boot->bpbHugeSectors;
+	boot->ClusterOffset = (boot->bpbRootDirEnts * 32 +
+	    boot->bpbBytesPerSec - 1) / boot->bpbBytesPerSec +
+	    boot->bpbResSectors + boot->bpbFATs * boot->FATsecs -
+	    CLUST_FIRST * boot->bpbSecPerClust;
 	boot->NumClusters = (boot->NumSectors - boot->ClusterOffset) /
 	    boot->bpbSecPerClust;
 
