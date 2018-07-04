@@ -3355,6 +3355,10 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
 				nfsdarg.addrlen = 0;
 				nfsdarg.dnshost = NULL;
 				nfsdarg.dnshostlen = 0;
+				nfsdarg.dspath = NULL;
+				nfsdarg.dspathlen = 0;
+				nfsdarg.mdspath = NULL;
+				nfsdarg.mdspathlen = 0;
 				nfsdarg.mirrorcnt = 1;
 			}
 		} else
@@ -3364,14 +3368,15 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
 		if (nfsdarg.addrlen > 0 && nfsdarg.addrlen < 10000 &&
 		    nfsdarg.dnshostlen > 0 && nfsdarg.dnshostlen < 10000 &&
 		    nfsdarg.dspathlen > 0 && nfsdarg.dspathlen < 10000 &&
+		    nfsdarg.mdspathlen > 0 && nfsdarg.mdspathlen < 10000 &&
 		    nfsdarg.mirrorcnt >= 1 &&
 		    nfsdarg.mirrorcnt <= NFSDEV_MAXMIRRORS &&
 		    nfsdarg.addr != NULL && nfsdarg.dnshost != NULL &&
-		    nfsdarg.dspath != NULL) {
+		    nfsdarg.dspath != NULL && nfsdarg.mdspath != NULL) {
 			NFSD_DEBUG(1, "addrlen=%d dspathlen=%d dnslen=%d"
-			    " mirrorcnt=%d\n", nfsdarg.addrlen,
+			    " mdspathlen=%d mirrorcnt=%d\n", nfsdarg.addrlen,
 			    nfsdarg.dspathlen, nfsdarg.dnshostlen,
-			    nfsdarg.mirrorcnt);
+			    nfsdarg.mdspathlen, nfsdarg.mirrorcnt);
 			cp = malloc(nfsdarg.addrlen + 1, M_TEMP, M_WAITOK);
 			error = copyin(nfsdarg.addr, cp, nfsdarg.addrlen);
 			if (error != 0) {
@@ -3399,6 +3404,17 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
 			}
 			cp[nfsdarg.dspathlen] = '\0';	/* Ensure nul term. */
 			nfsdarg.dspath = cp;
+			cp = malloc(nfsdarg.mdspathlen + 1, M_TEMP, M_WAITOK);
+			error = copyin(nfsdarg.mdspath, cp, nfsdarg.mdspathlen);
+			if (error != 0) {
+				free(nfsdarg.addr, M_TEMP);
+				free(nfsdarg.dnshost, M_TEMP);
+				free(nfsdarg.dspath, M_TEMP);
+				free(cp, M_TEMP);
+				goto out;
+			}
+			cp[nfsdarg.mdspathlen] = '\0';	/* Ensure nul term. */
+			nfsdarg.mdspath = cp;
 		} else {
 			nfsdarg.addr = NULL;
 			nfsdarg.addrlen = 0;
@@ -3406,12 +3422,15 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
 			nfsdarg.dnshostlen = 0;
 			nfsdarg.dspath = NULL;
 			nfsdarg.dspathlen = 0;
+			nfsdarg.mdspath = NULL;
+			nfsdarg.mdspathlen = 0;
 			nfsdarg.mirrorcnt = 1;
 		}
 		error = nfsrvd_nfsd(td, &nfsdarg);
 		free(nfsdarg.addr, M_TEMP);
 		free(nfsdarg.dnshost, M_TEMP);
 		free(nfsdarg.dspath, M_TEMP);
+		free(nfsdarg.mdspath, M_TEMP);
 	} else if (uap->flag & NFSSVC_PNFSDS) {
 		error = copyin(uap->argp, &pnfsdarg, sizeof(pnfsdarg));
 		if (error == 0 && pnfsdarg.op == PNFSDOP_DELDSSERVER) {
@@ -3846,9 +3865,12 @@ nfsrv_pnfscreate(struct vnode *vp, struct vattr *vap, struct ucred *cred,
 
 	/* Get a DS server directory in a round-robin order. */
 	mirrorcnt = 1;
+	mp = vp->v_mount;
 	NFSDDSLOCK();
 	TAILQ_FOREACH(ds, &nfsrv_devidhead, nfsdev_list) {
-		if (ds->nfsdev_nmp != NULL)
+		if (ds->nfsdev_nmp != NULL && (ds->nfsdev_mdsisset == 0 ||
+		    (mp->mnt_stat.f_fsid.val[0] == ds->nfsdev_mdsfsid.val[0] &&
+		     mp->mnt_stat.f_fsid.val[1] == ds->nfsdev_mdsfsid.val[1])))
 			break;
 	}
 	if (ds == NULL) {
@@ -3859,10 +3881,15 @@ nfsrv_pnfscreate(struct vnode *vp, struct vattr *vap, struct ucred *cred,
 	i = dsdir[0] = ds->nfsdev_nextdir;
 	ds->nfsdev_nextdir = (ds->nfsdev_nextdir + 1) % nfsrv_dsdirsize;
 	dvp[0] = ds->nfsdev_dsdir[i];
-	if (nfsrv_maxpnfsmirror > 1) {
-		mds = TAILQ_NEXT(ds, nfsdev_list);
+	mds = TAILQ_NEXT(ds, nfsdev_list);
+	if (nfsrv_maxpnfsmirror > 1 && mds != NULL) {
 		TAILQ_FOREACH_FROM(mds, &nfsrv_devidhead, nfsdev_list) {
-			if (mds->nfsdev_nmp != NULL) {
+			if (mds->nfsdev_nmp != NULL &&
+			    (mds->nfsdev_mdsisset == 0 ||
+			     (mp->mnt_stat.f_fsid.val[0] ==
+			      mds->nfsdev_mdsfsid.val[0] &&
+			      mp->mnt_stat.f_fsid.val[1] ==
+			      mds->nfsdev_mdsfsid.val[1]))) {
 				dsdir[mirrorcnt] = i;
 				dvp[mirrorcnt] = mds->nfsdev_dsdir[i];
 				mirrorcnt++;
@@ -3879,7 +3906,8 @@ nfsrv_pnfscreate(struct vnode *vp, struct vattr *vap, struct ucred *cred,
 	if (mirrorcnt > 1)
 		tdsc = dsc = malloc(sizeof(*dsc) * (mirrorcnt - 1), M_TEMP,
 		    M_WAITOK | M_ZERO);
-	tpf = pf = malloc(sizeof(*pf) * mirrorcnt, M_TEMP, M_WAITOK | M_ZERO);
+	tpf = pf = malloc(sizeof(*pf) * nfsrv_maxpnfsmirror, M_TEMP, M_WAITOK |
+	    M_ZERO);
 
 	error = nfsvno_getfh(vp, &fh, p);
 	if (error == 0)
@@ -3987,11 +4015,27 @@ nfsrv_pnfscreate(struct vnode *vp, struct vattr *vap, struct ucred *cred,
 	NFSFREECRED(tcred);
 	if (error == 0) {
 		ASSERT_VOP_ELOCKED(vp, "nfsrv_pnfscreate vp");
+
+		NFSD_DEBUG(4, "nfsrv_pnfscreate: mirrorcnt=%d maxmirror=%d\n",
+		    mirrorcnt, nfsrv_maxpnfsmirror);
+		/*
+		 * For all mirrors that couldn't be created, fill in the
+		 * *pf structure, but with an IP address == 0.0.0.0.
+		 */
+		tpf = pf + mirrorcnt;
+		for (i = mirrorcnt; i < nfsrv_maxpnfsmirror; i++, tpf++) {
+			*tpf = *pf;
+			tpf->dsf_sin.sin_family = AF_INET;
+			tpf->dsf_sin.sin_len = sizeof(struct sockaddr_in);
+			tpf->dsf_sin.sin_addr.s_addr = 0;
+			tpf->dsf_sin.sin_port = 0;
+		}
+
 		error = vn_start_write(vp, &mp, V_WAIT);
 		if (error == 0) {
 			error = vn_extattr_set(vp, IO_NODELOCKED,
 			    EXTATTR_NAMESPACE_SYSTEM, "pnfsd.dsfile",
-			    sizeof(*pf) * mirrorcnt, (char *)pf, p);
+			    sizeof(*pf) * nfsrv_maxpnfsmirror, (char *)pf, p);
 			if (error == 0)
 				error = vn_extattr_set(vp, IO_NODELOCKED,
 				    EXTATTR_NAMESPACE_SYSTEM, "pnfsd.dsattr",
@@ -4447,6 +4491,7 @@ nfsrv_dsgetsockmnt(struct vnode *vp, int lktype, char *buf, int *buflenp,
     struct nfsmount *curnmp, int *ippos, int *dsdirp)
 {
 	struct vnode *dvp, *nvp, **tdvpp;
+	struct mount *mp;
 	struct nfsmount *nmp, *newnmp;
 	struct sockaddr *sad;
 	struct sockaddr_in *sin;
@@ -4468,6 +4513,7 @@ nfsrv_dsgetsockmnt(struct vnode *vp, int lktype, char *buf, int *buflenp,
 		newnmp = *newnmpp;
 	else
 		newnmp = NULL;
+	mp = vp->v_mount;
 	error = vn_extattr_get(vp, IO_NODELOCKED, EXTATTR_NAMESPACE_SYSTEM,
 	    "pnfsd.dsfile", buflenp, buf, p);
 	mirrorcnt = *buflenp / sizeof(*pf);
@@ -4528,7 +4574,13 @@ nfsrv_dsgetsockmnt(struct vnode *vp, int lktype, char *buf, int *buflenp,
 						fndds = ds;
 					else if (newnmpp != NULL &&
 					    newnmp == NULL &&
-					    (*newnmpp == NULL || fndds == NULL))
+					    (*newnmpp == NULL ||
+					     fndds == NULL) &&
+					    (ds->nfsdev_mdsisset == 0 ||
+					     (ds->nfsdev_mdsfsid.val[0] ==
+					      mp->mnt_stat.f_fsid.val[0] &&
+					      ds->nfsdev_mdsfsid.val[1] ==
+					      mp->mnt_stat.f_fsid.val[1])))
 						/*
 						 * Return a destination for the
 						 * copy in newnmpp. Choose the

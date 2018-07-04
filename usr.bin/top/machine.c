@@ -59,7 +59,6 @@ static const int namelength = 10;
 /* TOP_JID_LEN based on max of 999999 */
 #define TOP_JID_LEN 6
 #define TOP_SWAP_LEN 5
-static int cmdlengthdelta;
 
 /* get_process_info passes back a handle.  This is what it looks like: */
 
@@ -409,13 +408,13 @@ format_header(const char *uname_field)
 		    ps.jail ? TOP_JID_LEN : 0, ps.jail ? " JID" : "",
 		    namelength, namelength, uname_field);
 		sbuf_cat(header, "   VCSW  IVCSW   READ  WRITE  FAULT  TOTAL PERCENT COMMAND");
+		sbuf_finish(header);
 		break;
 	}
 	case DISP_MAX:
 		assert("displaymode must not be set to DISP_MAX");
 	}
 
-	cmdlengthdelta = sbuf_len(header) - 7;
 	return sbuf_data(header);
 }
 
@@ -952,7 +951,6 @@ format_next_process(struct handle * xhandle, char *(*get_userid)(int), int flags
 		}
 	} else {
 		if (pp->ki_flag & P_SYSTEM ||
-		    pp->ki_args == NULL ||
 		    (args = kvm_getargv(kd, pp, cmdlen)) == NULL ||
 		    !(*args)) {
 			if (ps.thread && pp->ki_flag & P_HADTHREADS &&
@@ -988,9 +986,13 @@ format_next_process(struct handle * xhandle, char *(*get_userid)(int), int flags
 				if (*src == '\0')
 					continue;
 				len = (argbuflen - (dst - argbuf) - 1) / 4;
-				strvisx(dst, src,
-				    MIN(strlen(src), len),
-				    VIS_NL | VIS_CSTYLE);
+				if (utf8flag) {
+					utf8strvisx(dst, src, MIN(strlen(src), len));
+				} else {
+					strvisx(dst, src,
+					    MIN(strlen(src), len),
+					    VIS_NL | VIS_CSTYLE);
+				}
 				while (*dst != '\0')
 					dst++;
 				if ((argbuflen - (dst - argbuf) - 1) / 4 > 0)
@@ -1087,10 +1089,7 @@ format_next_process(struct handle * xhandle, char *(*get_userid)(int), int flags
 		sbuf_printf(procbuf, "%6s ", format_time(cputime));
 		sbuf_printf(procbuf, "%6.2f%% ", ps.wcpu ? 100.0 * weighted_cpu(PCTCPU(pp), pp) : 100.0 * PCTCPU(pp));
 	}
-	sbuf_printf(procbuf, "%.*s",
-		screen_width > cmdlengthdelta ?
-		screen_width - cmdlengthdelta : 0,
-		printable(cmdbuf));
+	sbuf_printf(procbuf, "%s", printable(cmdbuf));
 	free(cmdbuf);
 	return (sbuf_data(procbuf));
 }

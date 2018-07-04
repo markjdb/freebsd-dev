@@ -96,7 +96,7 @@
  * Kernel modules call real functions which are built into the kernel.
  * This allows kernel modules to be portable between UP and SMP systems.
  */
-#if defined(KLD_MODULE) || !defined(__GNUCLIKE_ASM)
+#if !defined(__GNUCLIKE_ASM)
 #define	ATOMIC_ASM(NAME, TYPE, OP, CONS, V)			\
 void atomic_##NAME##_##TYPE(volatile u_##TYPE *p, u_##TYPE v);	\
 void atomic_##NAME##_barr_##TYPE(volatile u_##TYPE *p, u_##TYPE v)
@@ -446,10 +446,10 @@ ATOMIC_ASM(clear,    int,   "andl %1,%0",  "ir", ~v);
 ATOMIC_ASM(add,	     int,   "addl %1,%0",  "ir",  v);
 ATOMIC_ASM(subtract, int,   "subl %1,%0",  "ir",  v);
 
-ATOMIC_ASM(set,	     long,  "orq %1,%0",   "ir",  v);
-ATOMIC_ASM(clear,    long,  "andq %1,%0",  "ir", ~v);
-ATOMIC_ASM(add,	     long,  "addq %1,%0",  "ir",  v);
-ATOMIC_ASM(subtract, long,  "subq %1,%0",  "ir",  v);
+ATOMIC_ASM(set,	     long,  "orq %1,%0",   "er",  v);
+ATOMIC_ASM(clear,    long,  "andq %1,%0",  "er", ~v);
+ATOMIC_ASM(add,	     long,  "addq %1,%0",  "er",  v);
+ATOMIC_ASM(subtract, long,  "subq %1,%0",  "er",  v);
 
 #define	ATOMIC_LOADSTORE(TYPE)					\
 	ATOMIC_LOAD(TYPE);					\
