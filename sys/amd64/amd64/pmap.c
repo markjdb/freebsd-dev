@@ -2307,9 +2307,7 @@ retry:
 				if (vm_page_pa_tryrelock(pmap, (pde &
 				    PG_PS_FRAME) | (va & PDRMASK), &pa))
 					goto retry;
-				m = PHYS_TO_VM_PAGE((pde & PG_PS_FRAME) |
-				    (va & PDRMASK));
-				vm_page_hold(m);
+				m = PHYS_TO_VM_PAGE(pa);
 			}
 		} else {
 			pte = *pmap_pde_to_pte(pdep, va);
@@ -2318,10 +2316,11 @@ retry:
 				if (vm_page_pa_tryrelock(pmap, pte & PG_FRAME,
 				    &pa))
 					goto retry;
-				m = PHYS_TO_VM_PAGE(pte & PG_FRAME);
-				vm_page_hold(m);
+				m = PHYS_TO_VM_PAGE(pa);
 			}
 		}
+		if (m != NULL)
+			vm_page_hold(m);
 	}
 	PA_UNLOCK_COND(pa);
 	PMAP_UNLOCK(pmap);
@@ -4899,6 +4898,8 @@ retry:
 				vm_page_aflag_set(om, PGA_REFERENCED);
 			CHANGE_PV_LIST_LOCK_TO_PHYS(&lock, opa);
 			pv = pmap_pvh_remove(&om->md, pmap, va);
+			if ((newpte & PG_MANAGED) == 0)
+				free_pv_entry(pmap, pv);
 			if ((om->aflags & PGA_WRITEABLE) != 0 &&
 			    TAILQ_EMPTY(&om->md.pv_list) &&
 			    ((om->flags & PG_FICTITIOUS) != 0 ||
