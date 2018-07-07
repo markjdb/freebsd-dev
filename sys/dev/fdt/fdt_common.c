@@ -447,19 +447,12 @@ fdt_get_reserved_regions(struct mem_region *mr, int *mrcnt)
 {
 	pcell_t reserve[FDT_REG_CELLS * FDT_MEM_REGIONS];
 	pcell_t *reservep;
-	phandle_t memory, root;
+	phandle_t root;
 	int addr_cells, size_cells;
 	int i, res_len, rv, tuple_size, tuples;
 
 	root = OF_finddevice("/");
-	memory = OF_finddevice("/memory");
-	if (memory == -1) {
-		rv = ENXIO;
-		goto out;
-	}
-
-	if ((rv = fdt_addrsize_cells(OF_parent(memory), &addr_cells,
-	    &size_cells)) != 0)
+	if ((rv = fdt_addrsize_cells(root, &addr_cells, &size_cells)) != 0)
 		goto out;
 
 	if (addr_cells > 2) {
