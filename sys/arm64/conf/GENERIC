@@ -78,6 +78,8 @@ options 	RCTL			# Resource limits
 options 	SMP
 options 	INTRNG
 
+options 	NUMA
+
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.
 options 	KDB_TRACE		# Print a stack trace for a panic.
