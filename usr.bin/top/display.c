@@ -347,12 +347,12 @@ i_procstates(int total, int *brkdn)
     procstates_buffer = setup_buffer(procstates_buffer, 0);
 
     /* write current number of processes and remember the value */
-    printf("%d %s:", total, (ps.thread) ? "threads" :"processes");
+    printf("%d %s:", total, ps.thread ? "threads" : "processes");
     ltotal = total;
 
     /* put out enough spaces to get to column 15 */
     i = digits(total);
-    while (i++ < 4)
+    while (i++ < (ps.thread ? 6 : 4))
     {
 	putchar(' ');
     }
@@ -389,10 +389,10 @@ else {
 	/* if number of digits differs, rewrite the label */
 	if (digits(total) != digits(ltotal))
 	{
-	    fputs(" processes:", stdout);
+	    printf(" %s:", ps.thread ? "threads" : "processes");
 	    /* put out enough spaces to get to column 15 */
 	    i = digits(total);
-	    while (i++ < 4)
+	    while (i++ < (ps.thread ? 6 : 4))
 	    {
 		putchar(' ');
 	    }
@@ -1275,43 +1275,19 @@ line_update(char *old, char *new, int start, int line)
 char *
 printable(char str[])
 {
-	char *ptr;
-	char ch;
+    char *ptr;
+    char ch;
 
-	ptr = str;
-	if (utf8flag) {
-		while ((ch = *ptr) != '\0') {
-			if (0x00 == (0x80 & ch)) {
-				if (!isprint(ch)) {
-					*ptr = '?';
-				}
-				++ptr;
-			} else if (0xC0 == (0xE0 & ch)) {
-				++ptr;
-				if ('\0' != *ptr) ++ptr;
-			} else if (0xE0 == (0xF0 & ch)) {
-				++ptr;
-				if ('\0' != *ptr) ++ptr;
-				if ('\0' != *ptr) ++ptr;
-			} else if (0xF0 == (0xF8 & ch)) {
-				++ptr;
-				if ('\0' != *ptr) ++ptr;
-				if ('\0' != *ptr) ++ptr;
-				if ('\0' != *ptr) ++ptr;
-			} else {
-				*ptr = '?';
-				++ptr;
-			}
-		}
-	} else {
-		while ((ch = *ptr) != '\0') {
-			if (!isprint(ch)) {
-				*ptr = '?';
-			}
-			ptr++;
-		}
+    ptr = str;
+    while ((ch = *ptr) != '\0')
+    {
+	if (!isprint(ch))
+	{
+	    *ptr = '?';
 	}
-	return(str);
+	ptr++;
+    }
+    return(str);
 }
 
 void
