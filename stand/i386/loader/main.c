@@ -69,6 +69,7 @@ struct arch_switch	archsw;		/* MI/MD interface boundary */
 static void		extract_currdev(void);
 static int		isa_inb(int port);
 static void		isa_outb(int port, int value);
+static uint64_t		i386_loadaddr(u_int type, void *data, uint64_t addr);
 void			exit(int code);
 #ifdef LOADER_GELI_SUPPORT
 #include "geliboot.h"
@@ -166,6 +167,7 @@ main(void)
     archsw.arch_readin = i386_readin;
     archsw.arch_isainb = isa_inb;
     archsw.arch_isaoutb = isa_outb;
+    archsw.arch_loadaddr = i386_loadaddr;
 #ifdef LOADER_ZFS_SUPPORT
     archsw.arch_zfs_probe = i386_zfs_probe;
 
@@ -383,6 +385,16 @@ isa_outb(int port, int value)
 {
 
     outb(port, value);
+}
+
+/*
+ * Microcode files must be aligned to a 16 byte boundary.
+ */
+static uint64_t
+i386_loadaddr(u_int type __unused, void *data __unused, uint64_t addr)
+{
+
+    return (roundup2(addr, 16));
 }
 
 #ifdef LOADER_ZFS_SUPPORT
