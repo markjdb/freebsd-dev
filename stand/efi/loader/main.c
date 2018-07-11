@@ -408,6 +408,17 @@ interactive_interrupt(const char *msg)
 	return (false);
 }
 
+/*
+ * Ensure that preloaded files have 16 byte alignment.  This is required
+ * for early loading of microcode updates.
+ */
+static uint64_t
+efi_loadaddr(u_int type __unused, void *data __unused, uint64_t addr)
+{
+
+	return (roundup2(addr, 16));
+}
+
 static int
 parse_args(int argc, CHAR16 *argv[])
 {
@@ -544,6 +555,7 @@ main(int argc, CHAR16 *argv[])
 	archsw.arch_copyin = efi_copyin;
 	archsw.arch_copyout = efi_copyout;
 	archsw.arch_readin = efi_readin;
+	archsw.arch_loadaddr = efi_loadaddr;
 #ifdef EFI_ZFS_BOOT
 	/* Note this needs to be set before ZFS init. */
 	archsw.arch_zfs_probe = efi_zfs_probe;
