@@ -37,6 +37,10 @@ SRCS+=	bcmp.c bcopy.c bzero.c ffs.c fls.c \
 .PATH: ${LIBC_SRC}/stdlib
 SRCS+=	abs.c strtol.c strtoll.c strtoul.c strtoull.c
 
+# common boot code
+.PATH:	${SYSDIR}/kern
+SRCS+=	subr_boot.c
+
 .if ${MACHINE_CPUARCH} == "arm"
 .PATH: ${LIBC_SRC}/arm/gen
 
@@ -92,6 +96,7 @@ SRCS+=bzlib.c crctable.c decompress.c huffman.c randtable.c
 # decompression functionality from zlib
 .PATH: ${SRCTOP}/contrib/zlib
 CFLAGS+=-DHAVE_MEMCPY -I${SRCTOP}/contrib/zlib
+CFLAGS.inflate.c+=-DKZIP
 SRCS+=	adler32.c crc32.c
 SRCS+=	infback.c inffast.c inflate.c inftrees.c zutil.c
 
