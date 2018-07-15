@@ -518,6 +518,7 @@ pmap_cold(void)
 	ncr4 = 0;
 	if ((cpu_feature & CPUID_PSE) != 0) {
 		ncr4 |= CR4_PSE;
+		pseflag = 1;
 		/*
 		 * Superpage mapping of the kernel text.  Existing 4k
 		 * page table pages are wasted.
