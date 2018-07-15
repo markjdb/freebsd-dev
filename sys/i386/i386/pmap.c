@@ -201,8 +201,8 @@ struct pmap kernel_pmap_store;
 
 vm_offset_t virtual_avail;	/* VA of first avail page (after kernel bss) */
 vm_offset_t virtual_end;	/* VA of last avail page (end of kernel AS) */
-int pgeflag = 0;		/* PG_G or-in */
-int pseflag = 0;		/* PG_PS or-in */
+static int pgeflag = 0;		/* PG_G or-in */
+static int pseflag = 0;		/* PG_PS or-in */
 
 static int nkpt = NKPT;
 vm_offset_t kernel_vm_end = /* 0 + */ NKPT * NBPDR;
@@ -518,6 +518,7 @@ pmap_cold(void)
 	ncr4 = 0;
 	if ((cpu_feature & CPUID_PSE) != 0) {
 		ncr4 |= CR4_PSE;
+		pseflag = 1;
 		/*
 		 * Superpage mapping of the kernel text.  Existing 4k
 		 * page table pages are wasted.
