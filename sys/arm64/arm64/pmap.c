@@ -111,6 +111,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bitstring.h>
 #include <sys/bus.h>
 #include <sys/systm.h>
+#include <sys/fail.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
@@ -2045,6 +2046,11 @@ retry:
 	/* No free items, allocate another chunk */
 	m = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ |
 	    VM_ALLOC_WIRED);
+	KFAIL_POINT_CODE(DEBUG_FP, pv_alloc, {
+	    vm_page_unwire_noq(m);
+	    vm_page_free(m);
+	    m = NULL;
+	});
 	if (m == NULL) {
 		if (lockp == NULL) {
 			PV_STAT(pc_chunk_tryfail++);
