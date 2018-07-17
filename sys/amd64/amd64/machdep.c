@@ -101,6 +101,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_object.h>
 #include <vm/vm_pager.h>
 #include <vm/vm_param.h>
+#include <vm/vm_phys.h>
 
 #ifdef DDB
 #ifndef KDB
@@ -177,7 +178,7 @@ static void native_parse_memmap(caddr_t, vm_paddr_t *, int *);
 
 /* Default init_ops implementation. */
 struct init_ops init_ops = {
-	.parse_preload_data =	native_parse_preload_data,
+	.parse_preload_data =		native_parse_preload_data,
 	.early_clock_source_init =	i8254_init,
 	.early_delay =			i8254_delay,
 	.parse_memmap =			native_parse_memmap,
@@ -1226,6 +1227,12 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 	pt_entry_t *pte;
 	quad_t dcons_addr, dcons_size;
 	int page_counter;
+
+	/*
+	 * Tell the physical memory allocator about pages used to store
+	 * the kernel and preload data.  See kmem_bootstrap_free().
+	 */
+	vm_phys_add_seg((vm_paddr_t)kernphys, trunc_page(first));
 
 	bzero(physmap, sizeof(physmap));
 	physmap_idx = 0;
