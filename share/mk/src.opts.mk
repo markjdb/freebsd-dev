@@ -299,11 +299,6 @@ __DEFAULT_NO_OPTIONS+=CLANG CLANG_BOOTSTRAP CLANG_IS_CC LLD
 .if ${__T} == "aarch64" || ${__T:Mriscv*} != ""
 BROKEN_OPTIONS+=BINUTILS BINUTILS_BOOTSTRAP GCC GCC_BOOTSTRAP GDB
 .endif
-.if ${__T:Mriscv*} != ""
-BROKEN_OPTIONS+=PROFILE # "sorry, unimplemented: profiler support for RISC-V"
-BROKEN_OPTIONS+=TESTS   # "undefined reference to `_Unwind_Resume'"
-BROKEN_OPTIONS+=CXX     # "libcxxrt.so: undefined reference to `_Unwind_Resume_or_Rethrow'"
-.endif
 .if ${__T} == "aarch64" || ${__T} == "amd64" || ${__T} == "i386" || \
     ${__T:Mriscv*} != "" || ${__TT} == "mips"
 __DEFAULT_YES_OPTIONS+=LLVM_LIBUNWIND
@@ -321,7 +316,7 @@ __DEFAULT_YES_OPTIONS+=LLDB
 __DEFAULT_NO_OPTIONS+=LLDB
 .endif
 # LLVM lacks support for FreeBSD 64-bit atomic operations for ARMv4/ARMv5
-.if ${__T} == "arm" || ${__T} == "armeb"
+.if ${__T} == "arm"
 BROKEN_OPTIONS+=LLDB
 .endif
 # GDB in base is generally less functional than GDB in ports.  Ports GDB
