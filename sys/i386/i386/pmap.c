@@ -662,7 +662,7 @@ pmap_bootstrap(vm_paddr_t firstaddr)
 	SYSMAP(pt_entry_t *, KPTD, KPTmap, KVA_PAGES)
 
 	for (i = 0; i < NKPT; i++)
-		KPTD[i] = (KPTphys + ptoa(i)) | PG_RW | PG_V;
+		KPTD[i] = (KPTphys + ptoa(i)) | PG_RW | PG_V | PG_A;
 
 	/*
 	 * PADDR1 and PADDR2 are used by pmap_pte_quick() and pmap_pte(),
@@ -931,6 +931,7 @@ pmap_init(void)
 	 * Initialize the vm page array entries for the kernel pmap's
 	 * page table pages.
 	 */ 
+	PMAP_LOCK(kernel_pmap);
 	for (i = 0; i < NKPT; i++) {
 		mpte = PHYS_TO_VM_PAGE(KPTphys + ptoa(i));
 		KASSERT(mpte >= vm_page_array &&
@@ -938,7 +939,12 @@ pmap_init(void)
 		    ("pmap_init: page table page is out of range"));
 		mpte->pindex = i + KPTDI;
 		mpte->phys_addr = KPTphys + ptoa(i);
+		if (pseflag != 0 &&
+		    KERNBASE <= i << PDRSHIFT && i << PDRSHIFT < KERNend &&
+		    pmap_insert_pt_page(kernel_pmap, mpte))
+			panic("pmap_init: pmap_insert_pt_page failed");
 	}
+	PMAP_UNLOCK(kernel_pmap);
 
 	/*
 	 * Initialize the address space (zone) for the pv entries.  Set a
