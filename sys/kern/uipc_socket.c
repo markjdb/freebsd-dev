@@ -37,7 +37,7 @@
 /*
  * Comments on the socket life cycle:
  *
- * soalloc() sets of socket layer state for a socket, called only by
+ * soalloc() sets up socket layer state for a socket, called only by
  * socreate() and sonewconn().  Socket layer private.
  *
  * sodealloc() tears down socket layer state for a socket, called only by
