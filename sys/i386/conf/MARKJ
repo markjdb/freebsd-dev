@@ -231,7 +231,7 @@ device		em		# Intel PRO/1000 Gigabit Ethernet Family
 
 # PCI Ethernet NICs that use the common MII bus controller code.
 # NOTE: Be sure to keep the 'device miibus' line in order to use these NICs!
-#device		miibus		# MII bus support
+device		miibus		# MII bus support
 #device		ae		# Attansic/Atheros L2 FastEthernet
 #device		age		# Attansic/Atheros L1 Gigabit Ethernet
 device		alc		# Atheros AR8131/AR8132 Ethernet
