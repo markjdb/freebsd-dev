@@ -78,6 +78,8 @@ options 	RCTL			# Resource limits
 options 	SMP
 options 	INTRNG
 
+options 	ALT_BREAK_TO_DEBUGGER
+
 # RISC-V SBI console
 device		rcons
 
@@ -99,7 +101,7 @@ device		uart_ns8250	# ns8250-type UART driver
 # options 	ROOTDEVNAME=\"ufs:/dev/md0\"
 
 # Uncomment for virtio block device
-# options 	ROOTDEVNAME=\"ufs:/dev/vtbd0\"
+options 	ROOTDEVNAME=\"ufs:/dev/vtbd0\"
 
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.
