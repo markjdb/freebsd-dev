@@ -143,6 +143,8 @@ int	sbappendcontrol(struct sockbuf *sb, struct mbuf *m0,
 	    struct mbuf *control);
 int	sbappendcontrol_locked(struct sockbuf *sb, struct mbuf *m0,
 	    struct mbuf *control);
+void	sbappendcontrol_nospacecheck_locked(struct sockbuf *sb, struct mbuf *m0,
+	    struct mbuf *control);
 void	sbappendrecord(struct sockbuf *sb, struct mbuf *m0);
 void	sbappendrecord_locked(struct sockbuf *sb, struct mbuf *m0);
 void	sbcompress(struct sockbuf *sb, struct mbuf *m, struct mbuf *n);
