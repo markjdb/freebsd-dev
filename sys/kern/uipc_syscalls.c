@@ -1016,7 +1016,11 @@ kern_recvit(struct thread *td, int s, struct msghdr *mp, enum uio_seg fromseg,
 				tocopy = m->m_len;
 			else {
 				mp->msg_flags |= MSG_CTRUNC;
-				tocopy = len;
+				/* XXX */
+				m_free_extcontrolm(control);
+				controlp = NULL;
+				control = NULL;
+				goto out;
 			}
 
 			if ((error = copyout(mtod(m, caddr_t), ctlbuf,
@@ -1026,8 +1030,8 @@ kern_recvit(struct thread *td, int s, struct msghdr *mp, enum uio_seg fromseg,
 			ctlbuf += tocopy;
 			len -= tocopy;
 			m = m->m_next;
+			mp->msg_controllen += tocopy;
 		}
-		mp->msg_controllen = ctlbuf - (caddr_t)mp->msg_control;
 	}
 out:
 	fdrop(fp, td);
@@ -1039,8 +1043,12 @@ out:
 
 	if (error == 0 && controlp != NULL)
 		*controlp = control;
-	else if (control)
-		m_freem(control);
+	else if (control) {
+		if (controlp != NULL || (mp->msg_control != NULL && error != 0))
+			m_free_extcontrolm(control);
+		else
+			m_freem(control);
+	}
 
 	return (error);
 }

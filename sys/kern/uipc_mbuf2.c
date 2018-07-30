@@ -69,11 +69,14 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/capsicum.h>
+#include <sys/filedesc.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/mutex.h>
+#include <sys/socket.h>
 
 #include <security/mac/mac_framework.h>
 
@@ -450,4 +453,43 @@ m_tag_copy_chain(struct mbuf *to, const struct mbuf *from, int how)
 		tprev = t;
 	}
 	return 1;
+}
+
+/*
+ * Free a control mbuf chain with "externalized" contents, i.e., file
+ * descriptors from the table of the currently running thread.
+ *
+ * XXX assuming one message per mbuf...
+ */
+void
+m_free_extcontrolm(struct mbuf *m)
+{
+	struct cmsghdr *cmsg;
+	struct file *fp;
+	struct mbuf *n;
+	struct thread *td;
+	int fd, *fds, nfd;
+
+	td = curthread;
+	do {
+		if (m->m_len < sizeof(*cmsg))
+			panic("m_free_extcontrol: truncated mbuf %p", m);
+		cmsg = mtod(m, struct cmsghdr *);
+		if (cmsg->cmsg_level == SOL_SOCKET &&
+		    cmsg->cmsg_type == SCM_RIGHTS) {
+			fds = (int *)CMSG_DATA(mtod(m, struct cmsghdr *));
+			nfd = (uintptr_t)cmsg + cmsg->cmsg_len - (uintptr_t)fds;
+			nfd /= sizeof(int);
+
+			while (nfd-- > 0) {
+				fd = *fds++;
+				if (fget(td, fd, &cap_no_rights, &fp) == 0)
+					fdclose(td, fp, fd);
+			}
+		}
+
+		n = m->m_next;
+		m_free(m);
+		m = n;
+	} while (m != NULL);
 }

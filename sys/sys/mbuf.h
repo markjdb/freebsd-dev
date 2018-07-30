@@ -1384,5 +1384,7 @@ void	netdump_mbuf_dump(void);
 void	netdump_mbuf_reinit(int nmbuf, int nclust, int clsize);
 #endif
 
+void m_free_extcontrolm(struct mbuf *m);
+
 #endif /* _KERNEL */
 #endif /* !_SYS_MBUF_H_ */
