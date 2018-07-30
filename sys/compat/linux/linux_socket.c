@@ -1338,9 +1338,8 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 			    bsd_to_linux_cmsg_type(cm->cmsg_type);
 			linux_cmsg->cmsg_level =
 			    bsd_to_linux_sockopt_level(cm->cmsg_level);
-			if (linux_cmsg->cmsg_type == -1
-			    || cm->cmsg_level != SOL_SOCKET)
-			{
+			if (linux_cmsg->cmsg_type == -1 ||
+			    cm->cmsg_level != SOL_SOCKET) {
 				error = EINVAL;
 				goto bad;
 			}
@@ -1348,8 +1347,7 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 			data = CMSG_DATA(cm);
 			datalen = (caddr_t)cm + cm->cmsg_len - (caddr_t)data;
 
-			switch (cm->cmsg_type)
-			{
+			switch (cm->cmsg_type) {
 			case SCM_RIGHTS:
 				if (flags & LINUX_MSG_CMSG_CLOEXEC) {
 					fds = datalen / sizeof(int);
@@ -1402,6 +1400,7 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 				} else {
 					linux_msg.msg_flags |=
 					    LINUX_MSG_CTRUNC;
+					m_dispose_extcontrolm(control);
 					goto out;
 				}
 			}
@@ -1429,8 +1428,12 @@ out:
 	error = copyout(&linux_msg, msghdr, sizeof(linux_msg));
 
 bad:
+	if (control != NULL) {
+		if (error != 0)
+			m_dispose_extcontrolm(control);
+		m_freem(control);
+	}
 	free(iov, M_IOV);
-	m_freem(control);
 	free(linux_cmsg, M_LINUX);
 
 	return (error);

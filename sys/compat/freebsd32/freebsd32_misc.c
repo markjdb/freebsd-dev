@@ -1133,15 +1133,11 @@ freebsd32_copy_msg_out(struct msghdr *msg, struct mbuf *control)
 	maxlen = msg->msg_controllen;
 	msg->msg_controllen = 0;
 
-	m = control;
 	ctlbuf = msg->msg_control;
-      
-	while (m && len > 0) {
+	for (m = control; m != NULL && len > 0; m = m->m_next) {
 		cm = mtod(m, struct cmsghdr *);
 		clen = m->m_len;
-
 		while (cm != NULL) {
-
 			if (sizeof(struct cmsghdr) > clen ||
 			    cm->cmsg_len > clen) {
 				error = EINVAL;
@@ -1160,7 +1156,8 @@ freebsd32_copy_msg_out(struct msghdr *msg, struct mbuf *control)
 			copylen = sizeof(struct cmsghdr);
 			if (len < copylen) {
 				msg->msg_flags |= MSG_CTRUNC;
-				copylen = len;
+				m_dispose_extcontrolm(m);
+				goto exit;
 			}
 
 			error = copyout(cm, ctlbuf, copylen);
@@ -1177,7 +1174,8 @@ freebsd32_copy_msg_out(struct msghdr *msg, struct mbuf *control)
 			copylen = datalen_out;
 			if (len < copylen) {
 				msg->msg_flags |= MSG_CTRUNC;
-				copylen = len;
+				m_dispose_extcontrolm(m);
+				goto exit;
 			}
 
 			error = copyout(data, ctlbuf, copylen);
@@ -1190,20 +1188,18 @@ freebsd32_copy_msg_out(struct msghdr *msg, struct mbuf *control)
 			if (CMSG_SPACE(datalen) < clen) {
 				clen -= CMSG_SPACE(datalen);
 				cm = (struct cmsghdr *)
-					((caddr_t)cm + CMSG_SPACE(datalen));
+				    ((caddr_t)cm + CMSG_SPACE(datalen));
 			} else {
 				clen = 0;
 				cm = NULL;
 			}
-		}	
-		m = m->m_next;
+		}
+		msg->msg_controllen = (len <= 0) ? maxlen :
+		    ctlbuf - (caddr_t)msg->msg_control;
 	}
 
-	msg->msg_controllen = (len <= 0) ? maxlen :  ctlbuf - (caddr_t)msg->msg_control;
-	
 exit:
 	return (error);
-
 }
 
 int
@@ -1240,12 +1236,12 @@ freebsd32_recvmsg(td, uap)
 	error = kern_recvit(td, uap->s, &msg, UIO_USERSPACE, controlp);
 	if (error == 0) {
 		msg.msg_iov = uiov;
-		
+
 		if (control != NULL)
 			error = freebsd32_copy_msg_out(&msg, control);
 		else
 			msg.msg_controllen = 0;
-		
+
 		if (error == 0)
 			error = freebsd32_copyoutmsghdr(&msg, uap->msg);
 	}
