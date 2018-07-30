@@ -1019,8 +1019,8 @@ kern_recvit(struct thread *td, int s, struct msghdr *mp, enum uio_seg fromseg,
 				tocopy = len;
 			}
 
-			if ((error = copyout(mtod(m, caddr_t),
-					ctlbuf, tocopy)) != 0)
+			if ((error = copyout(mtod(m, caddr_t), ctlbuf,
+			    tocopy)) != 0)
 				goto out;
 
 			ctlbuf += tocopy;
@@ -1039,7 +1039,7 @@ out:
 
 	if (error == 0 && controlp != NULL)
 		*controlp = control;
-	else  if (control)
+	else if (control)
 		m_freem(control);
 
 	return (error);
