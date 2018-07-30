@@ -2442,7 +2442,7 @@ static int	unp_marked;
 static int	unp_unreachable;
 
 static void
-unp_accessable(struct filedescent **fdep, int fdcount)
+unp_accessible(struct filedescent **fdep, int fdcount)
 {
 	struct unpcb *unp;
 	struct file *fp;
@@ -2493,7 +2493,7 @@ unp_gc_process(struct unpcb *unp)
 			if (sotounpcb(soa)->unp_gcflag & UNPGC_IGNORE_RIGHTS)
 				continue;
 			SOCKBUF_LOCK(&soa->so_rcv);
-			unp_scan(soa->so_rcv.sb_mb, unp_accessable);
+			unp_scan(soa->so_rcv.sb_mb, unp_accessible);
 			SOCKBUF_UNLOCK(&soa->so_rcv);
 		}
 	} else {
@@ -2502,7 +2502,7 @@ unp_gc_process(struct unpcb *unp)
 		 */
 		if ((unp->unp_gcflag & UNPGC_IGNORE_RIGHTS) == 0) {
 			SOCKBUF_LOCK(&so->so_rcv);
-			unp_scan(so->so_rcv.sb_mb, unp_accessable);
+			unp_scan(so->so_rcv.sb_mb, unp_accessible);
 			SOCKBUF_UNLOCK(&so->so_rcv);
 		}
 	}
