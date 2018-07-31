@@ -586,7 +586,7 @@ int
 mac_check_structmac_consistent(struct mac *mac)
 {
 
-	if (mac->m_buflen > MAC_MAX_LABEL_BUF_LEN)
+	if (mac->m_buflen > MAC_MAX_LABEL_BUF_LEN || mac->m_buflen < 2)
 		return (EINVAL);
 
 	return (0);
