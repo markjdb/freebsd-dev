@@ -419,7 +419,7 @@ main(int argc, char *argv[])
 
 	if (path_dhclient_pidfile == NULL) {
 		asprintf(&path_dhclient_pidfile,
-		    "%sdhclient.%s.pid", _PATH_VARRUN, *argv);
+		    "%s/dhclient/dhclient.%s.pid", _PATH_VARRUN, *argv);
 		if (path_dhclient_pidfile == NULL)
 			error("asprintf");
 	}
@@ -527,11 +527,6 @@ main(int argc, char *argv[])
 	cap_rights_init(&rights, CAP_EVENT, CAP_READ);
 	if (cap_rights_limit(routefd, &rights) < 0 && errno != ENOSYS)
 		error("can't limit route socket: %m");
-
-	if (chroot(_PATH_VAREMPTY) == -1)
-		error("chroot");
-	if (chdir("/") == -1)
-		error("chdir(\"/\")");
 
 	if (setgroups(1, &pw->pw_gid) ||
 	    setegid(pw->pw_gid) || setgid(pw->pw_gid) ||
@@ -2449,13 +2444,8 @@ go_daemon(void)
 
 	cap_rights_init(&rights);
 
-	if (pidfile != NULL) {
+	if (pidfile != NULL)
 		pidfile_write(pidfile);
-		if (cap_rights_limit(pidfile_fileno(pidfile), &rights) < 0 &&
-		    errno != ENOSYS) {
-			error("can't limit pidfile descriptor: %m");
-		}
-	}
 
 	if (nullfd != -1) {
 		close(nullfd);
