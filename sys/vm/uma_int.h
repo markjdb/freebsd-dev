@@ -303,6 +303,10 @@ typedef struct uma_klink *uma_klink_t;
 
 struct uma_zone_domain {
 	LIST_HEAD(,uma_bucket)	uzd_buckets;	/* full buckets */
+	long		uzd_items;	/* total item count */
+	long		uzd_imax;	/* XXX */
+	long		uzd_imin;	/* XXX */
+	long		uzd_wss;	/* XXX */
 };
 
 typedef struct uma_zone_domain * uma_zone_domain_t;
