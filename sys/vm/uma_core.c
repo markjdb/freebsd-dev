@@ -456,6 +456,37 @@ bucket_zone_drain(void)
 		zone_drain(ubz->ubz_zone);
 }
 
+static uma_bucket_t
+zone_try_fetch_bucket(uma_zone_t zone, uma_zone_domain_t zdom, const bool ws)
+{
+	uma_bucket_t bucket;
+
+	if ((bucket = LIST_FIRST(&zdom->uzd_buckets)) != NULL) {
+		MPASS(zdom->uzd_items >= bucket->ub_cnt);
+		LIST_REMOVE(bucket, ub_link);
+		zdom->uzd_items -= bucket->ub_cnt;
+		if (ws) {
+			if (zdom->uzd_imin > zdom->uzd_items)
+				zdom->uzd_imin = zdom->uzd_items;
+			UMA_BUCKET_CACHE_HIT(zdom);
+		}
+	} else if (ws) {
+		zdom->uzd_imax += zone->uz_count;
+		UMA_BUCKET_CACHE_MISS(zdom);
+	}
+	return (bucket);
+}
+
+static void
+zone_put_bucket(uma_zone_domain_t zdom, uma_bucket_t bucket, const bool ws)
+{
+
+	LIST_INSERT_HEAD(&zdom->uzd_buckets, bucket, ub_link);
+	zdom->uzd_items += bucket->ub_cnt;
+	if (ws && zdom->uzd_imax < zdom->uzd_items)
+		zdom->uzd_imax = zdom->uzd_items;
+}
+
 static void
 zone_log_warning(uma_zone_t zone)
 {
@@ -503,6 +534,18 @@ uma_timeout(void *unused)
 
 	/* Reschedule this event */
 	callout_reset(&uma_callout, UMA_TIMEOUT * hz, uma_timeout, NULL);
+}
+
+/* XXX */
+static void
+zone_domain_update_wss(uma_zone_domain_t zdom)
+{
+	long wss;
+
+	MPASS(zdom->uzd_imax >= zdom->uzd_imin);
+	wss = zdom->uzd_imax - zdom->uzd_imin;
+	zdom->uzd_imax = zdom->uzd_imin = zdom->uzd_items;
+	zdom->uzd_wss = 3 * wss / 4 + zdom->uzd_wss / 4;
 }
 
 /*
@@ -557,8 +600,14 @@ keg_timeout(uma_keg_t keg)
 static void
 zone_timeout(uma_zone_t zone)
 {
+	int i;
 
 	zone_foreach_keg(zone, &keg_timeout);
+
+	ZONE_LOCK(zone);
+	for (i = 0; i < vm_ndomains; i++)
+		zone_domain_update_wss(&zone->uz_domain[i]);
+	ZONE_UNLOCK(zone);
 }
 
 /*
@@ -769,16 +818,16 @@ cache_drain_safe_cpu(uma_zone_t zone)
 	cache = &zone->uz_cpu[curcpu];
 	if (cache->uc_allocbucket) {
 		if (cache->uc_allocbucket->ub_cnt != 0)
-			LIST_INSERT_HEAD(&zone->uz_domain[domain].uzd_buckets,
-			    cache->uc_allocbucket, ub_link);
+			zone_put_bucket(&zone->uz_domain[domain],
+			    cache->uc_allocbucket, false);
 		else
 			b1 = cache->uc_allocbucket;
 		cache->uc_allocbucket = NULL;
 	}
 	if (cache->uc_freebucket) {
 		if (cache->uc_freebucket->ub_cnt != 0)
-			LIST_INSERT_HEAD(&zone->uz_domain[domain].uzd_buckets,
-			    cache->uc_freebucket, ub_link);
+			zone_put_bucket(&zone->uz_domain[domain],
+			    cache->uc_freebucket, false);
 		else
 			b2 = cache->uc_freebucket;
 		cache->uc_freebucket = NULL;
@@ -841,8 +890,8 @@ bucket_cache_drain(uma_zone_t zone)
 	 */
 	for (i = 0; i < vm_ndomains; i++) {
 		zdom = &zone->uz_domain[i];
-		while ((bucket = LIST_FIRST(&zdom->uzd_buckets)) != NULL) {
-			LIST_REMOVE(bucket, ub_link);
+		while ((bucket = zone_try_fetch_bucket(zone, zdom, false)) !=
+		    NULL) {
 			ZONE_UNLOCK(zone);
 			bucket_drain(zone, bucket);
 			bucket_free(zone, bucket, NULL);
@@ -2513,11 +2562,9 @@ zalloc_start:
 		zdom = &zone->uz_domain[0];
 	else
 		zdom = &zone->uz_domain[domain];
-	if ((bucket = LIST_FIRST(&zdom->uzd_buckets)) != NULL) {
+	if ((bucket = zone_try_fetch_bucket(zone, zdom, true)) != NULL) {
 		KASSERT(bucket->ub_cnt != 0,
 		    ("uma_zalloc_arg: Returning an empty bucket."));
-
-		LIST_REMOVE(bucket, ub_link);
 		cache->uc_allocbucket = bucket;
 		ZONE_UNLOCK(zone);
 		goto zalloc_start;
@@ -2554,7 +2601,7 @@ zalloc_start:
 		if (cache->uc_allocbucket != NULL ||
 		    (zone->uz_flags & UMA_ZONE_NUMA &&
 		    domain != PCPU_GET(domain)))
-			LIST_INSERT_HEAD(&zdom->uzd_buckets, bucket, ub_link);
+			zone_put_bucket(zdom, bucket, false /* XXX ? */);
 		else
 			cache->uc_allocbucket = bucket;
 		ZONE_UNLOCK(zone);
@@ -3164,7 +3211,7 @@ zfree_start:
 			bucket_free(zone, bucket, udata);
 			goto zfree_restart;
 		} else
-			LIST_INSERT_HEAD(&zdom->uzd_buckets, bucket, ub_link);
+			zone_put_bucket(zdom, bucket, true);
 	}
 
 	/*
@@ -3611,6 +3658,7 @@ uma_reclaim_locked(bool kmem_danger)
 		cache_drain_safe(NULL);
 		zone_foreach(zone_drain);
 	}
+
 	/*
 	 * Some slabs may have been freed but this zone will be visited early
 	 * we visit again so that we can free pages that are empty once other
@@ -3862,7 +3910,7 @@ uma_print_zone(uma_zone_t zone)
  * directly so that we don't have to.
  */
 static void
-uma_zone_sumstat(uma_zone_t z, int *cachefreep, uint64_t *allocsp,
+uma_zone_sumstat(uma_zone_t z, long *cachefreep, uint64_t *allocsp,
     uint64_t *freesp, uint64_t *sleepsp)
 {
 	uma_cache_t cache;
@@ -3917,7 +3965,6 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 	struct uma_stream_header ush;
 	struct uma_type_header uth;
 	struct uma_percpu_stat *ups;
-	uma_bucket_t bucket;
 	uma_zone_domain_t zdom;
 	struct sbuf sbuf;
 	uma_cache_t cache;
@@ -3977,9 +4024,7 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 
 			for (i = 0; i < vm_ndomains; i++) {
 				zdom = &z->uz_domain[i];
-				LIST_FOREACH(bucket, &zdom->uzd_buckets,
-				    ub_link)
-					uth.uth_zone_free += bucket->ub_cnt;
+				uth.uth_zone_free += zdom->uzd_items;
 			}
 			uth.uth_allocs = z->uz_allocs;
 			uth.uth_frees = z->uz_frees;
@@ -4179,12 +4224,11 @@ uma_dbg_free(uma_zone_t zone, uma_slab_t slab, void *item)
 #ifdef DDB
 DB_SHOW_COMMAND(uma, db_show_uma)
 {
-	uma_bucket_t bucket;
 	uma_keg_t kz;
 	uma_zone_t z;
-	uma_zone_domain_t zdom;
 	uint64_t allocs, frees, sleeps;
-	int cachefree, i;
+	long cachefree;
+	int i;
 
 	db_printf("%18s %8s %8s %8s %12s %8s %8s\n", "Zone", "Size", "Used",
 	    "Free", "Requests", "Sleeps", "Bucket");
@@ -4201,13 +4245,10 @@ DB_SHOW_COMMAND(uma, db_show_uma)
 			if (!((z->uz_flags & UMA_ZONE_SECONDARY) &&
 			    (LIST_FIRST(&kz->uk_zones) != z)))
 				cachefree += kz->uk_free;
-			for (i = 0; i < vm_ndomains; i++) {
-				zdom = &z->uz_domain[i];
-				LIST_FOREACH(bucket, &zdom->uzd_buckets,
-				    ub_link)
-					cachefree += bucket->ub_cnt;
-			}
-			db_printf("%18s %8ju %8jd %8d %12ju %8ju %8u\n",
+			for (i = 0; i < vm_ndomains; i++)
+				cachefree += z->uz_domain[i].uzd_items;
+
+			db_printf("%18s %8ju %8jd %8ld %12ju %8ju %8u\n",
 			    z->uz_name, (uintmax_t)kz->uk_size,
 			    (intmax_t)(allocs - frees), cachefree,
 			    (uintmax_t)allocs, sleeps, z->uz_count);
@@ -4219,22 +4260,18 @@ DB_SHOW_COMMAND(uma, db_show_uma)
 
 DB_SHOW_COMMAND(umacache, db_show_umacache)
 {
-	uma_bucket_t bucket;
 	uma_zone_t z;
-	uma_zone_domain_t zdom;
 	uint64_t allocs, frees;
-	int cachefree, i;
+	long cachefree;
+	int i;
 
 	db_printf("%18s %8s %8s %8s %12s %8s\n", "Zone", "Size", "Used", "Free",
 	    "Requests", "Bucket");
 	LIST_FOREACH(z, &uma_cachezones, uz_link) {
 		uma_zone_sumstat(z, &cachefree, &allocs, &frees, NULL);
-		for (i = 0; i < vm_ndomains; i++) {
-			zdom = &z->uz_domain[i];
-			LIST_FOREACH(bucket, &zdom->uzd_buckets, ub_link)
-				cachefree += bucket->ub_cnt;
-		}
-		db_printf("%18s %8ju %8jd %8d %12ju %8u\n",
+		for (i = 0; i < vm_ndomains; i++)
+			cachefree += z->uz_domain[i].uzd_items;
+		db_printf("%18s %8ju %8jd %8ld %12ju %8u\n",
 		    z->uz_name, (uintmax_t)z->uz_size,
 		    (intmax_t)(allocs - frees), cachefree,
 		    (uintmax_t)allocs, z->uz_count);

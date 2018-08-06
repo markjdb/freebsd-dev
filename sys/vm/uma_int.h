@@ -301,8 +301,23 @@ struct uma_klink {
 };
 typedef struct uma_klink *uma_klink_t;
 
+#define	UMA_BUCKET_STATS	/* XXX */
+
 struct uma_zone_domain {
 	LIST_HEAD(,uma_bucket)	uzd_buckets;	/* full buckets */
+	long		uzd_items;	/* total item count XXX nitems */
+	long		uzd_imax;	/* maximum item count this period */
+	long		uzd_imin;	/* minimum item count this period */
+	long		uzd_wss;	/* working set size estimate */
+#ifdef UMA_BUCKET_STATS
+	uint64_t	uzd_hits;
+	uint64_t	uzd_misses;
+#define	UMA_BUCKET_CACHE_HIT(zdom)	((zdom)->uzd_hits++)
+#define	UMA_BUCKET_CACHE_MISS(zdom)	((zdom)->uzd_misses++)
+#else
+#define	UMA_BUCKET_CACHE_HIT(zdom)
+#define	UMA_BUCKET_CACHE_MISS(zdom)
+#endif
 };
 
 typedef struct uma_zone_domain * uma_zone_domain_t;
