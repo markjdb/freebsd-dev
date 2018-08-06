@@ -90,6 +90,7 @@ struct pidctrl {
 
 struct sysctl_oid_list;
 
+int	pidctrl_error(struct pidctrl *pc, int input);
 void	pidctrl_init(struct pidctrl *pc, int interval, int setpoint,
 	    int bound, int Kpd, int Kid, int Kdd);
 void	pidctrl_init_sysctl(struct pidctrl *pc, struct sysctl_oid_list *parent);

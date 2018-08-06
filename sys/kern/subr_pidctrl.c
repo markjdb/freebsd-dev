@@ -35,6 +35,13 @@ __FBSDID("$FreeBSD$");
 #include <sys/sysctl.h>
 #include <sys/pidctrl.h>
 
+int
+pidctrl_error(struct pidctrl *pc, int input)
+{
+
+	return (pc->pc_setpoint - input);
+}
+
 void
 pidctrl_init(struct pidctrl *pc, int interval, int setpoint, int bound,
     int Kpd, int Kid, int Kdd)
@@ -87,7 +94,7 @@ pidctrl_classic(struct pidctrl *pc, int input)
 	int output, error;
 	int Kpd, Kid, Kdd;
 
-	error = pc->pc_setpoint - input;
+	error = pidctrl_error(pc, input);
 	pc->pc_ticks = ticks;
 	pc->pc_olderror = pc->pc_error;
 
@@ -118,7 +125,8 @@ pidctrl_daemon(struct pidctrl *pc, int input)
 	int output, error;
 	int Kpd, Kid, Kdd;
 
-	error = pc->pc_setpoint - input;
+	error = pidctrl_error(pc, input);
+
 	/*
 	 * When ticks expires we reset our variables and start a new
 	 * interval.  If we're called multiple times during one interval
