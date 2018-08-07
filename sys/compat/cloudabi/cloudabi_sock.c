@@ -127,10 +127,8 @@ cloudabi_sock_recv(struct thread *td, cloudabi_fd_t fd, struct iovec *data,
 				}
 				error = copyout(CMSG_DATA(chdr), fds,
 				    nfds * sizeof(int));
-				if (error != 0) {
-					m_free(control);
-					return (error);
-				}
+				if (error != 0)
+					break;
 				fds += nfds;
 				fdslen -= nfds;
 				*rfdslen += nfds;

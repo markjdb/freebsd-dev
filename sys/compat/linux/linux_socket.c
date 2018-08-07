@@ -1263,7 +1263,7 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 	struct cmsgcred *cmcred;
 	struct l_cmsghdr *linux_cmsg = NULL;
 	struct l_ucred linux_ucred;
-	socklen_t datalen, outlen;
+	socklen_t datalen, maxlen, outlen;
 	struct l_msghdr linux_msg;
 	struct iovec *iov, *uiov;
 	struct mbuf *control = NULL;
@@ -1322,9 +1322,8 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 			goto bad;
 	}
 
-	outbuf = PTRIN(linux_msg.msg_control);
-	outlen = 0;
-
+	maxlen = linux_msg.msg_controllen;
+	linux_msg.msg_controllen = 0;
 	if (control) {
 		linux_cmsg = malloc(L_CMSG_HDRSZ, M_LINUX, M_WAITOK | M_ZERO);
 
@@ -1332,7 +1331,8 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 		msg->msg_controllen = control->m_len;
 
 		cm = CMSG_FIRSTHDR(msg);
-
+		outbuf = PTRIN(linux_msg.msg_control);
+		outlen = 0;
 		while (cm != NULL) {
 			linux_cmsg->cmsg_type =
 			    bsd_to_linux_cmsg_type(cm->cmsg_type);
@@ -1392,14 +1392,12 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 				break;
 			}
 
-			if (outlen + LINUX_CMSG_LEN(datalen) >
-			    linux_msg.msg_controllen) {
+			if (outlen + LINUX_CMSG_LEN(datalen) > maxlen) {
 				if (outlen == 0) {
 					error = EMSGSIZE;
 					goto bad;
 				} else {
-					linux_msg.msg_flags |=
-					    LINUX_MSG_CTRUNC;
+					linux_msg.msg_flags |= LINUX_MSG_CTRUNC;
 					m_dispose_extcontrolm(control);
 					goto out;
 				}
@@ -1421,10 +1419,10 @@ linux_recvmsg_common(struct thread *td, l_int s, struct l_msghdr *msghdr,
 
 			cm = CMSG_NXTHDR(msg, cm);
 		}
+		linux_msg.msg_controllen = outlen;
 	}
 
 out:
-	linux_msg.msg_controllen = outlen;
 	error = copyout(&linux_msg, msghdr, sizeof(linux_msg));
 
 bad:
