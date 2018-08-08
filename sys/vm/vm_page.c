@@ -1851,7 +1851,7 @@ again:
 		 */
 		vm_domain_free_lock(vmd);
 		m = vm_phys_alloc_pages(domain, object != NULL ?
-		    VM_FREEPOOL_DEFAULT : VM_FREEPOOL_DIRECT, 0);
+		    VM_FREEPOOL_DEFAULT : ((req & VM_ALLOC_NOFREE) ? VM_FREEPOOL_NOFREE : VM_FREEPOOL_DIRECT), 0);
 		vm_domain_free_unlock(vmd);
 		if (m == NULL) {
 			vm_domain_freecnt_inc(vmd, 1);

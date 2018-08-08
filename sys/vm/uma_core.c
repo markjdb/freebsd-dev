@@ -1039,6 +1039,9 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int wait)
 	if (keg->uk_flags & UMA_ZONE_NODUMP)
 		wait |= M_NODUMP;
 
+	if (keg->uk_flags & UMA_ZONE_NOFREE)
+		wait |= M_N0FREE;
+
 	/* zone is passed for legacy reasons. */
 	mem = allocf(zone, size, domain, &flags, wait);
 	if (mem == NULL) {

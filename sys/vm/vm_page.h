@@ -464,6 +464,7 @@ vm_page_t PHYS_TO_VM_PAGE(vm_paddr_t pa);
 #define	VM_ALLOC_ZERO		0x0040	/* (acfgp) Allocate a prezeroed page */
 #define	VM_ALLOC_NOOBJ		0x0100	/* (acg) No associated object */
 #define	VM_ALLOC_NOBUSY		0x0200	/* (acgp) Do not excl busy the page */
+#define	VM_ALLOC_NOFREE		0x0400
 #define	VM_ALLOC_IGN_SBUSY	0x1000	/* (gp) Ignore shared busy flag */
 #define	VM_ALLOC_NODUMP		0x2000	/* (ag) don't include in dump */
 #define	VM_ALLOC_SBUSY		0x4000	/* (acgp) Shared busy the page */
@@ -486,6 +487,8 @@ malloc2vm_flags(int malloc_flags)
 		pflags |= VM_ALLOC_ZERO;
 	if ((malloc_flags & M_NODUMP) != 0)
 		pflags |= VM_ALLOC_NODUMP;
+	if ((malloc_flags & M_N0FREE) != 0)
+		pflags |= VM_ALLOC_NOFREE;
 	if ((malloc_flags & M_NOWAIT))
 		pflags |= VM_ALLOC_NOWAIT;
 	if ((malloc_flags & M_WAITOK))
