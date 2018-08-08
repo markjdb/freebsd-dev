@@ -839,7 +839,6 @@ kmem_bootstrap_free(vm_offset_t start, vm_size_t size)
 #endif
 }
 
-#ifdef DIAGNOSTIC
 /*
  * Allow userspace to directly trigger the VM drain routine for testing
  * purposes.
@@ -855,11 +854,12 @@ debug_vm_lowmem(SYSCTL_HANDLER_ARGS)
 		return (error);
 	if ((i & ~(VM_LOW_KMEM | VM_LOW_PAGES)) != 0)
 		return (EINVAL);
-	if (i != 0)
+	if (i != 0) {
 		EVENTHANDLER_INVOKE(vm_lowmem, i);
+		uma_reclaim(UMA_RECLAIM_TRIM);
+	}
 	return (0);
 }
 
 SYSCTL_PROC(_debug, OID_AUTO, vm_lowmem, CTLTYPE_INT | CTLFLAG_RW, 0, 0,
     debug_vm_lowmem, "I", "set to trigger vm_lowmem event with given flags");
-#endif
