@@ -1499,8 +1499,8 @@ domemstat_zone(void)
 	}
 	xo_open_container("memory-zone-statistics");
 	xo_emit("{T:/%-20s} {T:/%6s} {T:/%6s} {T:/%8s} {T:/%8s} {T:/%8s} "
-	    "{T:/%4s} {T:/%4s}\n\n", "ITEM", "SIZE",
-	    "LIMIT", "USED", "FREE", "REQ", "FAIL", "SLEEP");
+	    "{T:/%4s} {T:/%5s} {T:/%5s} {T:/%5s}\n\n", "ITEM", "SIZE",
+	    "LIMIT", "USED", "FREE", "REQ", "FAIL", "SLEEP", "HITS", "MISSES");
 	xo_open_list("zone");
 	for (mtp = memstat_mtl_first(mtlp); mtp != NULL;
 	    mtp = memstat_mtl_next(mtp)) {
@@ -1510,15 +1510,18 @@ domemstat_zone(void)
 		xo_emit("{d:name/%-20s}{ke:name/%s} {:size/%6ju}, "
 		    "{:limit/%6ju},{:used/%8ju},"
 		    "{:free/%8ju},{:requests/%8ju},"
-		    "{:fail/%4ju},{:sleep/%4ju}\n", name,
-		    memstat_get_name(mtp),
+		    "{:fail/%4ju},{:sleep/%5ju},"
+		    "{:hits/%5ju},{:misses/%5ju}\n",
+		    name, memstat_get_name(mtp),
 		    (uintmax_t)memstat_get_size(mtp),
 		    (uintmax_t)memstat_get_countlimit(mtp),
 		    (uintmax_t)memstat_get_count(mtp),
 		    (uintmax_t)memstat_get_free(mtp),
 		    (uintmax_t)memstat_get_numallocs(mtp),
 		    (uintmax_t)memstat_get_failures(mtp),
-		    (uintmax_t)memstat_get_sleeps(mtp));
+		    (uintmax_t)memstat_get_sleeps(mtp),
+		    (uintmax_t)memstat_get_bucket_hits(mtp),
+		    (uintmax_t)memstat_get_bucket_misses(mtp));
 		xo_close_instance("zone");
 	}
 	memstat_mtl_free(mtlp);

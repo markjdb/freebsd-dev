@@ -91,6 +91,9 @@ struct memory_type {
 	uint64_t	 mt_zonefree;	/* Free items in zone. */
 	uint64_t	 mt_kegfree;	/* Free items in keg. */
 
+	uint64_t	 mt_bucket_hits;
+	uint64_t	 mt_bucket_misses;
+
 	/*
 	 * Per-CPU measurements fall into two categories: per-CPU allocation,
 	 * and per-CPU cache state.

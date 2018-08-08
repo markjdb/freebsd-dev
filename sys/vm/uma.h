@@ -702,6 +702,14 @@ struct uma_percpu_stat {
 	uint64_t	_ups_reserved[5];	/* Reserved. */
 };
 
+struct uma_perdomain_stat {
+	uint64_t	upd_items;
+	uint64_t	upd_wss;
+	uint64_t	upd_bucket_hits;
+	uint64_t	upd_bucket_misses;
+	uint64_t	_upd_reserved[4];	/* Reserved. */
+};
+
 void uma_reclaim_wakeup(void);
 void uma_reclaim_worker(void *);
 

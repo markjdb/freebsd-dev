@@ -78,12 +78,28 @@ memstat_sysctl_uma(struct memory_type_list *list, int flags)
 	struct uma_stream_header *ushp;
 	struct uma_type_header *uthp;
 	struct uma_percpu_stat *upsp;
+	struct uma_perdomain_stat *updp;
 	struct memory_type *mtp;
-	int count, hint_dontsearch, i, j, maxcpus, maxid;
+	int count, hint_dontsearch, i, j, maxcpus, maxid, ndomains;
 	char *buffer, *p;
 	size_t size;
 
 	hint_dontsearch = LIST_EMPTY(&list->mtl_list);
+
+#define	GET_SYSCTL_INT(name, valp) do {					\
+	size = sizeof(*valp);						\
+	if (sysctlbyname((name), (valp), &size, NULL, 0) < 0) {		\
+		if (errno == EACCES || errno == EPERM)			\
+			list->mtl_error = MEMSTAT_ERROR_PERMISSION;	\
+		else							\
+			list->mtl_error = MEMSTAT_ERROR_DATAERROR;	\
+		return (-1);						\
+	}								\
+	if (size != sizeof(maxid)) {					\
+		list->mtl_error = MEMSTAT_ERROR_DATAERROR;		\
+		return (-1);						\
+	}								\
+} while (0)
 
 	/*
 	 * Query the number of CPUs, number of malloc types so that we can
@@ -93,34 +109,12 @@ memstat_sysctl_uma(struct memory_type_list *list, int flags)
 	 * from the header.
 	 */
 retry:
-	size = sizeof(maxid);
-	if (sysctlbyname("kern.smp.maxid", &maxid, &size, NULL, 0) < 0) {
-		if (errno == EACCES || errno == EPERM)
-			list->mtl_error = MEMSTAT_ERROR_PERMISSION;
-		else
-			list->mtl_error = MEMSTAT_ERROR_DATAERROR;
-		return (-1);
-	}
-	if (size != sizeof(maxid)) {
-		list->mtl_error = MEMSTAT_ERROR_DATAERROR;
-		return (-1);
-	}
-
-	size = sizeof(count);
-	if (sysctlbyname("vm.zone_count", &count, &size, NULL, 0) < 0) {
-		if (errno == EACCES || errno == EPERM)
-			list->mtl_error = MEMSTAT_ERROR_PERMISSION;
-		else
-			list->mtl_error = MEMSTAT_ERROR_VERSION;
-		return (-1);
-	}
-	if (size != sizeof(count)) {
-		list->mtl_error = MEMSTAT_ERROR_DATAERROR;
-		return (-1);
-	}
+	GET_SYSCTL_INT("kern.smp.maxid", &maxid);
+	GET_SYSCTL_INT("vm.zone_count", &count);
+	GET_SYSCTL_INT("vm.ndomains", &ndomains);
 
 	size = sizeof(*uthp) + count * (sizeof(*uthp) + sizeof(*upsp) *
-	    (maxid + 1));
+	    (maxid + 1) + sizeof(*updp) * ndomains);
 
 	buffer = malloc(size);
 	if (buffer == NULL) {
@@ -210,6 +204,13 @@ retry:
 			mtp->mt_free += upsp->ups_cache_free;
 			mtp->mt_numallocs += upsp->ups_allocs;
 			mtp->mt_numfrees += upsp->ups_frees;
+		}
+		for (j = 0; j < ndomains; j++) {
+			updp = (struct uma_perdomain_stat *)p;
+			p += sizeof(*updp);
+
+			mtp->mt_bucket_hits += updp->upd_bucket_hits;
+			mtp->mt_bucket_misses += updp->upd_bucket_misses;
 		}
 
 		mtp->mt_size = uthp->uth_size;

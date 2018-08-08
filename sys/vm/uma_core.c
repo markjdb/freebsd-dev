@@ -3996,6 +3996,7 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 	struct uma_stream_header ush;
 	struct uma_type_header uth;
 	struct uma_percpu_stat *ups;
+	struct uma_perdomain_stat *upd;
 	uma_zone_domain_t zdom;
 	struct sbuf sbuf;
 	uma_cache_t cache;
@@ -4011,6 +4012,7 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 	sbuf_new_for_sysctl(&sbuf, NULL, 128, req);
 	sbuf_clear_flags(&sbuf, SBUF_INCLUDENUL);
 	ups = malloc((mp_maxid + 1) * sizeof(*ups), M_TEMP, M_WAITOK);
+	upd = malloc(vm_ndomains * sizeof(*upd), M_TEMP, M_WAITOK);
 
 	count = 0;
 	rw_rlock(&uma_rwlock);
@@ -4084,10 +4086,20 @@ sysctl_vm_zone_stats(SYSCTL_HANDLER_ARGS)
 				ups[i].ups_allocs = cache->uc_allocs;
 				ups[i].ups_frees = cache->uc_frees;
 			}
+			for (i = 0; i < vm_ndomains; i++) {
+				zdom = &z->uz_domain[i];
+				bzero(&upd[i], sizeof(*upd));
+				upd[i].upd_bucket_hits = zdom->uzd_hits;
+				upd[i].upd_bucket_misses = zdom->uzd_misses;
+				upd[i].upd_items = zdom->uzd_items;
+				upd[i].upd_wss = zdom->uzd_wss;
+			}
 			ZONE_UNLOCK(z);
 			(void)sbuf_bcat(&sbuf, &uth, sizeof(uth));
 			for (i = 0; i < mp_maxid + 1; i++)
 				(void)sbuf_bcat(&sbuf, &ups[i], sizeof(ups[i]));
+			for (i = 0; i < vm_ndomains; i++)
+				(void)sbuf_bcat(&sbuf, &upd[i], sizeof(upd[i]));
 		}
 	}
 	rw_runlock(&uma_rwlock);

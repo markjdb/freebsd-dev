@@ -199,6 +199,7 @@ _memstat_mt_reset_stats(struct memory_type *mtp, int maxcpus)
 
 	mtp->mt_zonefree = 0;
 	mtp->mt_kegfree = 0;
+	mtp->mt_bucket_hits = mtp->mt_bucket_misses = 0;
 
 	for (i = 0; i < maxcpus; i++) {
 		mtp->mt_percpu_alloc[i].mtp_memalloced = 0;
@@ -366,6 +367,20 @@ memstat_get_kegfree(const struct memory_type *mtp)
 {
 
 	return (mtp->mt_kegfree);
+}
+
+uint64_t
+memstat_get_bucket_hits(const struct memory_type *mtp)
+{
+
+	return (mtp->mt_bucket_hits);
+}
+
+uint64_t
+memstat_get_bucket_misses(const struct memory_type *mtp)
+{
+
+	return (mtp->mt_bucket_misses);
 }
 
 uint64_t
