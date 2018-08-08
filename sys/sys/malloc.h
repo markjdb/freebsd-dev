@@ -60,6 +60,7 @@
 #define	M_FIRSTFIT	0x1000		/* Only for vmem, fast fit. */
 #define	M_BESTFIT	0x2000		/* Only for vmem, low fragmentation. */
 #define	M_EXEC		0x4000		/* allocate executable space. */
+#define	M_N0FREE	0x8000
 
 #define	M_MAGIC		877983977	/* time when first defined :-) */
 

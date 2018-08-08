@@ -97,9 +97,10 @@
  * the pool from which physical pages for page tables and small UMA
  * objects are allocated.
  */
-#define	VM_NFREEPOOL		2
+#define	VM_NFREEPOOL		3
 #define	VM_FREEPOOL_DEFAULT	0
 #define	VM_FREEPOOL_DIRECT	1
+#define	VM_FREEPOOL_NOFREE	2
 
 /*
  * Create up to three free page lists: VM_FREELIST_DMA32 is for physical pages
