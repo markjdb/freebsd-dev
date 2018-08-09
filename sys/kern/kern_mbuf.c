@@ -680,7 +680,7 @@ mb_dtor_pack(void *mem, int size, void *arg)
 	 * mbuf free.
 	 */
 	if (uma_zone_exhausted_nolock(zone_clust))
-		zone_drain(zone_pack);
+		uma_zreclaim(zone_pack, UMA_RECLAIM_DRAIN);
 }
 
 /*
@@ -924,7 +924,7 @@ m_clget(struct mbuf *m, int how)
 	 * we might be able to loosen a few clusters up on the drain.
 	 */
 	if ((how & M_NOWAIT) && (m->m_ext.ext_buf == NULL)) {
-		zone_drain(zone_pack);
+		uma_zreclaim(zone_pack, UMA_RECLAIM_DRAIN);
 		uma_zalloc_arg(zone_clust, m, how);
 	}
 	MBUF_PROBE2(m__clget, m, how);
