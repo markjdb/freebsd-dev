@@ -374,7 +374,7 @@ struct uma_zone {
  * These flags must not overlap with the UMA_ZONE flags specified in uma.h.
  */
 #define	UMA_ZFLAG_MULTI		0x04000000	/* Multiple kegs in the zone. */
-#define	UMA_ZFLAG_DRAINING	0x08000000	/* Running zone_drain. */
+#define	UMA_ZFLAG_RECLAIMING	0x08000000	/* Running zone_reclaim(). */
 #define	UMA_ZFLAG_BUCKET	0x10000000	/* Bucket zone. */
 #define UMA_ZFLAG_INTERNAL	0x20000000	/* No offpage no PCPU. */
 #define UMA_ZFLAG_FULL		0x40000000	/* Reached uz_maxpages */
