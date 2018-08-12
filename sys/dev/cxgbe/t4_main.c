@@ -684,8 +684,8 @@ struct {
 
 #ifdef TCP_OFFLOAD
 /*
- * service_iq() has an iq and needs the fl.  Offset of fl from the iq should be
- * exactly the same for both rxq and ofld_rxq.
+ * service_iq_fl() has an iq and needs the fl.  Offset of fl from the iq should
+ * be exactly the same for both rxq and ofld_rxq.
  */
 CTASSERT(offsetof(struct sge_ofld_rxq, iq) == offsetof(struct sge_rxq, iq));
 CTASSERT(offsetof(struct sge_ofld_rxq, fl) == offsetof(struct sge_rxq, fl));
@@ -1052,7 +1052,7 @@ t4_attach(device_t dev)
 		s->ntxq += nports * (num_vis - 1) * iaq.ntxq_vi;
 	}
 	s->neq = s->ntxq + s->nrxq;	/* the free list in an rxq is an eq */
-	s->neq += nports + 1;/* ctrl queues: 1 per port + 1 mgmt */
+	s->neq += nports;		/* ctrl queues: 1 per port */
 	s->niq = s->nrxq + 1;		/* 1 extra for firmware event queue */
 #if defined(TCP_OFFLOAD) || defined(RATELIMIT)
 	if (is_offload(sc) || is_ethoffload(sc)) {
@@ -4819,9 +4819,26 @@ t4_setup_intr_handlers(struct adapter *sc)
 #ifdef DEV_NETMAP
 					if (q < vi->nnmrxq)
 						irq->nm_rxq = nm_rxq++;
+
+					if (irq->nm_rxq != NULL &&
+					    irq->rxq == NULL) {
+						/* Netmap rx only */
+						rc = t4_alloc_irq(sc, irq, rid,
+						    t4_nm_intr, irq->nm_rxq, s);
+					}
+					if (irq->nm_rxq != NULL &&
+					    irq->rxq != NULL) {
+						/* NIC and Netmap rx */
+						rc = t4_alloc_irq(sc, irq, rid,
+						    t4_vi_intr, irq, s);
+					}
 #endif
-					rc = t4_alloc_irq(sc, irq, rid,
-					    t4_vi_intr, irq, s);
+					if (irq->rxq != NULL &&
+					    irq->nm_rxq == NULL) {
+						/* NIC rx only */
+						rc = t4_alloc_irq(sc, irq, rid,
+						    t4_intr, irq->rxq, s);
+					}
 					if (rc != 0)
 						return (rc);
 #ifdef RSS
