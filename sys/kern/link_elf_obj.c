@@ -1527,7 +1527,7 @@ link_elf_reloc_local(linker_file_t lf, bool ifuncs)
 				    elf_obj_lookup);
 #if defined(__i386__) || defined(__amd64__)
 			else if (ifuncs)
-				elf_reloc_ifunc(lf, base, rel, ELF_RELOC_REL,
+				elf_reloc_local(lf, base, rel, ELF_RELOC_REL,
 				    elf_obj_lookup);
 #endif
 		}
@@ -1560,7 +1560,7 @@ link_elf_reloc_local(linker_file_t lf, bool ifuncs)
 				    elf_obj_lookup);
 #if defined(__i386__) || defined(__amd64__)
 			else if (ifuncs)
-				elf_reloc_ifunc(lf, base, rela, ELF_RELOC_RELA,
+				elf_reloc_local(lf, base, rela, ELF_RELOC_RELA,
 				    elf_obj_lookup);
 #endif
 		}
