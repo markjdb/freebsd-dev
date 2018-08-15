@@ -127,6 +127,14 @@ LDFLAGS+=	-Wl,--build-id=sha1
 LDFLAGS+=	-Wl,-z max-page-size=2097152 -Wl,-z common-page-size=4096
 .endif
 
+# Enable optimization of ifunc calls by telling the linker to avoid emitting
+# a PLT entry for each ifunc.  The linker will instead preserve the PC-relative
+# call site relocations so that the kernel can patch each call site directly
+# when performing ifunc resolution.
+.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "i386"
+LDFLAGS+=	-Wl,-z ifunc-noplt
+.endif
+
 NORMAL_C= ${CC} -c ${CFLAGS} ${WERROR} ${PROF} ${.IMPSRC}
 NORMAL_S= ${CC:N${CCACHE_BIN}} -c ${ASM_CFLAGS} ${WERROR} ${.IMPSRC}
 PROFILE_C= ${CC} -c ${CFLAGS} ${WERROR} ${.IMPSRC}
