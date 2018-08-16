@@ -51,8 +51,10 @@ be_mountcheck_cb(zfs_handle_t *zfs_hdl, void *data)
 		return (0);
 	if (strcmp(mountpoint, info->path) == 0) {
 		info->name = strdup(zfs_get_name(zfs_hdl));
+		free(mountpoint);
 		return (1);
 	}
+	free(mountpoint);
 	return (0);
 }
 
@@ -62,12 +64,12 @@ be_mountcheck_cb(zfs_handle_t *zfs_hdl, void *data)
 int
 be_mounted_at(libbe_handle_t *lbh, const char *path, nvlist_t *details)
 {
-	char be[BE_MAXPATHLEN + 1];
+	char be[BE_MAXPATHLEN];
 	zfs_handle_t *root_hdl;
 	struct be_mountcheck_info info;
 	prop_data_t propinfo;
 
-	bzero(&be, BE_MAXPATHLEN + 1);
+	bzero(&be, BE_MAXPATHLEN);
 	if ((root_hdl = zfs_open(lbh->lzh, lbh->root,
 	    ZFS_TYPE_FILESYSTEM)) == NULL)
 		return (BE_ERR_ZFSOPEN);
@@ -106,7 +108,6 @@ be_mount(libbe_handle_t *lbh, char *bootenv, char *mountpoint, int flags,
 {
 	char be[BE_MAXPATHLEN];
 	char mnt_temp[BE_MAXPATHLEN];
-	char *path;
 	int mntflags;
 	int err;
 
@@ -116,14 +117,14 @@ be_mount(libbe_handle_t *lbh, char *bootenv, char *mountpoint, int flags,
 	if (!be_exists(lbh, bootenv))
 		return (set_error(lbh, BE_ERR_NOENT));
 
-	if (is_mounted(lbh->lzh, be, &path))
+	if (is_mounted(lbh->lzh, be, NULL))
 		return (set_error(lbh, BE_ERR_MOUNTED));
 
 	mntflags = (flags & BE_MNT_FORCE) ? MNT_FORCE : 0;
 
 	/* Create mountpoint if it is not specified */
 	if (mountpoint == NULL) {
-		strcpy(mnt_temp, "/tmp/be_mount.XXXX");
+		strlcpy(mnt_temp, "/tmp/be_mount.XXXX", sizeof(mnt_temp));
 		if (mkdtemp(mnt_temp) == NULL)
 			return (set_error(lbh, BE_ERR_IO));
 	}
@@ -148,7 +149,8 @@ be_mount(libbe_handle_t *lbh, char *bootenv, char *mountpoint, int flags,
 	}
 
 	if (result_loc != NULL)
-		strcpy(result_loc, mountpoint == NULL ? mnt_temp : mountpoint);
+		strlcpy(result_loc, mountpoint == NULL ? mnt_temp : mountpoint,
+		    BE_MAXPATHLEN);
 
 	return (BE_ERR_SUCCESS);
 }
