@@ -13,7 +13,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  drm2/drm2 drm2/i915kms i2c/iic i2c/iicbb     \
 				    i2c/iicbus i2c/controllers/ichsmb i2c/smbus\
 				  ichwd coretemp                               \
-				  linux_common linux linprocfs                 \
+				  linux_common linux linux64 linprocfs         \
 				  geom/geom_eli geom/geom_mirror               \
 				  geom/geom_concat                             \
 				  wlan_acl wlan_xauth                          \
@@ -61,7 +61,6 @@ options 	COMPAT_FREEBSD7		# Compatible with FreeBSD7
 options 	COMPAT_FREEBSD9		# Compatible with FreeBSD9
 options 	COMPAT_FREEBSD10	# Compatible with FreeBSD10
 options 	COMPAT_FREEBSD11	# Compatible with FreeBSD11
-options 	COMPAT_LINUX32
 options 	COMPAT_LINUXKPI
 options 	SCSI_DELAY=5000		# Delay (in ms) before probing SCSI
 options 	KTRACE			# ktrace(1) support
