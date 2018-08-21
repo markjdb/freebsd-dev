@@ -1181,7 +1181,8 @@ moused(void)
 						scroll_state = SCROLL_SCROLLING;
 					}
 				}
-				if (scroll_state == SCROLL_SCROLLING) scroll_movement = hscroll_movement = 0;
+				if (scroll_state == SCROLL_SCROLLING)
+					scroll_movement = hscroll_movement = 0;
 			}
 		} else if (scroll_state == SCROLL_SCROLLING) {
 			 if (rodent.flags & VirtualScroll) {
