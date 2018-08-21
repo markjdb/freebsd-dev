@@ -861,7 +861,7 @@ t4_attach(device_t dev)
 		v = pci_read_config(dev, i + PCIER_DEVICE_CTL, 2);
 		sc->params.pci.mps = 128 << ((v & PCIEM_CTL_MAX_PAYLOAD) >> 5);
 		if (pcie_relaxed_ordering == 0 &&
-		    (v | PCIEM_CTL_RELAXED_ORD_ENABLE) != 0) {
+		    (v & PCIEM_CTL_RELAXED_ORD_ENABLE) != 0) {
 			v &= ~PCIEM_CTL_RELAXED_ORD_ENABLE;
 			pci_write_config(dev, i + PCIER_DEVICE_CTL, v, 2);
 		} else if (pcie_relaxed_ordering == 1 &&
@@ -5099,6 +5099,7 @@ vi_full_init(struct vi_info *vi)
 	rc = -t4_config_rss_range(sc, sc->mbox, vi->viid, 0, vi->rss_size, rss,
 	    vi->rss_size);
 	if (rc != 0) {
+		free(rss, M_CXGBE);
 		if_printf(ifp, "rss_config failed: %d\n", rc);
 		goto done;
 	}
@@ -5147,6 +5148,7 @@ vi_full_init(struct vi_info *vi)
 #endif
 	rc = -t4_config_vi_rss(sc, sc->mbox, vi->viid, hashen, rss[0], 0, 0);
 	if (rc != 0) {
+		free(rss, M_CXGBE);
 		if_printf(ifp, "rss hash/defaultq config failed: %d\n", rc);
 		goto done;
 	}
