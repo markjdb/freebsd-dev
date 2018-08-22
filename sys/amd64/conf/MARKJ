@@ -10,8 +10,6 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				    netgraph/iface netgraph/socket             \
 				  cpuctl                                       \
 				  opensolaris dtrace ksyms                     \
-				  drm2/drm2 drm2/i915kms i2c/iic i2c/iicbb     \
-				    i2c/iicbus i2c/controllers/ichsmb i2c/smbus\
 				  ichwd coretemp                               \
 				  linux_common linux linux64 linprocfs         \
 				  geom/geom_eli geom/geom_mirror               \
