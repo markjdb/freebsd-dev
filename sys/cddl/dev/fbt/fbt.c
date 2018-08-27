@@ -156,7 +156,7 @@ fbt_doubletrap(void)
 	for (i = 0; i < fbt_probetab_size; i++) {
 		fbt = fbt_probetab[i];
 
-		for (; fbt != NULL; fbt = fbt->fbtp_next)
+		for (; fbt != NULL; fbt = fbt->fbtp_probenext)
 			fbt_patch_tracepoint(fbt, fbt->fbtp_savedval);
 	}
 }
@@ -205,39 +205,52 @@ fbt_provide_module(void *arg, modctl_t *lf)
 }
 
 static void
+fbt_destroy_one(fbt_probe_t *fbt)
+{
+	fbt_probe_t *hash, *hashprev, *next;
+	int ndx;
+
+	ndx = FBT_ADDR2NDX(fbt->fbtp_patchpoint);
+	for (hash = fbt_probetab[ndx], hashprev = NULL; hash != NULL;
+	    hash = hash->fbtp_hashnext, hashprev = hash) {
+		if (hash == fbt) {
+			if ((next = fbt->fbtp_tracenext) != NULL)
+				next->fbtp_hashnext = hash->fbtp_hashnext;
+			else
+				next = hash->fbtp_hashnext;
+			if (hashprev != NULL)
+				hashprev->fbtp_hashnext = next;
+			else
+				fbt_probetab[ndx] = next;
+			goto free;
+		} else if (hash->fbtp_patchpoint == fbt->fbtp_patchpoint) {
+			for (next = hash; next->fbtp_tracenext != NULL;
+			    next = next->fbtp_tracenext) {
+				if (fbt == next->fbtp_tracenext) {
+					next->fbtp_tracenext =
+					    fbt->fbtp_tracenext;
+					goto free;
+				}
+			}
+		}
+	}
+	panic("probe %p not found in hash table", fbt);
+free:
+	free(fbt, M_FBT);
+}
+
+static void
 fbt_destroy(void *arg, dtrace_id_t id, void *parg)
 {
-	fbt_probe_t *fbt = parg, *next, *hash, *last;
+	fbt_probe_t *fbt = parg, *next;
 	modctl_t *ctl;
-	int ndx;
 
 	do {
 		ctl = fbt->fbtp_ctl;
-
 		ctl->fbt_nentries--;
 
-		/*
-		 * Now we need to remove this probe from the fbt_probetab.
-		 */
-		ndx = FBT_ADDR2NDX(fbt->fbtp_patchpoint);
-		last = NULL;
-		hash = fbt_probetab[ndx];
-
-		while (hash != fbt) {
-			ASSERT(hash != NULL);
-			last = hash;
-			hash = hash->fbtp_hashnext;
-		}
-
-		if (last != NULL) {
-			last->fbtp_hashnext = fbt->fbtp_hashnext;
-		} else {
-			fbt_probetab[ndx] = fbt->fbtp_hashnext;
-		}
-
-		next = fbt->fbtp_next;
-		free(fbt, M_FBT);
-
+		next = fbt->fbtp_probenext;
+		fbt_destroy_one(fbt);
 		fbt = next;
 	} while (fbt != NULL);
 }
@@ -265,7 +278,7 @@ fbt_enable(void *arg, dtrace_id_t id, void *parg)
 		return;
 	}
 
-	for (; fbt != NULL; fbt = fbt->fbtp_next)
+	for (; fbt != NULL; fbt = fbt->fbtp_probenext)
 		fbt_patch_tracepoint(fbt, fbt->fbtp_patchval);
 }
 
@@ -281,7 +294,7 @@ fbt_disable(void *arg, dtrace_id_t id, void *parg)
 	if ((ctl->loadcnt != fbt->fbtp_loadcnt))
 		return;
 
-	for (; fbt != NULL; fbt = fbt->fbtp_next)
+	for (; fbt != NULL; fbt = fbt->fbtp_probenext)
 		fbt_patch_tracepoint(fbt, fbt->fbtp_savedval);
 }
 
@@ -296,7 +309,7 @@ fbt_suspend(void *arg, dtrace_id_t id, void *parg)
 	if ((ctl->loadcnt != fbt->fbtp_loadcnt))
 		return;
 
-	for (; fbt != NULL; fbt = fbt->fbtp_next)
+	for (; fbt != NULL; fbt = fbt->fbtp_probenext)
 		fbt_patch_tracepoint(fbt, fbt->fbtp_savedval);
 }
 
@@ -311,7 +324,7 @@ fbt_resume(void *arg, dtrace_id_t id, void *parg)
 	if ((ctl->loadcnt != fbt->fbtp_loadcnt))
 		return;
 
-	for (; fbt != NULL; fbt = fbt->fbtp_next)
+	for (; fbt != NULL; fbt = fbt->fbtp_probenext)
 		fbt_patch_tracepoint(fbt, fbt->fbtp_patchval);
 }
 
