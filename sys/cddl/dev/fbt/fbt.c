@@ -56,6 +56,7 @@
 #include <sys/sysproto.h>
 #include <sys/uio.h>
 #include <sys/unistd.h>
+#include <machine/atomic.h>
 #include <machine/stdarg.h>
 
 #include <sys/dtrace.h>
@@ -265,8 +266,11 @@ fbt_enable(void *arg, dtrace_id_t id, void *parg)
 		return;
 	}
 
-	for (; fbt != NULL; fbt = fbt->fbtp_next)
+	for (; fbt != NULL; fbt = fbt->fbtp_next) {
+		fbt->fbtp_enabled++;
+		atomic_thread_fence_acq();
 		fbt_patch_tracepoint(fbt, fbt->fbtp_patchval);
+	}
 }
 
 static void
@@ -281,8 +285,12 @@ fbt_disable(void *arg, dtrace_id_t id, void *parg)
 	if ((ctl->loadcnt != fbt->fbtp_loadcnt))
 		return;
 
-	for (; fbt != NULL; fbt = fbt->fbtp_next)
+	for (; fbt != NULL; fbt = fbt->fbtp_next) {
 		fbt_patch_tracepoint(fbt, fbt->fbtp_savedval);
+		dtrace_sync();
+		atomic_store_rel_long(&fbt->fbtp_enabled,
+		    fbt->fbtp_enabled - 1);
+	}
 }
 
 static void

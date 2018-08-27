@@ -78,7 +78,8 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t rval)
 	cpu = &solaris_cpu[curcpu];
 	fbt = fbt_probetab[FBT_ADDR2NDX(addr)];
 	for (; fbt != NULL; fbt = fbt->fbtp_hashnext) {
-		if ((uintptr_t)fbt->fbtp_patchpoint == addr) {
+		if ((uintptr_t)fbt->fbtp_patchpoint == addr &&
+		    fbt->fbtp_enabled > 0) {
 			if (fbt->fbtp_roffset == 0) {
 #ifdef __amd64__
 				/* fbt->fbtp_rval == DTRACE_INVOP_PUSHQ_RBP */

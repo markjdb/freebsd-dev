@@ -46,6 +46,7 @@ typedef struct fbt_probe {
 	modctl_t	*fbtp_ctl;
 	int		fbtp_loadcnt;
 	int		fbtp_symindx;
+	long		fbtp_enabled;
 	struct fbt_probe *fbtp_next;
 } fbt_probe_t;
 
