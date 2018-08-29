@@ -9,7 +9,7 @@ makeoptions	WITH_CTF=1		# Run ctfconvert(1) for DTrace support
 makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				    netgraph/iface netgraph/socket             \
 				  opensolaris dtrace ksyms                     \
-				  crypto geom/geom_eli                         \
+				  geom/geom_eli                                \
 				  procfs nullfs fuse unionfs fdescfs tmpfs     \
 				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
 				  snp hwpmc"
@@ -287,6 +287,7 @@ device		uart		# Generic UART driver
 #device		wpi		# Intel 3945ABG wireless NICs.
 
 # Pseudo devices.
+device		crypto		# core crypto support
 device		loop		# Network loopback
 device		random		# Entropy device
 device	 	padlock_rng	# VIA Padlock RNG
