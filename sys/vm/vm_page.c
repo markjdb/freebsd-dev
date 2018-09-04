@@ -3097,18 +3097,27 @@ vm_page_pagequeue_lockptr(vm_page_t m)
 	return (&vm_pagequeue_domain(m)->vmd_pagequeues[queue].pq_mutex);
 }
 
-static inline void
-vm_pqbatch_process_page(struct vm_pagequeue *pq, vm_page_t m)
+static inline bool
+vm_pqbatch_process_page(struct vm_pagequeue *pq, vm_page_t m, int queue)
 {
 	struct vm_domain *vmd;
 	uint8_t aflags;
 
 	CRITICAL_ASSERT(curthread);
 	vm_pagequeue_assert_locked(pq);
-	KASSERT(pq == vm_page_pagequeue(m),
-	    ("page %p doesn't belong to %p", m, pq));
 
-	aflags = m->aflags;
+	/*
+	 * The page queue lock prevents m->queue from changing after the check
+	 * below.  There is one exception: the page daemon may change m->queue
+	 * from PQ_INACTIVE to PQ_NONE prior to freeing m, with only the page
+	 * lock held.  However, in this case all of m's queue state flags will
+	 * be clear, so this function will have no effect.
+	 */
+	aflags = (m->aflags & PGA_QUEUE_STATE_MASK);
+	atomic_thread_fence_acq();
+	if (__predict_false(m->queue != queue))
+		return (false);
+
 	if ((aflags & PGA_DEQUEUE) != 0) {
 		if (__predict_true((aflags & PGA_ENQUEUED) != 0)) {
 			TAILQ_REMOVE(&pq->pq_pl, m, plinks.q);
@@ -3137,21 +3146,17 @@ vm_pqbatch_process_page(struct vm_pagequeue *pq, vm_page_t m)
 		 */
 		vm_page_aflag_clear(m, PGA_REQUEUE | PGA_REQUEUE_HEAD);
 	}
+	return (true);
 }
 
 static void
 vm_pqbatch_process(struct vm_pagequeue *pq, struct vm_batchqueue *bq,
     uint8_t queue)
 {
-	vm_page_t m;
 	int i;
 
-	for (i = 0; i < bq->bq_cnt; i++) {
-		m = bq->bq_pa[i];
-		if (__predict_false(m->queue != queue))
-			continue;
-		vm_pqbatch_process_page(pq, m);
-	}
+	for (i = 0; i < bq->bq_cnt; i++)
+		(void)vm_pqbatch_process_page(pq, bq->bq_pa[i], queue);
 	vm_batchqueue_init(bq);
 }
 
@@ -3187,9 +3192,7 @@ vm_pqbatch_submit_page(vm_page_t m, uint8_t queue)
 	 * page queue lock.  In this case, the page lock prevents the page
 	 * from being logically enqueued elsewhere.
 	 */
-	if (__predict_true(m->queue == queue))
-		vm_pqbatch_process_page(pq, m);
-	else {
+	if (!vm_pqbatch_process_page(pq, m, queue)) {
 		KASSERT(m->queue == PQ_NONE,
 		    ("invalid queue transition for page %p", m));
 		KASSERT((m->aflags & PGA_ENQUEUED) == 0,

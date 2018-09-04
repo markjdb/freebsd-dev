@@ -1550,11 +1550,13 @@ free_page:
 			 * Because we dequeued the page and have already
 			 * checked for concurrent dequeue and enqueue
 			 * requests, we can safely disassociate the page
-			 * from the inactive queue.
+			 * from the inactive queue even without the inactive
+			 * page queue lock.
 			 */
+			m->queue = PQ_NONE;
+			atomic_thread_fence_rel();
 			KASSERT((m->aflags & PGA_QUEUE_STATE_MASK) == 0,
 			    ("page %p has queue state", m));
-			m->queue = PQ_NONE;
 			vm_page_free(m);
 			page_shortage--;
 		} else if ((object->flags & OBJ_DEAD) == 0)
