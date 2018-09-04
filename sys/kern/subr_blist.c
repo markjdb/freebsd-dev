@@ -224,6 +224,9 @@ blist_create(daddr_t blocks, int flags)
 	u_daddr_t nodes, radix, skip;
 	int digit;
 
+	if (blocks == 0)
+		panic("invalid block count");
+
 	/*
 	 * Calculate the radix and node count used for scanning.  Find the last
 	 * block that is followed by a terminator.
@@ -244,7 +247,10 @@ blist_create(daddr_t blocks, int flags)
 	 * Count the meta-nodes in the expanded tree, including the final
 	 * terminator, from the bottom level up to the root.
 	 */
-	nodes = (last_block >= blocks) ? 2 : 1;
+	nodes = 1;
+	if (last_block >= blocks || (radix - blocks > BLIST_BMAP_RADIX &&
+	    (last_block & (radix - 1)) == last_block))
+		nodes++;
 	last_block /= BLIST_BMAP_RADIX;
 	while (last_block > 0) {
 		nodes += last_block + 1;
