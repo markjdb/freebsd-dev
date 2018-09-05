@@ -15,7 +15,6 @@ SUBDIR+=sendmail
 BIN1=	crontab \
 	dhclient.conf \
 	disktab \
-	gettytab \
 	group \
 	hosts \
 	hosts.allow \
@@ -34,16 +33,6 @@ BIN1=	crontab \
 	remote \
 	rpc \
 	termcap.small
-
-.if exists(${.CURDIR}/etc.${MACHINE}/ttys)
-BIN1+=	etc.${MACHINE}/ttys
-.elif exists(${.CURDIR}/etc.${MACHINE_ARCH}/ttys)
-BIN1+=	etc.${MACHINE_ARCH}/ttys
-.elif exists(${.CURDIR}/etc.${MACHINE_CPUARCH}/ttys)
-BIN1+=	etc.${MACHINE_CPUARCH}/ttys
-.else
-.error etc.MACHINE/ttys missing
-.endif
 
 # NB: keep these sorted by MK_* knobs
 
