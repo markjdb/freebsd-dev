@@ -316,9 +316,7 @@ in_pcbinslbgrouphash(struct inpcb *inp)
 	struct inpcbinfo *pcbinfo;
 	struct inpcblbgrouphead *hdr;
 	struct inpcblbgroup *grp;
-	uint16_t hashmask, lport;
-	uint32_t group_index;
-	struct ucred *cred;
+	uint32_t idx;
 
 	pcbinfo = inp->inp_pcbinfo;
 
@@ -328,19 +326,10 @@ in_pcbinslbgrouphash(struct inpcb *inp)
 	if (pcbinfo->ipi_lbgrouphashbase == NULL)
 		return (0);
 
-	hashmask = pcbinfo->ipi_lbgrouphashmask;
-	lport = inp->inp_lport;
-	group_index = INP_PCBLBGROUP_PORTHASH(lport, hashmask);
-	hdr = &pcbinfo->ipi_lbgrouphashbase[group_index];
-
 	/*
 	 * Don't allow jailed socket to join local group.
 	 */
-	if (inp->inp_socket != NULL)
-		cred = inp->inp_socket->so_cred;
-	else
-		cred = NULL;
-	if (cred != NULL && jailed(cred))
+	if (inp->inp_socket != NULL && jailed(inp->inp_socket->so_cred))
 		return (0);
 
 #ifdef INET6
@@ -354,24 +343,23 @@ in_pcbinslbgrouphash(struct inpcb *inp)
 	}
 #endif
 
-	hdr = &pcbinfo->ipi_lbgrouphashbase[
-	    INP_PCBLBGROUP_PORTHASH(inp->inp_lport,
-	        pcbinfo->ipi_lbgrouphashmask)];
+	idx = INP_PCBLBGROUP_PORTHASH(inp->inp_lport,
+	    pcbinfo->ipi_lbgrouphashmask);
+	hdr = &pcbinfo->ipi_lbgrouphashbase[idx];
 	CK_LIST_FOREACH(grp, hdr, il_list) {
 		if (grp->il_vflag == inp->inp_vflag &&
 		    grp->il_lport == inp->inp_lport &&
 		    memcmp(&grp->il_dependladdr,
-		        &inp->inp_inc.inc_ie.ie_dependladdr,
-		        sizeof(grp->il_dependladdr)) == 0) {
+		    &inp->inp_inc.inc_ie.ie_dependladdr,
+		    sizeof(grp->il_dependladdr)) == 0)
 			break;
-		}
 	}
 	if (grp == NULL) {
 		/* Create new load balance group. */
 		grp = in_pcblbgroup_alloc(hdr, inp->inp_vflag,
 		    inp->inp_lport, &inp->inp_inc.inc_ie.ie_dependladdr,
 		    INPCBLBGROUP_SIZMIN);
-		if (!grp)
+		if (grp != NULL)
 			return (ENOBUFS);
 	} else if (grp->il_inpcnt == grp->il_inpsiz) {
 		if (grp->il_inpsiz >= INPCBLBGROUP_SIZMAX) {
@@ -383,13 +371,13 @@ in_pcbinslbgrouphash(struct inpcb *inp)
 
 		/* Expand this local group. */
 		grp = in_pcblbgroup_resize(hdr, grp, grp->il_inpsiz * 2);
-		if (!grp)
+		if (grp != NULL)
 			return (ENOBUFS);
 	}
 
 	KASSERT(grp->il_inpcnt < grp->il_inpsiz,
-			("invalid local group size %d and count %d",
-			 grp->il_inpsiz, grp->il_inpcnt));
+	    ("invalid local group size %d and count %d", grp->il_inpsiz,
+	    grp->il_inpcnt));
 
 	grp->il_inp[grp->il_inpcnt] = inp;
 	grp->il_inpcnt++;
