@@ -62,6 +62,7 @@ WARNS?=	3
 TESTS_SUBDIRS+=	acct
 TESTS_SUBDIRS+=	execve
 TESTS_SUBDIRS+=	pipe
+TESTS_SUBDIRS+= socket
 
 .include <netbsd-tests.test.mk>
 

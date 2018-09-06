@@ -727,6 +727,8 @@
             ..
             pipe
             ..
+            socket
+            ..
         ..
         kqueue
             libkqueue
