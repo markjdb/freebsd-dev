@@ -538,7 +538,7 @@ typedef struct arc_state {
  */
 int zfs_arc_meta_prune = 10000;
 unsigned long zfs_arc_dnode_limit_percent = 10;
-int zfs_arc_meta_strategy = ARC_STRATEGY_META_BALANCED;
+int zfs_arc_meta_strategy = ARC_STRATEGY_META_ONLY;
 int zfs_arc_meta_adjust_restarts = 4096;
 
 /* The 6 states: */
