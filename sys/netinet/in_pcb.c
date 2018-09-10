@@ -310,8 +310,7 @@ in_pcblbgroup_reorder(struct inpcblbgrouphead *hdr, struct inpcblbgroup **grpp,
 static int
 in_pcbinslbgrouphash(struct inpcb *inp)
 {
-	const static struct timeval interval = { 60, 0 };
-	static struct timeval lastprint;
+	const struct timeval interval = { 60, 0 };
 	struct inpcbinfo *pcbinfo;
 	struct inpcblbgrouphead *hdr;
 	struct inpcblbgroup *grp;
@@ -359,7 +358,7 @@ in_pcbinslbgrouphash(struct inpcb *inp)
 			return (ENOBUFS);
 	} else if (grp->il_inpcnt == grp->il_inpsiz) {
 		if (grp->il_inpsiz >= INPCBLBGROUP_SIZMAX) {
-			if (ratecheck(&lastprint, &interval))
+			if (ratecheck(&grp->il_lastprint, &interval))
 				printf("lb group port %d, limit reached\n",
 				    ntohs(grp->il_lport));
 			return (0);
