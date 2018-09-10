@@ -569,6 +569,7 @@ struct inpcbgroup {
 struct inpcblbgroup {
 	CK_LIST_ENTRY(inpcblbgroup) il_list;
 	struct epoch_context il_epoch_ctx;
+	struct timeval	il_lastprint;
 	uint16_t	il_lport;			/* (c) */
 	u_char		il_vflag;			/* (c) */
 	u_char		il_pad;
