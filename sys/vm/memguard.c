@@ -64,6 +64,12 @@ __FBSDID("$FreeBSD$");
 #include <vm/uma_int.h>
 #include <vm/memguard.h>
 
+#if VM_NRESERVLEVEL > 0
+#define	MEMGUARD_SHIFT	(VM_LEVEL_0_ORDER + PAGE_SHIFT)
+#else
+#define	MEMGUARD_SHIFT	PAGE_SHIFT
+#endif
+
 static SYSCTL_NODE(_vm, OID_AUTO, memguard, CTLFLAG_RW, NULL, "MemGuard data");
 /*
  * The vm_memguard_divisor variable controls how much of kernel_arena should be
@@ -194,6 +200,7 @@ memguard_fudge(unsigned long km_size, const struct vm_map *parent_map)
 		memguard_mapsize = mem_pgs * 2 * PAGE_SIZE;
 	if (km_size + memguard_mapsize > parent_size)
 		memguard_mapsize = 0;
+	memguard_mapsize = roundup2(memguard_mapsize, 1 << MEMGUARD_SHIFT);
 	return (km_size + memguard_mapsize);
 }
 
@@ -206,7 +213,8 @@ memguard_init(vmem_t *parent)
 {
 	vm_offset_t base;
 
-	vmem_alloc(parent, memguard_mapsize, M_BESTFIT | M_WAITOK, &base);
+	vmem_xalloc(parent, memguard_mapsize, 1 << MEMGUARD_SHIFT, 0, 0,
+	    VMEM_ADDR_MIN, VMEM_ADDR_MAX, M_BESTFIT | M_WAITOK, &base);
 	vmem_init(memguard_arena, "memguard arena", base, memguard_mapsize,
 	    PAGE_SIZE, 0, M_WAITOK);
 	memguard_cursor = base;
@@ -288,7 +296,8 @@ memguard_alloc(unsigned long req_size, int flags)
 {
 	vm_offset_t addr, origaddr;
 	u_long size_p, size_v;
-	int do_guard, rv;
+	int domain, rv;
+	bool do_guard;
 
 	size_p = round_page(req_size);
 	if (size_p == 0)
@@ -332,6 +341,7 @@ memguard_alloc(unsigned long req_size, int flags)
 		    memguard_cursor, VMEM_ADDR_MAX,
 		    M_BESTFIT | M_NOWAIT, &origaddr) == 0)
 			break;
+
 		/*
 		 * The map has no space.  This may be due to
 		 * fragmentation, or because the cursor is near the
@@ -348,7 +358,18 @@ memguard_alloc(unsigned long req_size, int flags)
 	addr = origaddr;
 	if (do_guard)
 		addr += PAGE_SIZE;
-	rv = kmem_back(kernel_object, addr, size_p, flags);
+
+	/*
+	 * The kmem_* API uses per-domain vmem arenas to ensure that pages
+	 * backing a large virtual page all come from the same domain.  We must
+	 * provide the same guarantee.
+	 */
+#if VM_NRESERVLEVEL > 0
+	domain = (addr >> MEMGUARD_SHIFT) % vm_ndomains;
+#else
+	domain = 0;
+#endif
+	rv = kmem_back_domain(domain, kernel_object, addr, size_p, flags);
 	if (rv != KERN_SUCCESS) {
 		vmem_xfree(memguard_arena, origaddr, size_v);
 		memguard_fail_pgs++;
