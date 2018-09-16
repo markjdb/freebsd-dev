@@ -89,10 +89,11 @@ int	vmem_startup_count(void);
 
 #define	VMEM_QCACHE_IDX_MAX	16
 
-#define	VMEM_FITMASK	(M_BESTFIT | M_FIRSTFIT)
+#define	VMEM_FITMASK	(M_BESTFIT | M_FIRSTFIT | M_NEXTFIT)
 
 #define	VMEM_FLAGS						\
-    (M_NOWAIT | M_WAITOK | M_USE_RESERVE | M_NOVM | M_BESTFIT | M_FIRSTFIT)
+    (M_NOWAIT | M_WAITOK | M_USE_RESERVE | M_NOVM | M_BESTFIT |	\
+    M_FIRSTFIT | M_NEXTFIT)
 
 #define	BT_FLAGS	(M_NOWAIT | M_WAITOK | M_USE_RESERVE | M_NOVM)
 
@@ -120,6 +121,20 @@ typedef struct qcache qcache_t;
 
 #define	VMEM_NAME_MAX	16
 
+/* boundary tag */
+struct vmem_btag {
+	TAILQ_ENTRY(vmem_btag) bt_seglist;
+	union {
+		LIST_ENTRY(vmem_btag) u_freelist; /* BT_TYPE_FREE */
+		LIST_ENTRY(vmem_btag) u_hashlist; /* BT_TYPE_BUSY */
+	} bt_u;
+#define	bt_hashlist	bt_u.u_hashlist
+#define	bt_freelist	bt_u.u_freelist
+	vmem_addr_t	bt_start;
+	vmem_size_t	bt_size;
+	int		bt_type;
+};
+
 /* vmem arena */
 struct vmem {
 	struct mtx_padalign	vm_lock;
@@ -145,6 +160,7 @@ struct vmem {
 	vmem_size_t		vm_inuse;
 	vmem_size_t		vm_size;
 	vmem_size_t		vm_limit;
+	struct vmem_btag	vm_cursor;
 
 	/* Used on import. */
 	vmem_import_t		*vm_importfn;
@@ -158,24 +174,11 @@ struct vmem {
 	qcache_t		vm_qcache[VMEM_QCACHE_IDX_MAX];
 };
 
-/* boundary tag */
-struct vmem_btag {
-	TAILQ_ENTRY(vmem_btag) bt_seglist;
-	union {
-		LIST_ENTRY(vmem_btag) u_freelist; /* BT_TYPE_FREE */
-		LIST_ENTRY(vmem_btag) u_hashlist; /* BT_TYPE_BUSY */
-	} bt_u;
-#define	bt_hashlist	bt_u.u_hashlist
-#define	bt_freelist	bt_u.u_freelist
-	vmem_addr_t	bt_start;
-	vmem_size_t	bt_size;
-	int		bt_type;
-};
-
 #define	BT_TYPE_SPAN		1	/* Allocated from importfn */
 #define	BT_TYPE_SPAN_STATIC	2	/* vmem_add() or create. */
 #define	BT_TYPE_FREE		3	/* Available space. */
 #define	BT_TYPE_BUSY		4	/* Used space. */
+#define	BT_TYPE_CURSOR		5	/* Cursor for nextfit allocations. */
 #define	BT_ISSPAN_P(bt)	((bt)->bt_type <= BT_TYPE_SPAN_STATIC)
 
 #define	BT_END(bt)	((bt)->bt_start + (bt)->bt_size - 1)
@@ -991,6 +994,73 @@ vmem_clip(vmem_t *vm, bt_t *bt, vmem_addr_t start, vmem_size_t size)
 	MPASS(bt->bt_size >= size);
 }
 
+static int
+vmem_xalloc_nextfit(vmem_t *vm, const vmem_size_t size, vmem_size_t align,
+    const vmem_size_t phase, const vmem_size_t nocross, int flags,
+    vmem_addr_t *addrp)
+{
+	struct vmem_btag *cursor, *next, *prev, *t;
+	int error;
+
+	error = 0;
+	VMEM_LOCK(vm);
+
+	/*
+	 * Make sure we have enough tags to complete the operation.
+	 */
+	if (vm->vm_nfreetags < BT_MAXALLOC && bt_fill(vm, flags) != 0) {
+		error = ENOMEM;
+		goto out;
+	}
+
+	/*
+	 * Find the next free tag meeting our constraints.
+	 */
+	for (cursor = &vm->vm_cursor, t = TAILQ_NEXT(cursor, bt_seglist);
+	    t != cursor; t = TAILQ_NEXT(t, bt_seglist)) {
+		if (t == NULL)
+			t = TAILQ_FIRST(&vm->vm_seglist);
+		if (t->bt_type == BT_TYPE_FREE && t->bt_size >= size &&
+		    vmem_fit(t, size, align, phase, nocross, 0, VMEM_ADDR_MAX,
+		    addrp) == 0)
+			break;
+	}
+	if (t == cursor) {
+		error = ENOMEM;
+		goto out;
+	}
+
+	/*
+	 * Allocate the segment.
+	 */
+	vmem_clip(vm, t, *addrp, size);
+
+	/*
+	 * Adjust the cursor and coalesce free segments.
+	 */
+	next = TAILQ_NEXT(cursor, bt_seglist);
+	prev = TAILQ_PREV(cursor, vmem_seglist, bt_seglist);
+	TAILQ_REMOVE(&vm->vm_seglist, cursor, bt_seglist);
+	if (next != NULL && prev != NULL &&
+	    next->bt_type == BT_TYPE_FREE && prev->bt_type == BT_TYPE_FREE &&
+	    prev->bt_start + prev->bt_size == next->bt_start) {
+		prev->bt_size += next->bt_size;
+		bt_remfree(vm, next);
+		bt_remseg(vm, next);
+	}
+	for (; t != NULL && t->bt_start < *addrp + size;
+	    t = TAILQ_NEXT(t, bt_seglist))
+		;
+	if (t != NULL)
+		TAILQ_INSERT_BEFORE(t, cursor, bt_seglist);
+	else
+		TAILQ_INSERT_HEAD(&vm->vm_seglist, cursor, bt_seglist);
+
+out:
+	VMEM_UNLOCK(vm);
+	return (error);
+}
+
 /* ---- vmem API */
 
 void
@@ -1052,9 +1122,13 @@ vmem_init(vmem_t *vm, const char *name, vmem_addr_t base, vmem_size_t size,
 	qc_init(vm, qcache_max);
 
 	TAILQ_INIT(&vm->vm_seglist);
-	for (i = 0; i < VMEM_MAXORDER; i++) {
+	vm->vm_cursor.bt_start = vm->vm_cursor.bt_size = 0;
+	vm->vm_cursor.bt_type = BT_TYPE_CURSOR;
+	TAILQ_INSERT_TAIL(&vm->vm_seglist, &vm->vm_cursor, bt_seglist);
+
+	for (i = 0; i < VMEM_MAXORDER; i++)
 		LIST_INIT(&vm->vm_freelist[i]);
-	}
+
 	memset(&vm->vm_hash0, 0, sizeof(vm->vm_hash0));
 	vm->vm_hashsize = VMEM_HASHSIZE_MIN;
 	vm->vm_hashlist = vm->vm_hash0;
@@ -1121,7 +1195,7 @@ vmem_alloc(vmem_t *vm, vmem_size_t size, int flags, vmem_addr_t *addrp)
 
 	flags &= VMEM_FLAGS;
 	MPASS(size > 0);
-	MPASS(strat == M_BESTFIT || strat == M_FIRSTFIT);
+	MPASS(strat == M_BESTFIT || strat == M_FIRSTFIT || strat == M_NEXTFIT);
 	if ((flags & M_NOWAIT) == 0)
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL, "vmem_alloc");
 
@@ -1156,7 +1230,7 @@ vmem_xalloc(vmem_t *vm, const vmem_size_t size0, vmem_size_t align,
 	strat = flags & VMEM_FITMASK;
 	MPASS(size0 > 0);
 	MPASS(size > 0);
-	MPASS(strat == M_BESTFIT || strat == M_FIRSTFIT);
+	MPASS(strat == M_BESTFIT || strat == M_FIRSTFIT || strat == M_NEXTFIT);
 	MPASS((flags & (M_NOWAIT|M_WAITOK)) != (M_NOWAIT|M_WAITOK));
 	if ((flags & M_NOWAIT) == 0)
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL, "vmem_xalloc");
@@ -1169,11 +1243,20 @@ vmem_xalloc(vmem_t *vm, const vmem_size_t size0, vmem_size_t align,
 	MPASS(nocross == 0 || nocross >= size);
 	MPASS(minaddr <= maxaddr);
 	MPASS(!VMEM_CROSS_P(phase, phase + size - 1, nocross));
+	if (strat == M_NEXTFIT)
+		MPASS(minaddr == 0 && maxaddr == VMEM_ADDR_MAX);
 
 	if (align == 0)
 		align = vm->vm_quantum_mask + 1;
-
 	*addrp = 0;
+
+	/*
+	 * Next-fit allocations don't use the freelists.
+	 */
+	if (strat == M_NEXTFIT)
+		return (vmem_xalloc_nextfit(vm, size0, align, phase, nocross,
+		    flags, addrp));
+
 	end = &vm->vm_freelist[VMEM_MAXORDER];
 	/*
 	 * choose a free block from which we allocate.
@@ -1310,7 +1393,7 @@ vmem_xfree(vmem_t *vm, vmem_addr_t addr, vmem_size_t size)
 
 	t = TAILQ_PREV(bt, vmem_seglist, bt_seglist);
 	MPASS(t != NULL);
-	MPASS(BT_ISSPAN_P(t) || t->bt_type == BT_TYPE_BUSY);
+	MPASS(t->bt_type != BT_TYPE_FREE);
 	if (vm->vm_releasefn != NULL && t->bt_type == BT_TYPE_SPAN &&
 	    t->bt_size == bt->bt_size) {
 		vmem_addr_t spanaddr;
