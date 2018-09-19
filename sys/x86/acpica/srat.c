@@ -420,7 +420,7 @@ parse_srat(void)
 {
 	unsigned int idx, size;
 	vm_paddr_t addr;
-	int error;
+	int error, i;
 
 	if (resource_disabled("srat", 0))
 		return (-1);
@@ -470,8 +470,9 @@ parse_srat(void)
 	}
 
 #ifdef NUMA
-	/* Point vm_phys at our memory affinity table. */
 	vm_ndomains = ndomain;
+	for (i = 0; i < vm_ndomains; i++)
+		DOMAINSET_SET(i, &all_domains);
 	mem_affinity = mem_info;
 #endif
 
