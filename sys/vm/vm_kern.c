@@ -691,13 +691,11 @@ kva_import(void *unused, vmem_size_t size, int flags, vmem_addr_t *addrp)
 	return (0);
 }
 
-#if VM_NRESERVLEVEL > 0
 /*
- * Import a superpage from the normal kernel arena into the special
- * arena for allocations with different permissions.
+ * Import KVA into a per-domain arena.
  */
 static int
-kernel_rwx_alloc(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
+kva_domain_import(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
 {
 
 	KASSERT((size % KVA_QUANTUM) == 0,
@@ -706,7 +704,6 @@ kernel_rwx_alloc(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
 	return (vmem_xalloc(arena, size, KVA_QUANTUM, 0, 0, VMEM_ADDR_MIN,
 	    VMEM_ADDR_MAX, flags, addrp));
 }
-#endif
 
 /*
  * 	kmem_init:
@@ -752,7 +749,7 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 	 */
 	kernel_rwx_arena = vmem_create("kernel rwx arena", 0, 0, PAGE_SIZE,
 	    0, M_WAITOK);
-	vmem_set_import(kernel_rwx_arena, kernel_rwx_alloc,
+	vmem_set_import(kernel_rwx_arena, kva_domain_import,
 	    (vmem_release_t *)vmem_xfree, kernel_arena, KVA_QUANTUM);
 #endif
 
@@ -760,13 +757,12 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 		vm_dom[domain].vmd_kernel_arena = vmem_create(
 		    "kernel arena domain", 0, 0, PAGE_SIZE, 0, M_WAITOK);
 		vmem_set_import(vm_dom[domain].vmd_kernel_arena,
-		    (vmem_import_t *)vmem_alloc, NULL, kernel_arena,
-		    KVA_QUANTUM);
+		    kva_domain_import, NULL, kernel_arena, KVA_QUANTUM);
 #if VM_NRESERVLEVEL > 0
 		vm_dom[domain].vmd_kernel_rwx_arena = vmem_create(
 		    "kernel rwx arena domain", 0, 0, PAGE_SIZE, 0, M_WAITOK);
 		vmem_set_import(vm_dom[domain].vmd_kernel_rwx_arena,
-		    kernel_rwx_alloc, (vmem_release_t *)vmem_xfree,
+		    kva_domain_import, (vmem_release_t *)vmem_xfree,
 		    vm_dom[domain].vmd_kernel_arena, KVA_QUANTUM);
 #endif
 	}
