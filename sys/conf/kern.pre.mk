@@ -122,11 +122,16 @@ LDFLAGS+=	-Wl,--build-id=sha1
 .endif
 
 .if (${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "i386") && \
-    defined(LINKER_FEATURES) && ${LINKER_FEATURES:Mifunc} == ""
+    defined(LINKER_FEATURES)
+.if ${LINKER_FEATURES:Mifunc} == ""
 .error amd64/i386 kernel requires linker ifunc support
 .endif
+.if ${LINKER_FEATURES:Mifunc-noplt} != ""
+LDFLAGS+=	-Wl,-z -Wl,ifunc-noplt
+.endif
+.endif
 .if ${MACHINE_CPUARCH} == "amd64"
-LDFLAGS+=	-Wl,-z max-page-size=2097152 -Wl,-z common-page-size=4096 -Wl,-z -Wl,ifunc-noplt
+LDFLAGS+=	-Wl,-z max-page-size=2097152 -Wl,-z common-page-size=4096
 .endif
 
 NORMAL_C= ${CC} -c ${CFLAGS} ${WERROR} ${PROF} ${.IMPSRC}

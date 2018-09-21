@@ -13,6 +13,9 @@
 # linker support for that feature:
 #
 # - build-id:  support for generating a Build-ID note
+# - filter:    support for filter DSOs
+# - ifunc:     support for GNU ifuncs
+# - ifunc-noplt: support for optimized ifunc calls
 # - retpoline: support for generating PLT with retpoline speculative
 #              execution vulnerability mitigation
 #
@@ -85,6 +88,7 @@ ${X_}LINKER_FEATURES+=	filter
 .endif
 .if ${${X_}LINKER_TYPE} == "lld" && ${${X_}LINKER_VERSION} >= 60000
 ${X_}LINKER_FEATURES+=	retpoline
+${X_}LINKER_FEATURES+=	ifunc-noplt
 .endif
 .endif
 .else
