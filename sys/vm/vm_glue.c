@@ -68,6 +68,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/domainset.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -300,12 +301,29 @@ struct kstack_cache_entry *kstack_cache;
 static int kstack_cache_size = 128;
 static int kstacks;
 static struct mtx kstack_cache_mtx;
-MTX_SYSINIT(kstack_cache, &kstack_cache_mtx, "kstkch", MTX_DEF);
+static struct domainset *kstack_domainset;
 
 SYSCTL_INT(_vm, OID_AUTO, kstack_cache_size, CTLFLAG_RW, &kstack_cache_size, 0,
     "");
 SYSCTL_INT(_vm, OID_AUTO, kstacks, CTLFLAG_RD, &kstacks, 0,
     "");
+
+static void
+kstack_init(void *dummy __unused)
+{
+	struct domainset dset;
+	int i;
+
+	mtx_init(&kstack_cache_mtx, "kstkch", NULL, MTX_DEF);
+
+	DOMAINSET_ZERO(&dset.ds_mask);
+	for (i = 0; i < vm_ndomains; i++)
+		DOMAINSET_SET(i, &dset.ds_mask);
+	dset.ds_policy = DOMAINSET_POLICY_ROUNDROBIN;
+	dset.ds_prefer = -1;
+	kstack_domainset = domainset_create(&dset);
+}
+SYSINIT(kstack_init, SI_SUB_VM_CONF, SI_ORDER_ANY, kstack_init, NULL);
 
 /*
  * Create the kernel stack (including pcb for i386) for a new thread.
@@ -368,6 +386,14 @@ vm_thread_new(struct thread *td, int pages)
 		vm_object_deallocate(ksobj);
 		return (0);
 	}
+
+	/*
+	 * Ensure that kstack objects can draw pages from any memory
+	 * domain.  Otherwise a local memory shortage can block a process
+	 * swap-in.
+	 */
+	ksobj->domain.dr_policy = kstack_domainset;
+	ksobj->domain.dr_iterator = 0;
 
 	atomic_add_int(&kstacks, 1);
 	if (KSTACK_GUARD_PAGES != 0) {
