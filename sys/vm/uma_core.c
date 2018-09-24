@@ -2597,7 +2597,7 @@ uma_zalloc_domain(uma_zone_t zone, void *udata, int domain, int flags)
  * only 'domain'.
  */
 static uma_slab_t
-keg_first_slab(uma_keg_t keg, int domain, int rr)
+keg_first_slab(uma_keg_t keg, int domain, bool rr)
 {
 	uma_domain_t dom;
 	uma_slab_t slab;
@@ -2638,7 +2638,8 @@ keg_fetch_slab(uma_keg_t keg, uma_zone_t zone, int rdomain, int flags)
 {
 	uma_domain_t dom;
 	uma_slab_t slab;
-	int allocflags, domain, rr, start;
+	int allocflags, domain, start;
+	bool minskip, rr;
 
 	mtx_assert(&keg->uk_lock, MA_OWNED);
 	slab = NULL;
@@ -2657,8 +2658,11 @@ keg_fetch_slab(uma_keg_t keg, uma_zone_t zone, int rdomain, int flags)
 		/* Only block on the second pass. */
 		if ((flags & (M_WAITOK | M_NOVM)) == M_WAITOK)
 			allocflags = (allocflags & ~M_WAITOK) | M_NOWAIT;
-	} else
+		minskip = true;
+	} else {
 		domain = start = rdomain;
+		minskip = false;
+	}
 
 again:
 	do {
@@ -2691,13 +2695,20 @@ again:
 			msleep(keg, &keg->uk_lock, PVM, "keglimit", 0);
 			continue;
 		}
-		slab = keg_alloc_slab(keg, zone, domain, allocflags);
+
+		/*
+		 * Try to allocate from undepleted domains in the first pass.
+		 */
+		if (minskip && vm_page_count_min_domain(domain))
+			continue;
+
 		/*
 		 * If we got a slab here it's safe to mark it partially used
 		 * and return.  We assume that the caller is going to remove
 		 * at least one item.
 		 */
-		if (slab) {
+		slab = keg_alloc_slab(keg, zone, domain, allocflags);
+		if (slab != NULL) {
 			MPASS(slab->us_keg == keg);
 			dom = &keg->uk_domain[slab->us_domain];
 			LIST_INSERT_HEAD(&dom->ud_part_slab, slab, us_link);
@@ -2707,9 +2718,13 @@ again:
 			domain = (domain + 1) % vm_ndomains;
 	} while (domain != start);
 
-	/* Retry domain scan with blocking. */
-	if (allocflags != flags) {
+	/*
+	 * Retry the domain scan with blocking and allowing allocations from
+	 * depleted domains.
+	 */
+	if (minskip) {
 		allocflags = flags;
+		minskip = false;
 		goto again;
 	}
 
