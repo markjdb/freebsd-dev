@@ -124,8 +124,6 @@ struct vm_domain {
 
 	int vmd_pageout_wanted;		/* (a, p) pageout daemon wait channel */
 	int vmd_pageout_pages_needed;	/* (d) page daemon waiting for pages? */
-	bool vmd_minset;		/* (d) Are we in vm_min_domains? */
-	bool vmd_severeset;		/* (d) Are we in vm_severe_domains? */
 	enum {
 		VM_LAUNDRY_IDLE = 0,
 		VM_LAUNDRY_BACKGROUND,

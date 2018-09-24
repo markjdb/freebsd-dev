@@ -2841,16 +2841,14 @@ vm_page_reclaim_contig(int req, u_long npages, vm_paddr_t low, vm_paddr_t high,
 void
 vm_domain_set(struct vm_domain *vmd)
 {
+	int domain;
 
+	domain = vmd->vmd_domain;
 	mtx_lock(&vm_domainset_lock);
-	if (!vmd->vmd_minset && vm_paging_min(vmd)) {
-		vmd->vmd_minset = 1;
-		DOMAINSET_SET(vmd->vmd_domain, &vm_min_domains);
-	}
-	if (!vmd->vmd_severeset && vm_paging_severe(vmd)) {
-		vmd->vmd_severeset = 1;
-		DOMAINSET_SET(vmd->vmd_domain, &vm_severe_domains);
-	}
+	if (!vm_page_count_min_domain(domain) && vm_paging_min(vmd))
+		DOMAINSET_SET(domain, &vm_min_domains);
+	if (!vm_page_count_severe_domain(domain) && vm_paging_severe(vmd))
+		DOMAINSET_SET(domain, &vm_severe_domains);
 	mtx_unlock(&vm_domainset_lock);
 }
 
@@ -2860,19 +2858,19 @@ vm_domain_set(struct vm_domain *vmd)
 void
 vm_domain_clear(struct vm_domain *vmd)
 {
+	int domain;
 
+	domain = vmd->vmd_domain;
 	mtx_lock(&vm_domainset_lock);
-	if (vmd->vmd_minset && !vm_paging_min(vmd)) {
-		vmd->vmd_minset = 0;
-		DOMAINSET_CLR(vmd->vmd_domain, &vm_min_domains);
+	if (vm_page_count_min_domain(domain) && !vm_paging_min(vmd)) {
+		DOMAINSET_CLR(domain, &vm_min_domains);
 		if (vm_min_waiters != 0) {
 			vm_min_waiters = 0;
 			wakeup(&vm_min_domains);
 		}
 	}
-	if (vmd->vmd_severeset && !vm_paging_severe(vmd)) {
-		vmd->vmd_severeset = 0;
-		DOMAINSET_CLR(vmd->vmd_domain, &vm_severe_domains);
+	if (vm_page_count_severe_domain(domain) && !vm_paging_severe(vmd)) {
+		DOMAINSET_CLR(domain, &vm_severe_domains);
 		if (vm_severe_waiters != 0) {
 			vm_severe_waiters = 0;
 			wakeup(&vm_severe_domains);
