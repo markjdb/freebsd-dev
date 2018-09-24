@@ -2628,19 +2628,24 @@ keg_first_slab(uma_keg_t keg, int domain, int rr)
 	return (NULL);
 }
 
+static bool
+keg_use_reserve_slab(uma_keg_t keg, int flags)
+{
+
+	return (keg->uk_free > ((flags & M_USE_RESERVE) != 0 ? 0 :
+	    keg->uk_reserve));
+}
+
 static uma_slab_t
 keg_fetch_slab(uma_keg_t keg, uma_zone_t zone, int rdomain, int flags)
 {
 	uma_domain_t dom;
 	uma_slab_t slab;
-	int allocflags, domain, reserve, rr, start;
+	int allocflags, domain, rr, start;
 
 	mtx_assert(&keg->uk_lock, MA_OWNED);
 	slab = NULL;
-	reserve = 0;
 	allocflags = flags;
-	if ((flags & M_USE_RESERVE) == 0)
-		reserve = keg->uk_reserve;
 
 	/*
 	 * Round-robin for non first-touch zones when there is more than one
@@ -2664,7 +2669,7 @@ keg_fetch_slab(uma_keg_t keg, uma_zone_t zone, int rdomain, int flags)
 
 again:
 	do {
-		if (keg->uk_free > reserve &&
+		if (keg_use_reserve_slab(keg, flags) &&
 		    (slab = keg_first_slab(keg, domain, rr)) != NULL) {
 			MPASS(slab->us_keg == keg);
 			return (slab);
@@ -2723,7 +2728,7 @@ again:
 	 * could have while we were unlocked.  Check again before we
 	 * fail.
 	 */
-	if (keg->uk_free > reserve &&
+	if (keg_use_reserve_slab(keg, flags) &&
 	    (slab = keg_first_slab(keg, domain, rr)) != NULL) {
 		MPASS(slab->us_keg == keg);
 		return (slab);
