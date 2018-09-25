@@ -258,7 +258,6 @@ vm_domainset_iter_page(struct vm_domainset_iter *di, int *domain, int *req)
 	return (0);
 }
 
-
 void
 vm_domainset_iter_malloc_init(struct vm_domainset_iter *di,
     struct vm_object *obj, int *domain, int *flags)
@@ -307,6 +306,7 @@ vm_domainset_iter_malloc(struct vm_domainset_iter *di, int *domain, int *flags)
 }
 
 #else /* !NUMA */
+
 int
 vm_domainset_iter_page(struct vm_domainset_iter *di, int *domain, int *flags)
 {
@@ -315,8 +315,8 @@ vm_domainset_iter_page(struct vm_domainset_iter *di, int *domain, int *flags)
 }
 
 void
-vm_domainset_iter_page_init(struct vm_domainset_iter *di,
-            struct vm_object *obj, vm_pindex_t pindex, int *domain, int *flags)
+vm_domainset_iter_page_init(struct vm_domainset_iter *di, struct vm_object *obj,
+    vm_pindex_t pindex, int *domain, int *flags)
 {
 
 	*domain = 0;
@@ -331,10 +331,10 @@ vm_domainset_iter_malloc(struct vm_domainset_iter *di, int *domain, int *flags)
 
 void
 vm_domainset_iter_malloc_init(struct vm_domainset_iter *di,
-            struct vm_object *obj, int *domain, int *flags)
+    struct vm_object *obj, int *domain, int *flags)
 {
 
 	*domain = 0;
 }
 
-#endif
+#endif /* NUMA */
