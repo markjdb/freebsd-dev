@@ -68,6 +68,7 @@ __FBSDID("$FreeBSD$");
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
+#include <vm/vm_domainset.h>
 #include <vm/vm_pageout.h>
 #include <vm/vm_param.h>
 #include <vm/vm_kern.h>
@@ -638,6 +639,27 @@ malloc_domain(size_t size, struct malloc_type *mtp, int domain,
 		va = redzone_setup(va, osize);
 #endif
 	return ((void *) va);
+}
+
+void *
+malloc_domainset(size_t size, struct malloc_type *mtp, struct domainset *ds,
+    int flags)
+{
+	struct domainset_ref dr;
+	struct vm_domainset_iter di;
+	void *p;
+	int domain;
+
+	dr.dr_policy = ds;
+	dr.dr_iterator = curthread->td_domain.dr_iterator;
+	vm_domainset_iter_malloc_init(&di, &dr, &domain, &flags);
+	do {
+		p = malloc_domain(size, mtp, domain, flags);
+		if (p != NULL)
+			break;
+	} while (vm_domainset_iter_malloc(&di, &domain, &flags));
+
+	return (p);
 }
 
 void *
