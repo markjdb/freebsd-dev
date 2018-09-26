@@ -32,8 +32,8 @@
 #define	_SYS_DOMAINSET_H_
 
 #include <sys/_domainset.h>
-
 #include <sys/bitset.h>
+#include <sys/queue.h>
 
 #define	_NDOMAINSETBITS			_BITSET_BITS
 #define	_NDOMAINSETWORDS		__bitset_words(DOMAINSET_SETSIZE)
@@ -96,6 +96,9 @@ struct domainset {
 	domainid_t	ds_order[MAXMEMDOM];  /* nth domain table. */
 };
 
+extern struct domainset *domainset_prefer[MAXMEMDOM];
+
+void domainset_init(void);
 void domainset_zero(void);
 
 /*

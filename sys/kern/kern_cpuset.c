@@ -114,6 +114,7 @@ __FBSDID("$FreeBSD$");
  */
 
 LIST_HEAD(domainlist, domainset);
+struct domainset *domainset_prefer[MAXMEMDOM];
 
 static uma_zone_t cpuset_zone;
 static uma_zone_t domainset_zone;
@@ -1344,20 +1345,37 @@ cpuset_setithread(lwpid_t id, int cpu)
 }
 
 /*
+ * Initialize the domainset zone and pre-allocate global domainsets.
+ */
+void
+domainset_init(void)
+{
+	struct domainset dset;
+	int i;
+
+	domainset_zone = uma_zcreate("domainset", sizeof(struct domainset),
+	    NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE, 0);
+
+	DOMAINSET_COPY(&all_domains, &dset.ds_mask);
+	dset.ds_policy = DOMAINSET_POLICY_PREFER;
+	for (i = 0; i < vm_ndomains; i++) {
+		dset.ds_prefer = i;
+		domainset_prefer[i] = domainset_create(&dset);
+	}
+}
+
+/*
  * Create the domainset for cpuset 0, 1 and cpuset 2.
  */
 void
 domainset_zero(void)
 {
 	struct domainset *dset;
-	int i;
 
 	mtx_init(&cpuset_lock, "cpuset", NULL, MTX_SPIN | MTX_RECURSE);
 
 	dset = &domainset0;
-	DOMAINSET_ZERO(&dset->ds_mask);
-	for (i = 0; i < vm_ndomains; i++)
-		DOMAINSET_SET(i, &dset->ds_mask);
+	DOMAINSET_COPY(&all_domains, &dset->ds_mask);
 	dset->ds_policy = DOMAINSET_POLICY_FIRSTTOUCH;
 	dset->ds_prefer = -1;
 	curthread->td_domain.dr_policy = _domainset_create(dset, NULL);
@@ -1390,8 +1408,6 @@ cpuset_thread0(void)
 
 	cpuset_zone = uma_zcreate("cpuset", sizeof(struct cpuset), NULL, NULL,
 	    NULL, NULL, UMA_ALIGN_CACHE, 0);
-	domainset_zone = uma_zcreate("domainset", sizeof(struct domainset),
-	    NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE, 0);
 
 	/*
 	 * Create the root system set (0) for the whole machine.  Doesn't use
