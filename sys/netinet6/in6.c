@@ -2045,7 +2045,7 @@ struct in6_llentry {
  * Do actual deallocation of @lle.
  */
 static void
-in6_lltable_destroy_lle_unlocked(epoch_context_t ctx)
+in6_lltable_destroy_lle_deferred(epoch_context_t ctx)
 {
 	struct llentry *lle;
 
@@ -2063,8 +2063,11 @@ static void
 in6_lltable_destroy_lle(struct llentry *lle)
 {
 
+	if (callout_pending(&lle->lle_timer))
+		panic("lle %p still pending", lle);
 	LLE_WUNLOCK(lle);
-	epoch_call(net_epoch_preempt,  &lle->lle_epoch_ctx, in6_lltable_destroy_lle_unlocked);
+	epoch_call(net_epoch_preempt, &lle->lle_epoch_ctx,
+	    in6_lltable_destroy_lle_deferred);
 }
 
 static struct llentry *
@@ -2287,7 +2290,8 @@ in6_lltable_alloc(struct lltable *llt, u_int flags,
 		linkhdrsize = LLE_MAX_LINKHDR;
 		if (lltable_calc_llheader(ifp, AF_INET6, IF_LLADDR(ifp),
 		    linkhdr, &linkhdrsize, &lladdr_off) != 0) {
-			epoch_call(net_epoch_preempt,  &lle->lle_epoch_ctx, in6_lltable_destroy_lle_unlocked);
+			epoch_call(net_epoch_preempt,  &lle->lle_epoch_ctx,
+			    in6_lltable_destroy_lle_deferred);
 			return (NULL);
 		}
 		lltable_set_entry_addr(ifp, lle, linkhdr, linkhdrsize,

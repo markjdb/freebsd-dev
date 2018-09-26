@@ -1051,20 +1051,6 @@ struct in_llentry {
 	(((((((k >> 8) ^ k) >> 8) ^ k) >> 8) ^ k) & ((h) - 1))
 
 /*
- * Do actual deallocation of @lle.
- */
-static void
-in_lltable_destroy_lle_unlocked(epoch_context_t ctx)
-{
-	struct llentry *lle;
-
-	lle = __containerof(ctx, struct llentry, lle_epoch_ctx);
-	LLE_LOCK_DESTROY(lle);
-	LLE_REQ_DESTROY(lle);
-	free(lle, M_LLTABLE);
-}
-
-/*
  * Called by the datapath to indicate that
  * the entry was used.
  */
@@ -1078,6 +1064,20 @@ in_lltable_mark_used(struct llentry *lle)
 }
 
 /*
+ * Do actual deallocation of @lle.
+ */
+static void
+in_lltable_destroy_lle_deferred(epoch_context_t ctx)
+{
+	struct llentry *lle;
+
+	lle = __containerof(ctx, struct llentry, lle_epoch_ctx);
+	LLE_LOCK_DESTROY(lle);
+	LLE_REQ_DESTROY(lle);
+	free(lle, M_LLTABLE);
+}
+
+/*
  * Called by LLE_FREE_LOCKED when number of references
  * drops to zero.
  */
@@ -1085,8 +1085,11 @@ static void
 in_lltable_destroy_lle(struct llentry *lle)
 {
 
+	if (callout_pending(&lle->lle_timer))
+		panic("lle %p still pending", lle);
 	LLE_WUNLOCK(lle);
-	epoch_call(net_epoch_preempt,  &lle->lle_epoch_ctx, in_lltable_destroy_lle_unlocked);
+	epoch_call(net_epoch_preempt, &lle->lle_epoch_ctx,
+	    in_lltable_destroy_lle_deferred);
 }
 
 static struct llentry *
@@ -1347,7 +1350,8 @@ in_lltable_alloc(struct lltable *llt, u_int flags, const struct sockaddr *l3addr
 		linkhdrsize = LLE_MAX_LINKHDR;
 		if (lltable_calc_llheader(ifp, AF_INET, IF_LLADDR(ifp),
 		    linkhdr, &linkhdrsize, &lladdr_off) != 0) {
-			epoch_call(net_epoch_preempt,  &lle->lle_epoch_ctx, in_lltable_destroy_lle_unlocked);
+			epoch_call(net_epoch_preempt, &lle->lle_epoch_ctx,
+			    in_lltable_destroy_lle_deferred);
 			return (NULL);
 		}
 		lltable_set_entry_addr(ifp, lle, linkhdr, linkhdrsize,
