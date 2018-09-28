@@ -991,6 +991,8 @@ zone_drain(uma_zone_t zone)
 
 /*
  * Allocate a new slab for a keg.  This does not insert the slab onto a list.
+ * If the allocation was successful, the keg lock will be held upon return,
+ * otherwise the keg will be left unlocked.
  *
  * Arguments:
  *	wait  Shall we wait?
@@ -1012,13 +1014,12 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int wait)
 	KASSERT(domain >= 0 && domain < vm_ndomains,
 	    ("keg_alloc_slab: domain %d out of range", domain));
 	mtx_assert(&keg->uk_lock, MA_OWNED);
-	slab = NULL;
-	mem = NULL;
 
 	allocf = keg->uk_allocf;
 	KEG_UNLOCK(keg);
-	size = keg->uk_ppera * PAGE_SIZE;
 
+	slab = NULL;
+	mem = NULL;
 	if (keg->uk_flags & UMA_ZONE_OFFPAGE) {
 		slab = zone_alloc_item(keg->uk_slabzone, NULL, domain, wait);
 		if (slab == NULL)
@@ -1041,6 +1042,7 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int wait)
 		wait |= M_NODUMP;
 
 	/* zone is passed for legacy reasons. */
+	size = keg->uk_ppera * PAGE_SIZE;
 	mem = allocf(zone, size, domain, &flags, wait);
 	if (mem == NULL) {
 		if (keg->uk_flags & UMA_ZONE_OFFPAGE)
@@ -1079,20 +1081,18 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int wait)
 			goto out;
 		}
 	}
-out:
 	KEG_LOCK(keg);
 
 	CTR3(KTR_UMA, "keg_alloc_slab: allocated slab %p for %s(%p)",
 	    slab, keg->uk_name, keg);
 
-	if (slab != NULL) {
-		if (keg->uk_flags & UMA_ZONE_HASH)
-			UMA_HASH_INSERT(&keg->uk_hash, slab, mem);
+	if (keg->uk_flags & UMA_ZONE_HASH)
+		UMA_HASH_INSERT(&keg->uk_hash, slab, mem);
 
-		keg->uk_pages += keg->uk_ppera;
-		keg->uk_free += keg->uk_ipers;
-	}
+	keg->uk_pages += keg->uk_ppera;
+	keg->uk_free += keg->uk_ipers;
 
+out:
 	return (slab);
 }
 
@@ -2715,6 +2715,7 @@ again:
 				domain = (domain + 1) % vm_ndomains;
 			} while (VM_DOMAIN_EMPTY(domain) && domain != start);
 		}
+		KEG_LOCK(keg);
 	} while (domain != start);
 
 	/* Retry domain scan with blocking. */
@@ -3604,14 +3605,13 @@ uma_prealloc(uma_zone_t zone, int items)
 	domain = 0;
 	if (slabs * keg->uk_ipers < items)
 		slabs++;
-	while (slabs > 0) {
+	while (slabs-- > 0) {
 		slab = keg_alloc_slab(keg, zone, domain, M_WAITOK);
 		if (slab == NULL)
-			break;
+			return;
 		MPASS(slab->us_keg == keg);
 		dom = &keg->uk_domain[slab->us_domain];
 		LIST_INSERT_HEAD(&dom->ud_free_slab, slab, us_link);
-		slabs--;
 		do {
 			domain = (domain + 1) % vm_ndomains;
 		} while (VM_DOMAIN_EMPTY(domain));
