@@ -45,7 +45,7 @@ void	vm_domainset_iter_page_init(struct vm_domainset_iter *,
 	    struct vm_object *, vm_pindex_t, int *, int *);
 int	vm_domainset_iter_malloc(struct vm_domainset_iter *, int *, int *);
 void	vm_domainset_iter_malloc_init(struct vm_domainset_iter *,
-	    struct vm_object *, int *, int *);
+	    struct domainset_ref *, int *, int *);
 
 void	vm_wait_doms(const domainset_t *);
 
