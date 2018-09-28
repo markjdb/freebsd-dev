@@ -62,25 +62,23 @@ static int vm_domainset_default_stride = 64;
  * Determine which policy is to be used for this allocation.
  */
 static void
-vm_domainset_iter_init(struct vm_domainset_iter *di, struct vm_object *obj,
-    vm_pindex_t pindex)
+vm_domainset_iter_init(struct vm_domainset_iter *di, struct domainset_ref *dr,
+    struct vm_object *obj, vm_pindex_t pindex)
 {
-	struct domainset *domain;
-	struct thread *td;
 
 	/*
-	 * object policy takes precedence over thread policy.  The policies
+	 * Object policy takes precedence over thread policy.  The policies
 	 * are immutable and unsynchronized.  Updates can race but pointer
 	 * loads are assumed to be atomic.
 	 */
-	if (obj != NULL && (domain = obj->domain.dr_policy) != NULL) {
-		di->di_domain = domain;
-		di->di_iter = &obj->domain.dr_iterator;
-	} else {
-		td = curthread;
-		di->di_domain = td->td_domain.dr_policy;
-		di->di_iter = &td->td_domain.dr_iterator;
+	if (dr == NULL) {
+		if (obj != NULL && obj->domain.dr_policy != NULL)
+			dr = &obj->domain;
+		else
+			dr = &curthread->td_domain;
 	}
+	di->di_domain = dr->dr_policy;
+	di->di_iter = &dr->dr_iterator;
 	di->di_policy = di->di_domain->ds_policy;
 	if (di->di_policy == DOMAINSET_POLICY_INTERLEAVE) {
 #if VM_NRESERVLEVEL > 0
@@ -212,7 +210,7 @@ vm_domainset_iter_page_init(struct vm_domainset_iter *di, struct vm_object *obj,
     vm_pindex_t pindex, int *domain, int *req)
 {
 
-	vm_domainset_iter_init(di, obj, pindex);
+	vm_domainset_iter_init(di, NULL, obj, pindex);
 	di->di_flags = *req;
 	*req = (di->di_flags & ~(VM_ALLOC_WAITOK | VM_ALLOC_WAITFAIL)) |
 	    VM_ALLOC_NOWAIT;
@@ -260,10 +258,10 @@ vm_domainset_iter_page(struct vm_domainset_iter *di, int *domain, int *req)
 
 void
 vm_domainset_iter_malloc_init(struct vm_domainset_iter *di,
-    struct vm_object *obj, int *domain, int *flags)
+    struct domainset_ref *dr, int *domain, int *flags)
 {
 
-	vm_domainset_iter_init(di, obj, 0);
+	vm_domainset_iter_init(di, dr, kernel_object, 0);
 	if (di->di_policy == DOMAINSET_POLICY_INTERLEAVE)
 		di->di_policy = DOMAINSET_POLICY_ROUNDROBIN;
 	di->di_flags = *flags;
@@ -331,7 +329,7 @@ vm_domainset_iter_malloc(struct vm_domainset_iter *di, int *domain, int *flags)
 
 void
 vm_domainset_iter_malloc_init(struct vm_domainset_iter *di,
-    struct vm_object *obj, int *domain, int *flags)
+    struct domainset_ref *dr, int *domain, int *flags)
 {
 
 	*domain = 0;
