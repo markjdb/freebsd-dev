@@ -235,7 +235,7 @@ kmem_alloc_attr(vm_size_t size, int flags, vm_paddr_t low, vm_paddr_t high,
 	vm_offset_t addr;
 	int domain;
 
-	vm_domainset_iter_malloc_init(&di, NULL, &domain, &flags);
+	vm_domainset_iter_malloc_init(&di, kernel_object, &domain, &flags);
 	do {
 		addr = kmem_alloc_attr_domain(domain, size, flags, low, high,
 		    memattr);
@@ -319,7 +319,7 @@ kmem_alloc_contig(vm_size_t size, int flags, vm_paddr_t low, vm_paddr_t high,
 	vm_offset_t addr;
 	int domain;
 
-	vm_domainset_iter_malloc_init(&di, NULL, &domain, &flags);
+	vm_domainset_iter_malloc_init(&di, kernel_object, &domain, &flags);
 	do {
 		addr = kmem_alloc_contig_domain(domain, size, flags, low, high,
 		    alignment, boundary, memattr);
@@ -406,7 +406,7 @@ kmem_malloc(vm_size_t size, int flags)
 	vm_offset_t addr;
 	int domain;
 
-	vm_domainset_iter_malloc_init(&di, NULL, &domain, &flags);
+	vm_domainset_iter_malloc_init(&di, kernel_object, &domain, &flags);
 	do {
 		addr = kmem_malloc_domain(domain, size, flags);
 		if (addr != 0)
