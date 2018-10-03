@@ -25,6 +25,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  rtwn rtwn_usb rtwnfw                         \
 				  vmm"
 
+options 	DEBUG_MEMGUARD
 options 	SCHED_ULE		# ULE scheduler
 options 	PREEMPTION		# Enable kernel thread preemption
 options 	VIMAGE			# Subsystem virtualization, e.g. VNET
