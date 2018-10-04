@@ -29,7 +29,7 @@
 .\" $NetBSD: malloc.9,v 1.3 1996/11/11 00:05:11 lukem Exp $
 .\" $FreeBSD$
 .\"
-.Dd June 13, 2018
+.Dd September 28, 2018
 .Dt MALLOC 9
 .Os
 .Sh NAME
@@ -47,6 +47,8 @@
 .Fn malloc "size_t size" "struct malloc_type *type" "int flags"
 .Ft void *
 .Fn malloc_domain "size_t size" "struct malloc_type *type" "int domain" "int flags"
+.Ft void *
+.Fn malloc_domainset "size_t size" "struct malloc_type *type" "struct domainset *ds" "int flags"
 .Ft void *
 .Fn mallocarray "size_t nmemb" "size_t size" "struct malloc_type *type" "int flags"
 .Ft void
@@ -71,11 +73,18 @@ object whose size is specified by
 .Pp
 The
 .Fn malloc_domain
-variant allocates the object from the specified memory domain.  Memory allocated
-with this function should be returned with
+and
+.Fn malloc_domainset
+variants permit allocations from a specific
+.Xr numa 9
+domain.
+.Fn malloc_domain
+will allocate memory from the specified domain,
+and
+.Fn malloc_domainset
+allows the caller to fully specify the domain selection policy.
+Memory allocated with these functions should be freed with
 .Fn free_domain .
-See
-.Xr numa 9 for more details.
 .Pp
 The
 .Fn mallocarray
@@ -312,5 +321,7 @@ message.
 .Sh SEE ALSO
 .Xr vmstat 8 ,
 .Xr contigmalloc 9 ,
+.Xr domainset 9 ,
 .Xr memguard 9 ,
+.Xr numa 9 ,
 .Xr vnode 9
