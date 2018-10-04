@@ -1218,5 +1218,7 @@ struct pmc_mdep *pmc_mdep_alloc(int nclasses);
 void pmc_mdep_free(struct pmc_mdep *md);
 void pmc_flush_samples(int cpu);
 uint64_t pmc_rdtsc(void);
+void	*pmc_malloc_domain(size_t size, int domain, int flags);
+
 #endif /* _KERNEL */
 #endif /* _SYS_PMC_H_ */
