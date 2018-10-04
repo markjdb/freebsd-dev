@@ -1178,8 +1178,8 @@ page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
 }
 
 static void *
-pcpu_page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
-    int wait)
+pcpu_page_alloc(uma_zone_t zone, vm_size_t bytes, int domain __unused,
+    uint8_t *pflag, int wait)
 {
 	struct pglist alloctail;
 	vm_offset_t addr, zkva;
@@ -1196,18 +1196,8 @@ pcpu_page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
 	    malloc2vm_flags(wait);
 	*pflag = UMA_SLAB_KERNEL;
 	for (cpu = 0; cpu <= mp_maxid; cpu++) {
-		if (CPU_ABSENT(cpu)) {
-			p = vm_page_alloc(NULL, 0, flags);
-		} else {
-#ifndef NUMA
-			p = vm_page_alloc(NULL, 0, flags);
-#else
-			pc = pcpu_find(cpu);
-			p = vm_page_alloc_domain(NULL, 0, pc->pc_domain, flags);
-			if (__predict_false(p == NULL))
-				p = vm_page_alloc(NULL, 0, flags);
-#endif
-		}
+		p = vm_page_alloc_domainset(NULL, 0,
+		    DOMAINSET_PREFER(pc->pc_domain), flags);
 		if (__predict_false(p == NULL))
 			goto fail;
 		TAILQ_INSERT_TAIL(&alloctail, p, listq);

@@ -1733,6 +1733,24 @@ vm_page_alloc_domain(vm_object_t object, vm_pindex_t pindex, int domain,
 	    NULL));
 }
 
+vm_page_t
+vm_page_alloc_domainset(vm_object_t object, vm_pindex_t pindex,
+    struct domainset *ds, int req)
+{
+	struct vm_domainset_iter di;
+	vm_page_t m;
+	int domain;
+
+	vm_domainset_iter_policy_init(&di, ds, &domain, *req);
+	do {
+		m = vm_page_alloc_domain(object, pindex, domain, req);
+		if (m != NULL)
+			break;
+	} while (vm_domainset_iter_policy(&di, &domain) == 0);
+
+	return (m);
+}
+
 /*
  * Allocate a page in the specified object with the given page index.  To
  * optimize insertion of the page into the object, the caller must also specifiy
