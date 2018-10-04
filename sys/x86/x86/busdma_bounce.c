@@ -31,6 +31,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/domainset.h>
 #include <sys/malloc.h>
 #include <sys/bus.h>
 #include <sys/interrupt.h>
@@ -411,9 +412,9 @@ bounce_bus_dmamem_alloc(bus_dma_tag_t dmat, void** vaddr, int flags,
 	*mapp = NULL;
 
 	if (dmat->segments == NULL) {
-		dmat->segments = (bus_dma_segment_t *)malloc_domain(
+		dmat->segments = (bus_dma_segment_t *)malloc_domainset(
 		    sizeof(bus_dma_segment_t) * dmat->common.nsegments,
-		    M_DEVBUF, dmat->common.domain, mflags);
+		    M_DEVBUF, DOMAINSET_PREFER(dmat->common.domain), mflags);
 		if (dmat->segments == NULL) {
 			CTR4(KTR_BUSDMA, "%s: tag %p tag flags 0x%x error %d",
 			    __func__, dmat, dmat->common.flags, ENOMEM);
@@ -452,8 +453,8 @@ bounce_bus_dmamem_alloc(bus_dma_tag_t dmat, void** vaddr, int flags,
 	   (dmat->common.alignment <= dmat->common.maxsize) &&
 	    dmat->common.lowaddr >= ptoa((vm_paddr_t)Maxmem) &&
 	    attr == VM_MEMATTR_DEFAULT) {
-		*vaddr = malloc_domain(dmat->common.maxsize, M_DEVBUF,
-		    dmat->common.domain, mflags);
+		*vaddr = malloc_domainset(dmat->common.maxsize, M_DEVBUF,
+		    DOMAINSET_PREFER(dmat->common.domain), mflags);
 	} else if (dmat->common.nsegments >=
 	    howmany(dmat->common.maxsize, MIN(dmat->common.maxsegsz, PAGE_SIZE)) &&
 	    dmat->common.alignment <= PAGE_SIZE &&

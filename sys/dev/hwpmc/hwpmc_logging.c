@@ -1230,10 +1230,12 @@ pmclog_process_userlog(struct pmc_owner *po, struct pmc_op_writelog *wl)
  */
 
 void
-pmclog_initialize()
+pmclog_initialize(void)
 {
-	int domain;
+	struct pmc_domain_buffer_header *pdbh;
 	struct pmclog_buffer *plb;
+	void *buf;
+	int count, domain, i;
 
 	if (pmclog_buffer_size <= 0 || pmclog_buffer_size > 16*1024) {
 		(void) printf("hwpmc: tunable logbuffersize=%d must be "
@@ -1254,16 +1256,15 @@ pmclog_initialize()
 		pmclog_buffer_size = PMC_LOG_BUFFER_SIZE;
 	}
 	for (domain = 0; domain < vm_ndomains; domain++) {
-		int ncpus = pmc_dom_hdrs[domain]->pdbh_ncpus;
-		int total = ncpus*pmc_nlogbuffers_pcpu;
+		pdbh = pmc_dom_hdrs[domain];
+		count = pdbh->pdbh_ncpus * pmc_nlogbuffers_pcpu;
 
-		plb = malloc_domain(sizeof(struct pmclog_buffer)*total, M_PMC, domain, M_WAITOK|M_ZERO);
+		plb = pmc_malloc_domain(sizeof(struct pmclog_buffer) * count,
+		    domain, M_WAITOK | M_ZERO);
 		pmc_dom_hdrs[domain]->pdbh_plbs = plb;
-		for (int i = 0; i < total; i++, plb++) {
-			void *buf;
-
-			buf = malloc_domain(1024 * pmclog_buffer_size, M_PMC, domain,
-								M_WAITOK|M_ZERO);
+		for (i = 0; i < count; i++, plb++) {
+			buf = pmc_malloc_domain(1024 * pmclog_buffer_size,
+			    domain, M_WAITOK | M_ZERO);
 			PMCLOG_INIT_BUFFER_DESCRIPTOR(plb, buf, domain);
 			pmc_plb_rele_unlocked(plb);
 		}
@@ -1278,18 +1279,20 @@ pmclog_initialize()
  */
 
 void
-pmclog_shutdown()
+pmclog_shutdown(void)
 {
+	struct pmc_domain_buffer_header *pdbh;
 	struct pmclog_buffer *plb;
 	int domain;
 
 	mtx_destroy(&pmc_kthread_mtx);
 
 	for (domain = 0; domain < vm_ndomains; domain++) {
-		while ((plb = TAILQ_FIRST(&pmc_dom_hdrs[domain]->pdbh_head)) != NULL) {
-			TAILQ_REMOVE(&pmc_dom_hdrs[domain]->pdbh_head, plb, plb_next);
-			free(plb->plb_base, M_PMC);
+		pdbh = pmc_dom_hdrs[domain];
+		while ((plb = TAILQ_FIRST(&pdbh->pdbh_head)) != NULL) {
+			TAILQ_REMOVE(&pdbh->pdbh_head, plb, plb_next);
+			free_domain(plb->plb_base, M_PMC);
 		}
-		free(pmc_dom_hdrs[domain]->pdbh_plbs, M_PMC);
+		free_domain(pdbh->pdbh_plbs, M_PMC);
 	}
 }

@@ -36,6 +36,7 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/domainset.h>
 #include <sys/eventhandler.h>
 #include <sys/gtaskqueue.h>
 #include <sys/jail.h>
@@ -77,14 +78,6 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_object.h>
 
 #include "hwpmc_soft.h"
-
-#ifdef NUMA
-#define NDOMAINS vm_ndomains
-#else
-#define NDOMAINS 1
-#define malloc_domain(size, type, domain, flags) malloc((size), (type), (flags))
-#define free_domain(addr, type) free(addr, type)
-#endif
 
 #define PMC_EPOCH_ENTER() struct epoch_tracker pmc_et; epoch_enter_preempt(global_epoch_preempt, &pmc_et)
 #define PMC_EPOCH_EXIT() epoch_exit_preempt(global_epoch_preempt, &pmc_et)
@@ -823,6 +816,19 @@ pmc_rdtsc(void)
 #else
 	return get_cyclecount();
 #endif
+}
+
+/*
+ * Wrapper for NUMA allocations.  We attempt an allocation from the requested
+ * domain, but fall back to other domains if the initial allocation attempt
+ * fails.
+ */
+
+void *
+pmc_malloc_domain(size_t size, int domain, int flags)
+{
+
+	return (malloc_domainset(size, M_PMC, DOMAINSET_PREFER(domain), flags));
 }
 
 /*
@@ -5655,17 +5661,18 @@ pmc_initialize(void)
 			continue;
 		pc = pcpu_find(cpu);
 		domain = pc->pc_domain;
-		sb = malloc_domain(sizeof(struct pmc_samplebuffer) +
-			pmc_nsamples * sizeof(struct pmc_sample), M_PMC, domain,
-		    M_WAITOK|M_ZERO);
+		sb = pmc_malloc_domain(sizeof(struct pmc_samplebuffer) +
+		    pmc_nsamples * sizeof(struct pmc_sample), domain,
+		    M_WAITOK | M_ZERO);
 		sb->ps_read = sb->ps_write = sb->ps_samples;
 		sb->ps_fence = sb->ps_samples + pmc_nsamples;
 
 		KASSERT(pmc_pcpu[cpu] != NULL,
 		    ("[pmc,%d] cpu=%d Null per-cpu data", __LINE__, cpu));
 
-		sb->ps_callchains = malloc_domain(pmc_callchaindepth * pmc_nsamples *
-			sizeof(uintptr_t), M_PMC, domain, M_WAITOK|M_ZERO);
+		sb->ps_callchains = pmc_malloc_domain(pmc_callchaindepth *
+		    pmc_nsamples * sizeof(uintptr_t), domain,
+		    M_WAITOK | M_ZERO);
 
 		for (n = 0, ps = sb->ps_samples; n < pmc_nsamples; n++, ps++)
 			ps->ps_pc = sb->ps_callchains +
@@ -5673,17 +5680,18 @@ pmc_initialize(void)
 
 		pmc_pcpu[cpu]->pc_sb[PMC_HR] = sb;
 
-		sb = malloc_domain(sizeof(struct pmc_samplebuffer) +
-			pmc_nsamples * sizeof(struct pmc_sample), M_PMC, domain,
-		    M_WAITOK|M_ZERO);
+		sb = pmc_malloc_domain(sizeof(struct pmc_samplebuffer) +
+		    pmc_nsamples * sizeof(struct pmc_sample), domain,
+		    M_WAITOK | M_ZERO);
 		sb->ps_read = sb->ps_write = sb->ps_samples;
 		sb->ps_fence = sb->ps_samples + pmc_nsamples;
 
 		KASSERT(pmc_pcpu[cpu] != NULL,
 		    ("[pmc,%d] cpu=%d Null per-cpu data", __LINE__, cpu));
 
-		sb->ps_callchains = malloc_domain(pmc_callchaindepth * pmc_nsamples *
-			sizeof(uintptr_t), M_PMC, domain, M_WAITOK|M_ZERO);
+		sb->ps_callchains = pmc_malloc_domain(pmc_callchaindepth *
+		    pmc_nsamples * sizeof(uintptr_t), domain,
+		    M_WAITOK | M_ZERO);
 
 		for (n = 0, ps = sb->ps_samples; n < pmc_nsamples; n++, ps++)
 			ps->ps_pc = sb->ps_callchains +
@@ -5691,17 +5699,18 @@ pmc_initialize(void)
 
 		pmc_pcpu[cpu]->pc_sb[PMC_SR] = sb;
 
-		sb = malloc_domain(sizeof(struct pmc_samplebuffer) +
-			pmc_nsamples * sizeof(struct pmc_sample), M_PMC, domain,
-		    M_WAITOK|M_ZERO);
+		sb = pmc_malloc_domain(sizeof(struct pmc_samplebuffer) +
+		    pmc_nsamples * sizeof(struct pmc_sample), domain,
+		    M_WAITOK | M_ZERO);
 		sb->ps_read = sb->ps_write = sb->ps_samples;
 		sb->ps_fence = sb->ps_samples + pmc_nsamples;
 
 		KASSERT(pmc_pcpu[cpu] != NULL,
 		    ("[pmc,%d] cpu=%d Null per-cpu data", __LINE__, cpu));
 
-		sb->ps_callchains = malloc_domain(pmc_callchaindepth * pmc_nsamples *
-		    sizeof(uintptr_t), M_PMC, domain, M_WAITOK|M_ZERO);
+		sb->ps_callchains = pmc_malloc_domain(pmc_callchaindepth *
+		    pmc_nsamples * sizeof(uintptr_t), domain,
+		    M_WAITOK | M_ZERO);
 
 		for (n = 0, ps = sb->ps_samples; n < pmc_nsamples; n++, ps++)
 			ps->ps_pc = sb->ps_callchains +
