@@ -366,7 +366,7 @@ init_hwpmc(void *dummy __unused)
 	for (domain = 0; domain < NDOMAINS; domain++) {
 		pmc_dom_hdrs[domain] = malloc_domainset(
 		    sizeof(struct pmc_domain_buffer_header), M_PMC,
-		    domainset_prefer[domain], M_WAITOK | M_ZERO);
+		    DOMAINSET_PREFER(domain), M_WAITOK | M_ZERO);
 		mtx_init(&pmc_dom_hdrs[domain]->pdbh_mtx, "pmc_bufferlist_mtx", "pmc-leaf", MTX_SPIN);
 		TAILQ_INIT(&pmc_dom_hdrs[domain]->pdbh_head);
 	}

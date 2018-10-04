@@ -302,6 +302,7 @@ static int kstack_cache_size = 128;
 static int kstacks;
 static struct mtx kstack_cache_mtx;
 static struct domainset *kstack_domainset;
+static int kstack_domain_iter;
 
 SYSCTL_INT(_vm, OID_AUTO, kstack_cache_size, CTLFLAG_RW, &kstack_cache_size, 0,
     "");
@@ -393,7 +394,7 @@ vm_thread_new(struct thread *td, int pages)
 	 * swap-in.
 	 */
 	ksobj->domain.dr_policy = kstack_domainset;
-	ksobj->domain.dr_iterator = 0;
+	ksobj->domain.dr_iter = atomic_fetchadd_int(&kstack_domain_iter, 1);
 
 	atomic_add_int(&kstacks, 1);
 	if (KSTACK_GUARD_PAGES != 0) {

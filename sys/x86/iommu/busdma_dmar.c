@@ -37,6 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/malloc.h>
 #include <sys/bus.h>
 #include <sys/conf.h>
+#include <sys/domainset.h>
 #include <sys/interrupt.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
@@ -448,7 +449,7 @@ dmar_bus_dmamem_alloc(bus_dma_tag_t dmat, void** vaddr, int flags,
 	    tag->common.alignment <= tag->common.maxsize &&
 	    attr == VM_MEMATTR_DEFAULT) {
 		*vaddr = malloc_domainset(tag->common.maxsize, M_DEVBUF,
-		    domainset_prefer[tag->common.domain], mflags);
+		    DOMAINSET_PREFER(tag->common.domain), mflags);
 		map->flags |= BUS_DMAMAP_DMAR_MALLOC;
 	} else {
 		*vaddr = (void *)kmem_alloc_attr_domain(tag->common.domain,

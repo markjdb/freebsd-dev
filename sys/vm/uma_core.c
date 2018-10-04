@@ -59,6 +59,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bitset.h>
+#include <sys/domainset.h>
 #include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/types.h>
@@ -79,6 +80,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/vmmeter.h>
 
 #include <vm/vm.h>
+#include <vm/vm_domainset.h>
 #include <vm/vm_object.h>
 #include <vm/vm_page.h>
 #include <vm/vm_pageout.h>
@@ -1559,7 +1561,6 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	keg->uk_init = arg->uminit;
 	keg->uk_fini = arg->fini;
 	keg->uk_align = arg->align;
-	keg->uk_cursor = 0;
 	keg->uk_free = 0;
 	keg->uk_reserve = 0;
 	keg->uk_pages = 0;
@@ -2639,36 +2640,27 @@ keg_use_reserve_slab(uma_keg_t keg, int flags)
 static uma_slab_t
 keg_fetch_slab(uma_keg_t keg, uma_zone_t zone, int rdomain, int flags)
 {
+	struct vm_domainset_iter di;
 	uma_domain_t dom;
 	uma_slab_t slab;
-	int allocflags, domain, rr, start;
+	int allocflags, domain;
+	bool rr;
 
 	mtx_assert(&keg->uk_lock, MA_OWNED);
 	slab = NULL;
 	allocflags = flags;
 
 	/*
-	 * Round-robin for non first-touch zones when there is more than one
-	 * domain.
+	 * Use a per-thread round-robin policy for non first-touch zones.
 	 */
-	if (vm_ndomains == 1)
-		rdomain = 0;
 	rr = rdomain == UMA_ANYDOMAIN;
-	if (rr) {
-		start = keg->uk_cursor;
-		do {
-			keg->uk_cursor = (keg->uk_cursor + 1) % vm_ndomains;
-			domain = keg->uk_cursor;
-		} while (VM_DOMAIN_EMPTY(domain) && domain != start);
-		domain = start = keg->uk_cursor;
-		/* Only block on the second pass. */
-		if ((flags & (M_WAITOK | M_NOVM)) == M_WAITOK)
-			allocflags = (allocflags & ~M_WAITOK) | M_NOWAIT;
-	} else
-		domain = start = rdomain;
+	if (rr)
+		vm_domainset_iter_policy_init(&di, DOMAINSET_ROUNDROBIN(),
+		    &domain, &allocflags);
+	else
+		domain = rdomain;
 
-again:
-	do {
+	for (;;) {
 		if (keg_use_reserve_slab(keg, flags) &&
 		    (slab = keg_first_slab(keg, domain, rr)) != NULL) {
 			MPASS(slab->us_keg == keg);
@@ -2710,18 +2702,9 @@ again:
 			LIST_INSERT_HEAD(&dom->ud_part_slab, slab, us_link);
 			return (slab);
 		}
-		if (rr) {
-			do {
-				domain = (domain + 1) % vm_ndomains;
-			} while (VM_DOMAIN_EMPTY(domain) && domain != start);
-		}
+		if (rr)
+			vm_domainset_iter_policy(&di, &domain);
 		KEG_LOCK(keg);
-	} while (domain != start);
-
-	/* Retry domain scan with blocking. */
-	if (allocflags != flags) {
-		allocflags = flags;
-		goto again;
 	}
 
 	/*

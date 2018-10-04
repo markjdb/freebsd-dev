@@ -645,19 +645,16 @@ void *
 malloc_domainset(size_t size, struct malloc_type *mtp, struct domainset *ds,
     int flags)
 {
-	struct domainset_ref dr;
 	struct vm_domainset_iter di;
 	void *p;
 	int domain;
 
-	dr.dr_policy = ds;
-	dr.dr_iterator = curthread->td_domain.dr_iterator;
-	vm_domainset_iter_malloc_init(&di, &dr, &domain, &flags);
+	vm_domainset_iter_policy_init(&di, ds, &domain, &flags);
 	do {
 		p = malloc_domain(size, mtp, domain, flags);
 		if (p != NULL)
 			break;
-	} while (vm_domainset_iter_malloc(&di, &domain, &flags));
+	} while (vm_domainset_iter_policy(&di, &domain));
 
 	return (p);
 }

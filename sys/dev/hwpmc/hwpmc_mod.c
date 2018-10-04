@@ -828,7 +828,7 @@ void *
 pmc_malloc_domain(size_t size, int domain, int flags)
 {
 
-	return (malloc_domainset(size, M_PMC, domainset_prefer[domain], flags));
+	return (malloc_domainset(size, M_PMC, DOMAINSET_PREFER(domain), flags));
 }
 
 /*

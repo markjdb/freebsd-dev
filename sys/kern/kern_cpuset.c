@@ -119,7 +119,7 @@ __FBSDID("$FreeBSD$");
  */
 
 LIST_HEAD(domainlist, domainset);
-struct domainset *domainset_prefer[MAXMEMDOM];
+struct domainset domainset_prefer[MAXMEMDOM], domainset_roundrobin;
 
 static uma_zone_t cpuset_zone;
 static uma_zone_t domainset_zone;
@@ -1370,22 +1370,28 @@ cpuset_setithread(lwpid_t id, int cpu)
 }
 
 /*
- * Initialize the domainset zone and pre-allocate global domainsets.
+ * Initialize static domainsets after NUMA information is available.  This is
+ * called very early during boot.
  */
 void
 domainset_init(void)
 {
-	struct domainset dset;
+	struct domainset *dset;
 	int i;
 
-	domainset_zone = uma_zcreate("domainset", sizeof(struct domainset),
-	    NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE, 0);
+	/* Initialize the round-robin domain. */
+	dset = &domainset_roundrobin;
+	DOMAINSET_COPY(&all_domains, &dset->ds_mask);
+	dset->ds_policy = DOMAINSET_POLICY_ROUNDROBIN;
+	dset->ds_prefer = -1;
+	_domainset_create(dset, NULL);
 
-	DOMAINSET_COPY(&all_domains, &dset.ds_mask);
-	dset.ds_policy = DOMAINSET_POLICY_PREFER;
 	for (i = 0; i < vm_ndomains; i++) {
-		dset.ds_prefer = i;
-		domainset_prefer[i] = domainset_create(&dset);
+		dset = &domainset_prefer[i];
+		DOMAINSET_COPY(&all_domains, &dset->ds_mask);
+		dset->ds_policy = DOMAINSET_POLICY_PREFER;
+		dset->ds_prefer = i;
+		_domainset_create(dset, NULL);
 	}
 }
 
@@ -1403,12 +1409,15 @@ domainset_zero(void)
 	DOMAINSET_COPY(&all_domains, &dset->ds_mask);
 	dset->ds_policy = DOMAINSET_POLICY_FIRSTTOUCH;
 	dset->ds_prefer = -1;
-	(void)domainset_empty_vm(dset);
 	curthread->td_domain.dr_policy = _domainset_create(dset, NULL);
 
 	domainset_copy(dset, &domainset2);
 	domainset2.ds_policy = DOMAINSET_POLICY_INTERLEAVE;
 	kernel_object->domain.dr_policy = _domainset_create(&domainset2, NULL);
+
+	/* Remove empty domains from the global policies. */
+	LIST_FOREACH(dset, &cpuset_domains, ds_link)
+		(void)domainset_empty_vm(dset);
 }
 
 /*
@@ -1434,6 +1443,8 @@ cpuset_thread0(void)
 
 	cpuset_zone = uma_zcreate("cpuset", sizeof(struct cpuset), NULL, NULL,
 	    NULL, NULL, UMA_ALIGN_CACHE, 0);
+	domainset_zone = uma_zcreate("domainset", sizeof(struct domainset),
+	    NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE, 0);
 
 	/*
 	 * Create the root system set (0) for the whole machine.  Doesn't use

@@ -96,7 +96,10 @@ struct domainset {
 	domainid_t	ds_order[MAXMEMDOM];  /* nth domain table. */
 };
 
-extern struct domainset *domainset_prefer[MAXMEMDOM];
+extern struct domainset domainset_roundrobin;
+#define	DOMAINSET_ROUNDROBIN()		(&domainset_roundrobin)
+extern struct domainset domainset_prefer[MAXMEMDOM];
+#define	DOMAINSET_PREFER(domain)	(&domainset_prefer[(domain)])
 
 void domainset_init(void);
 void domainset_zero(void);
