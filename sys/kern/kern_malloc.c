@@ -68,6 +68,7 @@ __FBSDID("$FreeBSD$");
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
+#include <vm/vm_domainset.h>
 #include <vm/vm_pageout.h>
 #include <vm/vm_param.h>
 #include <vm/vm_kern.h>
@@ -596,21 +597,23 @@ void *
 }
 
 void *
-malloc_domain(size_t size, struct malloc_type *mtp, int domain,
-    int flags)
+malloc_domain(size_t size, struct malloc_type *mtp, int domain, int flags)
 {
-	int indx;
-	caddr_t va;
+	struct vm_domainset_iter di;
 	uma_zone_t zone;
 #if defined(DEBUG_REDZONE)
 	unsigned long osize = size;
 #endif
+	caddr_t va;
+	int indx;
 
 #ifdef MALLOC_DEBUG
 	va = NULL;
 	if (malloc_dbg(&va, &size, mtp, flags) != 0)
 		return (va);
 #endif
+	vm_domainset_iter_policy_init(&di, DOMAINSET_PREF(domain),
+	    &domain, &flags);
 	if (size <= kmem_zmax && (flags & M_EXEC) == 0) {
 		if (size & KMEM_ZMASK)
 			size = (size & ~KMEM_ZMASK) + KMEM_ZBASE;
@@ -619,14 +622,22 @@ malloc_domain(size_t size, struct malloc_type *mtp, int domain,
 #ifdef MALLOC_PROFILE
 		krequests[size >> KMEM_ZSHIFT]++;
 #endif
-		va = uma_zalloc_domain(zone, NULL, domain, flags);
-		if (va != NULL)
-			size = zone->uz_size;
+		do {
+			va = uma_zalloc_domain(zone, NULL, domain, flags);
+			if (va != NULL) {
+				size = zone->uz_size;
+				break;
+			}
+		} while (vm_domainset_iter_policy(&di, &domain) == 0);
 		malloc_type_zone_allocated(mtp, va == NULL ? 0 : size, indx);
 	} else {
 		size = roundup(size, PAGE_SIZE);
 		zone = NULL;
-		va = uma_large_malloc_domain(size, domain, flags);
+		do {
+			va = uma_large_malloc_domain(size, domain, flags);
+			if (va != NULL)
+				break;
+		} while (vm_domainset_iter_policy(&di, &domain) == 0);
 		malloc_type_allocated(mtp, va == NULL ? 0 : size);
 	}
 	if (flags & M_WAITOK)
