@@ -35,9 +35,9 @@ __FBSDID("$FreeBSD$");
 
 #include "opt_hwpmc_hooks.h"
 
-#include <sys/types.h>
-#include <sys/ctype.h>
 #include <sys/param.h>
+#include <sys/ctype.h>
+#include <sys/domainset.h>
 #include <sys/malloc.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -364,8 +364,9 @@ init_hwpmc(void *dummy __unused)
 	KASSERT(pmc_softs != NULL, ("cannot allocate soft events table"));
 
 	for (domain = 0; domain < NDOMAINS; domain++) {
-		pmc_dom_hdrs[domain] = malloc_domain(sizeof(struct pmc_domain_buffer_header), M_PMC, domain,
-										M_WAITOK|M_ZERO);
+		pmc_dom_hdrs[domain] = malloc_domainset(
+		    sizeof(struct pmc_domain_buffer_header), M_PMC,
+		    DOMAINSET_PREFER(domain), M_WAITOK | M_ZERO);
 		mtx_init(&pmc_dom_hdrs[domain]->pdbh_mtx, "pmc_bufferlist_mtx", "pmc-leaf", MTX_SPIN);
 		TAILQ_INIT(&pmc_dom_hdrs[domain]->pdbh_head);
 	}
