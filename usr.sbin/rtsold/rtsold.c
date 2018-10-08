@@ -34,6 +34,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
@@ -60,10 +61,11 @@
 #include <ifaddrs.h>
 #include <poll.h>
 
+#include <libutil.h>
+
 #include "rtsold.h"
 
 #define RTSOL_DUMPFILE	"/var/run/rtsold.dump";
-#define RTSOL_PIDFILE	"/var/run/rtsold.pid";
 
 struct timespec tm_max;
 static int log_upto = 999;
@@ -90,11 +92,11 @@ const char *resolvconf_script = "/sbin/resolvconf";
 
 /* static variables and functions */
 static int mobile_node = 0;
-static const char *pidfilename = RTSOL_PIDFILE;
 
 #ifndef SMALL
 static int do_dump;
 static const char *dumpfilename = RTSOL_DUMPFILE;
+static struct pidfh *pfh;
 #endif
 
 static char **autoifprobe(void);
@@ -112,7 +114,7 @@ main(int argc, char **argv)
 {
 	int s, ch, once = 0;
 	struct timespec *timeout;
-	const char *opts;
+	const char *opts, *pidfilepath;
 	struct pollfd set[2];
 	int rtsock;
 	char *argv0;
@@ -120,6 +122,7 @@ main(int argc, char **argv)
 #ifndef SMALL
 	/* rtsold */
 	opts = "adDfFm1O:p:R:u";
+	pidfilepath = NULL;
 #else
 	/* rtsol */
 	opts = "adDFO:R:u";
@@ -155,7 +158,7 @@ main(int argc, char **argv)
 			otherconf_script = optarg;
 			break;
 		case 'p':
-			pidfilename = optarg;
+			pidfilepath = optarg;
 			break;
 		case 'R':
 			resolvconf_script = optarg;
@@ -209,12 +212,13 @@ main(int argc, char **argv)
 		errx(1, "configuration script (%s) must be an absolute path",
 		    resolvconf_script);
 	}
-	if (pidfilename && *pidfilename != '/') {
-		errx(1, "pid filename (%s) must be an absolute path",
-		    pidfilename);
-	}
 
 #ifndef SMALL
+	pfh = pidfile_open(pidfilepath, 0644, NULL);
+	if (pfh == NULL) {
+		errx(1, "failed to open pidfile: %s", strerror(errno));
+	}
+
 	/* initialization to dump internal status to a file */
 	signal(SIGUSR1, rtsold_set_dump_file);
 #endif
@@ -264,23 +268,16 @@ main(int argc, char **argv)
 		warnmsg(LOG_ERR, __func__,
 		    "failed to setup for probing routers");
 		exit(1);
-		/*NOTREACHED*/
 	}
 
+#ifndef SMALL
 	/* dump the current pid */
-	if (!once) {
-		pid_t pid = getpid();
-		FILE *fp;
-
-		if ((fp = fopen(pidfilename, "w")) == NULL)
-			warnmsg(LOG_ERR, __func__,
-			    "failed to open a pid log file(%s): %s",
-			    pidfilename, strerror(errno));
-		else {
-			fprintf(fp, "%d\n", pid);
-			fclose(fp);
-		}
+	if (pidfile_write(pfh) != 0) {
+		warnmsg(LOG_ERR, __func__,
+		    "failed to open pidfile: %s", strerror(errno));
+		exit(1);
 	}
+#endif
 	while (1) {		/* main loop */
 		int e;
 #ifndef SMALL
