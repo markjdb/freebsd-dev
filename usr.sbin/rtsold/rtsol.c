@@ -35,11 +35,12 @@
  */
 
 #include <sys/param.h>
-#include <sys/socket.h>
-#include <sys/uio.h>
+#include <sys/capsicum.h>
 #include <sys/queue.h>
-#include <sys/wait.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
+#include <sys/wait.h>
 
 #include <net/if.h>
 #include <net/route.h>
@@ -74,7 +75,6 @@ static struct iovec sndiov[2];
 static struct sockaddr_in6 from;
 static int rcvcmsglen;
 
-int rssock;
 static char rsid[IFNAMSIZ + 1 + sizeof(DNSINFO_ORIGIN_LABEL) + 1 + NI_MAXHOST];
 struct ifinfo_head_t ifinfo_head =
 	TAILQ_HEAD_INITIALIZER(ifinfo_head);
@@ -116,12 +116,14 @@ static char *make_rsid(const char *, const char *, struct rainfo *);
 	} while(0)
 
 int
-sockopen(void)
+sockopen(uint32_t linkid)
 {
 	static u_char *rcvcmsgbuf = NULL, *sndcmsgbuf = NULL;
-	int sndcmsglen, on;
 	static u_char answer[1500];
 	struct icmp6_filter filt;
+	struct sockaddr_in6 dst;
+	cap_rights_t rights;
+	int on, sndcmsglen, sock;
 
 	sndcmsglen = rcvcmsglen = CMSG_SPACE(sizeof(struct in6_pktinfo)) +
 	    CMSG_SPACE(sizeof(int));
@@ -135,37 +137,60 @@ sockopen(void)
 		    "malloc for send msghdr failed");
 		return (-1);
 	}
-	if ((rssock = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)) < 0) {
+	if ((sock = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)) < 0) {
 		warnmsg(LOG_ERR, __func__, "socket: %s", strerror(errno));
 		return (-1);
 	}
 
 	/* specify to tell receiving interface */
 	on = 1;
-	if (setsockopt(rssock, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on,
+	if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on,
 	    sizeof(on)) < 0) {
-		warnmsg(LOG_ERR, __func__, "IPV6_RECVPKTINFO: %s",
+		warnmsg(LOG_ERR, __func__, "setsockopt(IPV6_RECVPKTINFO): %s",
 		    strerror(errno));
-		exit(1);
+		(void)close(sock);
+		return (-1);
 	}
 
 	/* specify to tell value of hoplimit field of received IP6 hdr */
 	on = 1;
-	if (setsockopt(rssock, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &on,
+	if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &on,
 	    sizeof(on)) < 0) {
-		warnmsg(LOG_ERR, __func__, "IPV6_RECVHOPLIMIT: %s",
+		warnmsg(LOG_ERR, __func__, "setsockopt(IPV6_RECVHOPLIMIT): %s",
 		    strerror(errno));
-		exit(1);
+		(void)close(sock);
+		return (-1);
 	}
 
 	/* specfiy to accept only router advertisements on the socket */
 	ICMP6_FILTER_SETBLOCKALL(&filt);
 	ICMP6_FILTER_SETPASS(ND_ROUTER_ADVERT, &filt);
-	if (setsockopt(rssock, IPPROTO_ICMPV6, ICMP6_FILTER, &filt,
+	if (setsockopt(sock, IPPROTO_ICMPV6, ICMP6_FILTER, &filt,
 	    sizeof(filt)) == -1) {
 		warnmsg(LOG_ERR, __func__, "setsockopt(ICMP6_FILTER): %s",
 		    strerror(errno));
-		return(-1);
+		(void)close(sock);
+		return (-1);
+	}
+
+	/*
+	 * Explicitly set the destination address now so that we can send on
+	 * this socket in capability mode.
+	 */
+	dst = sin6_allrouters;
+	dst.sin6_scope_id = linkid;
+	if (connect(sock, (struct sockaddr *)&dst, sizeof(dst)) < 0) {
+		warnmsg(LOG_ERR, __func__, "connect(): %s", strerror(errno));
+		(void)close(sock);
+		return (-1);
+	}
+
+	cap_rights_init(&rights, CAP_EVENT, CAP_RECV, CAP_SEND);
+	if (cap_rights_limit(sock, &rights) < 0) {
+		warnmsg(LOG_ERR, __func__, "cap_rights_limit(): %s",
+		    strerror(errno));
+		(void)close(sock);
+		return (-1);
 	}
 
 	/* initialize msghdr for receiving packets */
@@ -183,7 +208,7 @@ sockopen(void)
 	sndmhdr.msg_control = (caddr_t)sndcmsgbuf;
 	sndmhdr.msg_controllen = sndcmsglen;
 
-	return (rssock);
+	return (sock);
 }
 
 void
@@ -193,12 +218,7 @@ sendpacket(struct ifinfo *ifi)
 	struct cmsghdr *cm;
 	int hoplimit = 255;
 	ssize_t i;
-	struct sockaddr_in6 dst;
 
-	dst = sin6_allrouters;
-	dst.sin6_scope_id = ifi->linkid;
-
-	sndmhdr.msg_name = (caddr_t)&dst;
 	sndmhdr.msg_iov[0].iov_base = (caddr_t)ifi->rs_data;
 	sndmhdr.msg_iov[0].iov_len = ifi->rs_datalen;
 
@@ -221,7 +241,7 @@ sendpacket(struct ifinfo *ifi)
 	warnmsg(LOG_DEBUG, __func__,
 	    "send RS on %s, whose state is %d",
 	    ifi->ifname, ifi->state);
-	i = sendmsg(rssock, &sndmhdr, 0);
+	i = sendmsg(ifi->ifi_sock, &sndmhdr, 0);
 	if (i < 0 || (size_t)i != ifi->rs_datalen) {
 		/*
 		 * ENETDOWN is not so serious, especially when using several

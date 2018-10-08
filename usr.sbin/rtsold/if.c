@@ -34,10 +34,11 @@
  */
 
 #include <sys/param.h>
-#include <sys/socket.h>
-#include <sys/sysctl.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/queue.h>
+#include <sys/socket.h>
+#include <sys/sysctl.h>
 
 #include <net/if.h>
 #include <net/if_types.h>
@@ -63,16 +64,29 @@
 #include "rtsold.h"
 
 static int ifsock;
-
 static int get_llflag(const char *);
 static void get_rtaddrs(int, struct sockaddr *, struct sockaddr **);
 
 int
 ifinit(void)
 {
-	ifsock = rssock;
+	cap_rights_t rights;
+	int sock;
 
-	return(0);
+	sock = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
+	if (sock < 0) {
+		warnmsg(LOG_ERR, __func__, "socket(): %s",
+		    strerror(errno));
+		return (-1);
+	}
+	if (cap_rights_limit(sock, cap_rights_init(&rights, CAP_IOCTL)) < 0) {
+		warnmsg(LOG_ERR, __func__, "cap_rights_limit(): %s",
+		    strerror(errno));
+		(void)close(sock);
+		return (-1);
+	}
+	ifsock = sock;
+	return (0);
 }
 
 int

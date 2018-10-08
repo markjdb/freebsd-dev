@@ -60,12 +60,14 @@ struct rainfo {
 	TAILQ_HEAD(, ra_opt)	rai_ra_opt;
 };
 
+/* Per-interface tracking info. */
 struct ifinfo {
 	TAILQ_ENTRY(ifinfo)	ifi_next;	/* pointer to the next interface */
 
 	struct sockaddr_dl *sdl; /* link-layer address */
 	char ifname[IFNAMSIZ];	/* interface name */
-	u_int32_t linkid;	/* link ID of this interface */
+	uint32_t linkid;	/* link ID of this interface */
+	int ifi_sock;		/* socket for sending RS messages */
 	int active;		/* interface status */
 	int probeinterval;	/* interval of probe timer (if necessary) */
 	int probetimer;		/* rest of probe timer */
@@ -176,8 +178,7 @@ extern int getinet6sysctl(int);
 extern int setinet6sysctl(int, int);
 
 /* rtsol.c */
-extern int rssock;
-extern int sockopen(void);
+extern int sockopen(uint32_t);
 extern void sendpacket(struct ifinfo *);
 extern void rtsol_input(int);
 

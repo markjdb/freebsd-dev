@@ -35,6 +35,7 @@
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
@@ -59,7 +60,6 @@
 #include <err.h>
 #include <stdarg.h>
 #include <ifaddrs.h>
-#include <poll.h>
 
 #include <libutil.h>
 
@@ -112,16 +112,17 @@ static void usage(void);
 int
 main(int argc, char **argv)
 {
-	int s, ch, once = 0;
+	struct kevent event;
+	struct ifinfo *ifi;
 	struct timespec *timeout;
 	const char *opts, *pidfilepath;
-	struct pollfd set[2];
-	int rtsock;
+	int ch, error, kq, once, rtsock;
 	char *argv0;
 
 #ifndef SMALL
 	/* rtsold */
 	opts = "adDfFm1O:p:R:u";
+	once = 0;
 	pidfilepath = NULL;
 #else
 	/* rtsol */
@@ -226,30 +227,26 @@ main(int argc, char **argv)
 	if (!fflag)
 		daemon(0, 0);		/* act as a daemon */
 
-	/*
-	 * Open a socket for sending RS and receiving RA.
-	 * This should be done before calling ifinit(), since the function
-	 * uses the socket.
-	 */
-	if ((s = sockopen()) < 0) {
-		warnmsg(LOG_ERR, __func__, "failed to open a socket");
+	kq = kqueue();
+	if (kq < 0) {
+		warnmsg(LOG_ERR, __func__, "failed to create a kqueue: %s",
+		    strerror(errno));
 		exit(1);
 	}
-	set[0].fd = s;
-	set[0].events = POLLIN;
-	set[1].fd = -1;
 
 	if ((rtsock = rtsock_open()) < 0) {
 		warnmsg(LOG_ERR, __func__, "failed to open a socket");
 		exit(1);
 	}
-	set[1].fd = rtsock;
-	set[1].events = POLLIN;
+	EV_SET(&event, rtsock, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	if (kevent(kq, &event, 1, NULL, 0, NULL) < 0) {
+		warnmsg(LOG_ERR, __func__, "kevent(): %s", strerror(errno));
+		exit(1);
+	}
 
 	/* configuration per interface */
-	if (ifinit()) {
-		warnmsg(LOG_ERR, __func__,
-		    "failed to initialize interfaces");
+	if (ifinit() != 0) {
+		warnmsg(LOG_ERR, __func__, "failed to initialize interfaces");
 		exit(1);
 	}
 	if (aflag)
@@ -261,6 +258,14 @@ main(int argc, char **argv)
 			exit(1);
 		}
 		argv++;
+	}
+	TAILQ_FOREACH(ifi, &ifinfo_head, ifi_next) {
+		EV_SET(&event, ifi->ifi_sock, EVFILT_READ, EV_ADD, 0, 0, ifi);
+		if (kevent(kq, &event, 1, NULL, 0, NULL) < 0) {
+			warnmsg(LOG_ERR, __func__, "kevent(): %s",
+			    strerror(errno));
+			exit(1);
+		}
 	}
 
 	/* setup for probing default routers */
@@ -278,8 +283,7 @@ main(int argc, char **argv)
 		exit(1);
 	}
 #endif
-	while (1) {		/* main loop */
-		int e;
+	for (;;) {
 #ifndef SMALL
 		if (do_dump) {	/* SIGUSR1 */
 			do_dump = 0;
@@ -290,8 +294,6 @@ main(int argc, char **argv)
 		timeout = rtsol_check_timer();
 
 		if (once) {
-			struct ifinfo *ifi;
-
 			/* if we have no timeout, we are done (or failed) */
 			if (timeout == NULL)
 				break;
@@ -304,22 +306,21 @@ main(int argc, char **argv)
 			if (ifi == NULL)
 				break;
 		}
-		e = poll(set, 2, timeout ? (timeout->tv_sec * 1000 + timeout->tv_nsec / 1000 / 1000) : INFTIM);
-		if (e < 1) {
-			if (e < 0 && errno != EINTR) {
-				warnmsg(LOG_ERR, __func__, "select: %s",
+
+		error = kevent(kq, NULL, 0, &event, 1, timeout);
+		if (error < 1) {
+			if (error < 0 && errno != EINTR)
+				warnmsg(LOG_ERR, __func__, "kevent(): %s",
 				    strerror(errno));
-			}
 			continue;
 		}
 
-		/* packet reception */
-		if (set[1].revents & POLLIN)
+		if (event.udata == NULL)
 			rtsock_input(rtsock);
-		if (set[0].revents & POLLIN)
-			rtsol_input(s);
+		else
+			/* XXX this is wrong, we need another global socket */
+			rtsol_input(((struct ifinfo *)event.udata)->ifi_sock);
 	}
-	/* NOTREACHED */
 
 	return (0);
 }
@@ -393,6 +394,10 @@ ifconfig(char *ifname)
 	/* XXX: assume interface IDs as link IDs */
 	ifi->linkid = ifi->sdl->sdl_index;
 #endif
+
+	ifi->ifi_sock = sockopen(ifi->linkid);
+	if (ifi->ifi_sock == -1)
+		goto bad;
 
 	/*
 	 * check if the interface is available.
@@ -673,10 +678,9 @@ rtsol_timer_update(struct ifinfo *ifi)
 			ifi->timer.tv_sec = 1;
 		break;
 	case IFS_IDLE:
-		if (mobile_node) {
+		if (mobile_node)
 			/* XXX should be configurable */
 			ifi->timer.tv_sec = 3;
-		}
 		else
 			ifi->timer = tm_max;	/* stop timer(valid?) */
 		break;
@@ -688,7 +692,7 @@ rtsol_timer_update(struct ifinfo *ifi)
 	case IFS_PROBE:
 		if (ifi->probes < MAX_RTR_SOLICITATIONS)
 			ifi->timer.tv_sec = RTR_SOLICITATION_INTERVAL;
-		else {
+		else
 			/*
 			 * After sending MAX_RTR_SOLICITATIONS solicitations,
 			 * we're just waiting for possible replies; there
@@ -697,7 +701,6 @@ rtsol_timer_update(struct ifinfo *ifi)
 			 * on RFC 2461, Section 6.3.7.
 			 */
 			ifi->timer.tv_sec = MAX_RTR_SOLICITATION_DELAY;
-		}
 		break;
 	default:
 		warnmsg(LOG_ERR, __func__,

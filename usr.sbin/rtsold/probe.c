@@ -34,12 +34,12 @@
  */
 
 #include <sys/param.h>
-#include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
+#include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/uio.h>
-#include <sys/queue.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -67,18 +67,26 @@ static void sendprobe(struct in6_addr *, struct ifinfo *);
 int
 probe_init(void)
 {
-	int scmsglen = CMSG_SPACE(sizeof(struct in6_pktinfo)) +
-	    CMSG_SPACE(sizeof(int));
 	static u_char *sndcmsgbuf = NULL;
+	cap_rights_t rights;
+	int scmsglen, sock;
 
-	if (sndcmsgbuf == NULL &&
-	    (sndcmsgbuf = (u_char *)malloc(scmsglen)) == NULL) {
+	scmsglen = CMSG_SPACE(sizeof(struct in6_pktinfo)) +
+	    CMSG_SPACE(sizeof(int));
+	if (sndcmsgbuf == NULL && (sndcmsgbuf = malloc(scmsglen)) == NULL) {
 		warnmsg(LOG_ERR, __func__, "malloc failed");
 		return (-1);
 	}
 
-	if ((probesock = socket(AF_INET6, SOCK_RAW, IPPROTO_NONE)) < 0) {
+	if ((sock = socket(AF_INET6, SOCK_RAW, IPPROTO_NONE)) < 0) {
 		warnmsg(LOG_ERR, __func__, "socket: %s", strerror(errno));
+		return (-1);
+	}
+
+	if (cap_rights_limit(sock, cap_rights_init(&rights, CAP_SEND)) < 0) {
+		warnmsg(LOG_ERR, __func__, "cap_rights_limit(): %s",
+		    strerror(errno));
+		(void)close(sock);
 		return (-1);
 	}
 
@@ -89,6 +97,7 @@ probe_init(void)
 	sndmhdr.msg_control = (caddr_t)sndcmsgbuf;
 	sndmhdr.msg_controllen = scmsglen;
 
+	probesock = sock;
 	return (0);
 }
 
