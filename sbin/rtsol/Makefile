@@ -18,10 +18,22 @@
 
 PACKAGE=runtime
 PROG=	rtsol
-SRCS=	rtsold.c rtsol.c if.c probe.c dump.c rtsock.c
+SRCS=	cap_llflags.c \
+	cap_script.c \
+	cap_sendmsg.c \
+	dump.c \
+	if.c \
+	rtsol.c \
+	rtsold.c \
+	rtsock.c
 MAN=
+LIBADD=	util
 
-WARNS?=	3
-CFLAGS+= -DSMALL
+.include <src.opts.mk>
+
+.if ${MK_CASPER} != "no" && !defined(RESCUE)
+CFLAGS+= -DWITH_CASPER
+LIBADD+= cap_syslog casper nv
+.endif
 
 .include <bsd.prog.mk>
