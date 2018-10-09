@@ -507,6 +507,9 @@ bt_insfree(vmem_t *vm, bt_t *bt)
 
 /*
  * Import from the arena into the quantum cache in UMA.
+ *
+ * We use VMEM_ADDR_QCACHE_MIN instead of 0: UMA uses 0 to indicate an
+ * allocation failure, so it can't be used to cache a resource with value 0.
  */
 static int
 qc_import(void *arg, void **store, int cnt, int domain, int flags)
@@ -520,7 +523,7 @@ qc_import(void *arg, void **store, int cnt, int domain, int flags)
 		flags |= M_BESTFIT;
 	for (i = 0; i < cnt; i++) {
 		if (vmem_xalloc(qc->qc_vmem, qc->qc_size, 0, 0, 0,
-		    VMEM_ADDR_MIN, VMEM_ADDR_MAX, flags, &addr) != 0)
+		    VMEM_ADDR_QCACHE_MIN, VMEM_ADDR_MAX, flags, &addr) != 0)
 			break;
 		store[i] = (void *)addr;
 		/* Only guarantee one allocation. */
