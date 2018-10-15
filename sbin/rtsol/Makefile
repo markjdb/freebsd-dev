@@ -18,9 +18,10 @@
 
 PACKAGE=runtime
 PROG=	rtsol
-SRCS=	rtsold.c rtsol.c if.c probe.c dump.c rtsock.c
+SRCS=	rtsold.c rtsol.c if.c cap_probe.c cap_script.c dump.c rtsock.c
 MAN=
 
-CFLAGS+= -DSMALL
+CFLAGS+= -DWITH_CASPER
+LIBADD+= casper nv
 
 .include <bsd.prog.mk>

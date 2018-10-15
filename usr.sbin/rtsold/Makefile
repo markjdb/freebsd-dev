@@ -17,8 +17,9 @@
 PROG=	rtsold
 MAN=	rtsold.8
 MLINKS=	rtsold.8 rtsol.8
-SRCS=	rtsold.c rtsol.c if.c probe.c dump.c rtsock.c
+SRCS=	rtsold.c rtsol.c if.c cap_probe.c cap_script.c dump.c rtsock.c
 
-LIBADD+= util
+CFLAGS+= -DWITH_CASPER
+LIBADD+= casper cap_syslog util nv
 
 .include <bsd.prog.mk>

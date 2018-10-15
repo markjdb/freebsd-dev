@@ -34,6 +34,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/socket.h>
 #include <sys/queue.h>
 
@@ -50,13 +51,11 @@
 
 #include "rtsold.h"
 
-static FILE *fp;
+static const char * const ifstatstr[] =
+    { "IDLE", "DELAY", "PROBE", "DOWN", "TENTATIVE" };
 
-static void dump_interface_status(void);
-static const char * const ifstatstr[] = {"IDLE", "DELAY", "PROBE", "DOWN", "TENTATIVE"};
-
-static void
-dump_interface_status(void)
+void
+rtsold_dump(FILE *fp)
 {
 	struct ifinfo *ifi;
 	struct rainfo *rai;
@@ -64,9 +63,16 @@ dump_interface_status(void)
 	struct timespec now;
 	char ntopbuf[INET6_ADDRSTRLEN];
 
-	clock_gettime(CLOCK_MONOTONIC_FAST, &now);
+	if (fseek(fp, 0, SEEK_SET) != 0) {
+		warnmsg(LOG_ERR, __func__, "fseek(): %s", strerror(errno));
+		return;
+	}
+	(void)ftruncate(fileno(fp), 0);
+
+	(void)clock_gettime(CLOCK_MONOTONIC_FAST, &now);
 
 	TAILQ_FOREACH(ifi, &ifinfo_head, ifi_next) {
+		printf("hello!\n");
 		fprintf(fp, "Interface %s\n", ifi->ifname);
 		fprintf(fp, "  probe interval: ");
 		if (ifi->probeinterval) {
@@ -121,18 +127,28 @@ dump_interface_status(void)
 			fprintf(fp, "\n");
 		}
 	}
+	fflush(fp);
 }
 
-void
-rtsold_dump_file(const char *dumpfile)
+FILE *
+rtsold_init_dumpfile(const char *dumpfile)
 {
+	cap_rights_t rights;
+	FILE *fp;
+
 	if ((fp = fopen(dumpfile, "w")) == NULL) {
-		warnmsg(LOG_WARNING, __func__, "open a dump file(%s): %s",
+		warnmsg(LOG_WARNING, __func__, "opening a dump file(%s): %s",
 		    dumpfile, strerror(errno));
-		return;
+		return (NULL);
 	}
-	dump_interface_status();
-	fclose(fp);
+
+	cap_rights_init(&rights, CAP_FSTAT, CAP_FTRUNCATE, CAP_SEEK, CAP_WRITE);
+	if (cap_rights_limit(fileno(fp), &rights) != 0) {
+		warnmsg(LOG_WARNING, __func__, "cap_rights_limit(%s): %s",
+		    dumpfile, strerror(errno));
+		return (NULL);
+	}
+	return (fp);
 }
 
 const char *
