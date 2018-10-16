@@ -415,8 +415,10 @@ procdesc_close(struct file *fp, struct thread *td)
 			 * that there's someone to pick up the pieces; finally,
 			 * terminate with prejudice.
 			 */
-			p->p_sigparent = SIGCHLD;
-			proc_reparent(p, p->p_reaper);
+			if ((p->p_flag & P_TRACED) == 0) {
+				p->p_sigparent = SIGCHLD;
+				proc_reparent(p, p->p_reaper);
+			}
 			if ((pd->pd_flags & PDF_DAEMON) == 0)
 				kern_psignal(p, SIGKILL);
 			PROC_UNLOCK(p);

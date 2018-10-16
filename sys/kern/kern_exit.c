@@ -340,7 +340,7 @@ exit1(struct thread *td, int rval, int signo)
 	 */
 	PROC_LOCK(p);
 	stopprofclock(p);
-	p->p_flag &= ~(P_TRACED | P_PPWAIT | P_PPTRACE);
+	p->p_flag &= ~(P_PPWAIT | P_PPTRACE);
 	p->p_ptevents = 0;
 
 	/*
@@ -856,6 +856,7 @@ proc_reap(struct thread *td, struct proc *p, int *status, int options)
 	 * to the old parent.
 	 */
 	if (p->p_oppid != 0 && p->p_oppid != p->p_pptr->p_pid) {
+		p->p_flag &= ~P_TRACED;
 		PROC_UNLOCK(p);
 		t = proc_realparent(p);
 		PROC_LOCK(t);
@@ -873,6 +874,7 @@ proc_reap(struct thread *td, struct proc *p, int *status, int options)
 		sx_xunlock(&proctree_lock);
 		return;
 	}
+	KASSERT((p->p_flag & P_TRACED) == 0, ("proc_reap: proc %p traced", p));
 	p->p_oppid = 0;
 	PROC_UNLOCK(p);
 
@@ -971,7 +973,14 @@ proc_to_reap(struct thread *td, struct proc *p, idtype_t idtype, id_t id,
 
 	switch (idtype) {
 	case P_ALL:
-		if (p->p_procdesc != NULL) {
+		/*
+		 * Processes created by pdfork(2) shouldn't be visible to a
+		 * wildcard wait().  This is to help ensure that libraries can
+		 * invisibly compartmentalize their functionality.  We need to
+		 * ensure that debuggers can see the child, though.
+		 */
+		if (p->p_procdesc != NULL &&
+		    td->td_proc == proc_realparent(p)) {
 			PROC_UNLOCK(p);
 			return (0);
 		}
