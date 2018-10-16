@@ -33,6 +33,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/file.h>
 #include <sys/time.h>
 #include <sys/procctl.h>
+#include <sys/procdesc.h>
 #include <sys/ptrace.h>
 #include <sys/queue.h>
 #include <sys/runq.h>
@@ -3772,6 +3773,105 @@ ATF_TC_BODY(ptrace__PT_CONTINUE_different_thread, tc)
 }
 #endif
 
+/*
+ * Make sure that a child created with pdfork(2) remains attached after its
+ * process descriptor is closed.
+ */
+ATF_TC_WITHOUT_HEAD(ptrace__pdfork);
+ATF_TC_BODY(ptrace__pdfork, tc)
+{
+	pid_t child, pid;
+	int error, p, status;
+
+	child = pdfork(&p, 0);
+	ATF_REQUIRE(child != -1);
+	if (child == 0) {
+		trace_me();
+		_exit(0);
+	}
+
+	pid = waitpid(child, &status, WSTOPPED);
+	ATF_REQUIRE(pid == child);
+	ATF_REQUIRE(WIFSTOPPED(status));
+
+	error = close(p);
+	ATF_REQUIRE(error == 0);
+
+	error = ptrace(PT_DETACH, child, NULL, 0);
+	ATF_REQUIRE(error == 0);
+}
+
+/*
+ * Trace a child and grandchild created with pdfork(2); verify that if the
+ * child exits first, the grandchild gets reparented to us and not its reaper.
+ */
+ATF_TC_WITHOUT_HEAD(ptrace__pdfork_reparent_grandchild);
+ATF_TC_BODY(ptrace__pdfork_reparent_grandchild, tc)
+{
+	struct ptrace_lwpinfo pl;
+	pid_t child, grandchild, pid;
+	int error, p1, p2, sig, status;
+
+	child = pdfork(&p1, 0);
+	ATF_REQUIRE(child != -1);
+	if (child == 0) {
+		trace_me();
+		grandchild = pdfork(&p2, 0);
+		if (grandchild != 0)
+			CHILD_REQUIRE(grandchild != -1);
+		_exit(0);
+	}
+
+	/* Wait for the child and trace its fork activity. */
+	pid = waitpid(child, &status, 0);
+	ATF_REQUIRE(pid == child);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	error = ptrace(PT_FOLLOW_FORK, child, NULL, 1);
+	ATF_REQUIRE(error == 0);
+	error = ptrace(PT_CONTINUE, child, (caddr_t)1, 0);
+	ATF_REQUIRE(error == 0);
+
+	/* Child should stop upon forking. */
+	pid = waitpid(child, &status, 0);
+	ATF_REQUIRE(pid == child);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	error = ptrace(PT_LWPINFO, child, (caddr_t)&pl, sizeof(pl));
+	ATF_REQUIRE(error != -1);
+	ATF_REQUIRE((pl.pl_flags & PL_FLAG_FORKED) != 0);
+	grandchild = pl.pl_child_pid;
+	error = ptrace(PT_CONTINUE, child, (caddr_t)1, 0);
+	ATF_REQUIRE(error == 0);
+
+	/* Child should exit. */
+	pid = waitpid(child, &status, 0);
+	ATF_REQUIRE(pid == child);
+	error = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+	ATF_REQUIRE(error == 0);
+	error = close(p1);
+	ATF_REQUIRE(error == 0);
+
+	/*
+	 * Grandchild should be stopped, initially.  When its parent (our child)
+	 * exits, the grandchild's process descriptor will be closed, sending
+	 * SIGKILL to the grandchild as a result.
+	 */
+	pid = waitpid(grandchild, &status, 0);
+	ATF_REQUIRE(pid == grandchild);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	error = ptrace(PT_CONTINUE, grandchild, (caddr_t)1, 0);
+	ATF_REQUIRE(error == 0);
+	pid = waitpid(grandchild, &status, 0);
+	ATF_REQUIRE(pid == grandchild);
+	sig = WIFSTOPPED(status) ? WSTOPSIG(status) : -1;
+	ATF_REQUIRE(sig == SIGKILL);
+	error = ptrace(PT_CONTINUE, grandchild, (caddr_t)1, WSTOPSIG(status));
+	ATF_REQUIRE(error == 0);
+	pid = waitpid(grandchild, &status, 0);
+	ATF_REQUIRE(pid == grandchild);
+	sig = WIFSIGNALED(status) ? WTERMSIG(status) : -1;
+	ATF_REQUIRE(sig == SIGKILL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -3831,6 +3931,8 @@ ATF_TP_ADD_TCS(tp)
 #if defined(HAVE_BREAKPOINT) && defined(SKIP_BREAK)
 	ATF_TP_ADD_TC(tp, ptrace__PT_CONTINUE_different_thread);
 #endif
+	ATF_TP_ADD_TC(tp, ptrace__pdfork);
+	ATF_TP_ADD_TC(tp, ptrace__pdfork_reparent_grandchild);
 
 	return (atf_no_error());
 }
