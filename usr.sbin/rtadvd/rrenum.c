@@ -31,7 +31,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include <sys/types.h>
+
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/queue.h>
@@ -53,6 +53,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <syslog.h>
+
 #include "rtadvd.h"
 #include "rrenum.h"
 #include "if.h"
@@ -430,9 +431,8 @@ rr_command_input(int len, struct icmp6_router_renum *rr,
 
 	return;
 
-    failed:
+failed:
 	syslog(LOG_ERR, "<%s> received RR was invalid", __func__);
-	return;
 }
 
 void
@@ -500,6 +500,4 @@ rr_input(int len, struct icmp6_router_renum *rr, struct in6_pktinfo *pi,
 		break;
 
 	}
-
-	return;
 }

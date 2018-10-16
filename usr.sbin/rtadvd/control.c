@@ -24,21 +24,23 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
- *
  */
 
-#include <sys/queue.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/types.h>
+#include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/uio.h>
+
 #include <net/if.h>
 #include <net/if_dl.h>
 #include <netinet/in.h>
 #include <netinet/icmp6.h>
+
 #include <fcntl.h>
 #include <errno.h>
 #include <netdb.h>
@@ -232,7 +234,7 @@ csock_accept(struct sockinfo *s)
 
 	sun.sun_len = sizeof(sun);
 	if ((fd = accept(s->si_fd, (struct sockaddr *)&sun,
-		    (socklen_t *)&sun.sun_len)) == -1) {
+	    (socklen_t *)&sun.sun_len)) == -1) {
 		if (errno != EWOULDBLOCK && errno != EINTR)
 			syslog(LOG_WARNING, "<%s> accept ", __func__);
 		syslog(LOG_WARNING, "<%s> Xaccept: %s", __func__, strerror(errno));

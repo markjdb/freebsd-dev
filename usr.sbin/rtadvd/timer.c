@@ -52,8 +52,7 @@
 #include "timer_subr.h"
 #include "timer.h"
 
-struct rtadvd_timer_head_t ra_timer =
-    TAILQ_HEAD_INITIALIZER(ra_timer);
+struct rtadvd_timer_head_t ra_timer = TAILQ_HEAD_INITIALIZER(ra_timer);
 static struct timespec tm_limit;
 static struct timespec tm_max;
 
@@ -100,8 +99,6 @@ rtadvd_update_timeout_handler(void)
 			break;
 		}
 	}
-
-	return;
 }
 
 struct rtadvd_timer *
@@ -196,6 +193,4 @@ rtadvd_set_timer(struct timespec *tm, struct rtadvd_timer *rat)
 	/* update the next expiration time */
 	if (TS_CMP(&rat->rat_tm, &tm_max, <))
 		tm_max = rat->rat_tm;
-
-	return;
 }

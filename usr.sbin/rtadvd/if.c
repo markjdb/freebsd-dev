@@ -37,22 +37,25 @@
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/ioctl.h>
+
 #include <net/if.h>
 #include <net/if_dl.h>
 #include <net/if_types.h>
 #include <net/ethernet.h>
 #include <net/route.h>
+
 #include <netinet/in.h>
 #include <netinet/in_var.h>
 #include <netinet/ip6.h>
 #include <netinet/icmp6.h>
 #include <netinet6/nd6.h>
-#include <unistd.h>
+
 #include <errno.h>
 #include <netdb.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <unistd.h>
 
 #include "pathnames.h"
 #include "rtadvd.h"
@@ -144,8 +147,6 @@ lladdropt_fill(struct sockaddr_dl *sdl, struct nd_opt_hdr *ndopt)
 		    __func__, sdl->sdl_type);
 		exit(1);
 	}
-
-	return;
 }
 
 int
@@ -294,7 +295,7 @@ get_prefixlen(char *buf)
 
 	p = (char *)(&SIN6(sa)->sin6_addr);
 	lim = (char *)sa + sa->sa_len;
-	return prefixlen(p, lim);
+	return (prefixlen(p, lim));
 }
 
 int
@@ -632,8 +633,7 @@ getinet6sysctl(int code)
 		    __func__, code,
 		    strerror(errno));
 		return (-1);
-	}
-	else
+	} else
 		return (value);
 }
 

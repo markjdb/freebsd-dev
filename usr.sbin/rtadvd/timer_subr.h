@@ -32,8 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#define	SSBUFLEN	1024
-
 #define TS_CMP(tsp, usp, cmp)						\
 	(((tsp)->tv_sec == (usp)->tv_sec) ?				\
 	    ((tsp)->tv_nsec cmp (usp)->tv_nsec) :			\

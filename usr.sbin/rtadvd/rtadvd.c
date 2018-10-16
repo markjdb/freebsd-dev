@@ -56,19 +56,19 @@
 #include <netinet/in_var.h>
 #include <netinet6/nd6.h>
 
-#include <time.h>
-#include <unistd.h>
-#include <stdio.h>
 #include <err.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <libutil.h>
 #include <netdb.h>
-#include <signal.h>
-#include <string.h>
-#include <stdlib.h>
-#include <syslog.h>
 #include <poll.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <syslog.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "pathnames.h"
 #include "rtadvd.h"
@@ -103,10 +103,8 @@ static int wait_shutdown;
 #define	PFD_CSOCK	2
 #define	PFD_MAX		3
 
-struct railist_head_t railist =
-    TAILQ_HEAD_INITIALIZER(railist);
-struct ifilist_head_t ifilist =
-    TAILQ_HEAD_INITIALIZER(ifilist);
+struct railist_head_t railist = TAILQ_HEAD_INITIALIZER(railist);
+struct ifilist_head_t ifilist = TAILQ_HEAD_INITIALIZER(ifilist);
 
 struct nd_optlist {
 	TAILQ_ENTRY(nd_optlist)	nol_next;
@@ -714,9 +712,6 @@ rtadvd_input(struct sockinfo *s)
 {
 	ssize_t i;
 	int *hlimp = NULL;
-#ifdef OLDRAWSOCKET
-	struct ip6_hdr *ip;
-#endif
 	struct icmp6_hdr *icp;
 	int ifindex = 0;
 	struct cmsghdr *cm;
@@ -778,23 +773,12 @@ rtadvd_input(struct sockinfo *s)
 		return;
 	}
 
-#ifdef OLDRAWSOCKET
-	if ((size_t)i < sizeof(struct ip6_hdr) + sizeof(struct icmp6_hdr)) {
-		syslog(LOG_ERR,
-		    "packet size(%d) is too short", i);
-		return;
-	}
-
-	ip = (struct ip6_hdr *)rcvmhdr.msg_iov[0].iov_base;
-	icp = (struct icmp6_hdr *)(ip + 1); /* XXX: ext. hdr? */
-#else
 	if ((size_t)i < sizeof(struct icmp6_hdr)) {
 		syslog(LOG_ERR, "packet size(%zd) is too short", i);
 		return;
 	}
 
 	icp = (struct icmp6_hdr *)rcvmhdr.msg_iov[0].iov_base;
-#endif
 
 	switch (icp->icmp6_type) {
 	case ND_ROUTER_SOLICIT:
@@ -896,10 +880,8 @@ rtadvd_input(struct sockinfo *s)
 		 * before setting ICMP6 type filter(see sock_open()).
 		 */
 		syslog(LOG_ERR, "invalid icmp type(%d)", icp->icmp6_type);
-		return;
+		break;
 	}
-
-	return;
 }
 
 static void
@@ -989,9 +971,8 @@ rs_input(int len, struct nd_router_solicit *rs,
 
 	set_short_delay(ifi);
 
-  done:
+done:
 	free_ndopts(&ndopts);
-	return;
 }
 
 static void
@@ -1052,14 +1033,6 @@ check_accept_rtadv(int idx)
 		    __func__, idx);
 		return (0);
 	}
-#if (__FreeBSD_version < 900000)
-	/*
-	 * RA_RECV: !ip6.forwarding && ip6.accept_rtadv
-	 * RA_SEND: ip6.forwarding
-	 */
-	return ((getinet6sysctl(IPV6CTL_FORWARDING) == 0) &&
-	    (getinet6sysctl(IPV6CTL_ACCEPT_RTADV) == 1));
-#else
 	/*
 	 * RA_RECV: ND6_IFF_ACCEPT_RTADV
 	 * RA_SEND: ip6.forwarding
@@ -1070,7 +1043,6 @@ check_accept_rtadv(int idx)
 	}
 
 	return (ifi->ifi_nd_flags & ND6_IFF_ACCEPT_RTADV);
-#endif
 }
 
 static void
@@ -1206,17 +1178,17 @@ ra_input(int len, struct nd_router_advert *nra,
 				inconsistent++;
 
 		TAILQ_FOREACH(nol, &ndopts.opt_list, nol_next)
-			if (prefix_check((struct nd_opt_prefix_info *)nol->nol_opt,
-				rai, from))
+			if (prefix_check(
+			    (struct nd_opt_prefix_info *)nol->nol_opt,
+			    rai, from))
 				inconsistent++;
 	}
 
 	if (inconsistent)
 		ifi->ifi_rainconsistent++;
 
-  done:
+done:
 	free_ndopts(&ndopts);
-	return;
 }
 
 static uint32_t
@@ -1258,7 +1230,7 @@ prefix_check(struct nd_opt_prefix_info *pinfo,
 			sizeof(ntopbuf)), ifi->ifi_ifname);
 
 	if ((pfx = find_prefix(rai, &pinfo->nd_opt_pi_prefix,
-		pinfo->nd_opt_pi_prefix_len)) == NULL) {
+	    pinfo->nd_opt_pi_prefix_len)) == NULL) {
 		syslog(LOG_INFO,
 		    "<%s> prefix %s/%d from %s on %s is not in our list",
 		    __func__,
@@ -1283,14 +1255,15 @@ prefix_check(struct nd_opt_prefix_info *pinfo,
 		preferred_time += now.tv_sec;
 
 		if (!pfx->pfx_timer && rai->rai_clockskew &&
-		    udiff(preferred_time, pfx->pfx_pltimeexpire) > rai->rai_clockskew) {
+		    udiff(preferred_time, pfx->pfx_pltimeexpire) >
+		    rai->rai_clockskew) {
 			syslog(LOG_INFO,
 			    "<%s> preferred lifetime for %s/%d"
 			    " (decr. in real time) inconsistent on %s:"
 			    " %" PRIu32 " from %s, %" PRIu32 " from us",
 			    __func__,
-			    inet_ntop(AF_INET6, &pinfo->nd_opt_pi_prefix, prefixbuf,
-				sizeof(prefixbuf)),
+			    inet_ntop(AF_INET6, &pinfo->nd_opt_pi_prefix,
+				prefixbuf, sizeof(prefixbuf)),
 			    pinfo->nd_opt_pi_prefix_len,
 			    ifi->ifi_ifname, preferred_time,
 			    inet_ntop(AF_INET6, &from->sin6_addr, ntopbuf,
@@ -1316,14 +1289,15 @@ prefix_check(struct nd_opt_prefix_info *pinfo,
 		valid_time += now.tv_sec;
 
 		if (!pfx->pfx_timer && rai->rai_clockskew &&
-		    udiff(valid_time, pfx->pfx_vltimeexpire) > rai->rai_clockskew) {
+		    udiff(valid_time, pfx->pfx_vltimeexpire) >
+		    rai->rai_clockskew) {
 			syslog(LOG_INFO,
 			    "<%s> valid lifetime for %s/%d"
 			    " (decr. in real time) inconsistent on %s:"
 			    " %d from %s, %" PRIu32 " from us",
 			    __func__,
-			    inet_ntop(AF_INET6, &pinfo->nd_opt_pi_prefix, prefixbuf,
-				sizeof(prefixbuf)),
+			    inet_ntop(AF_INET6, &pinfo->nd_opt_pi_prefix,
+				prefixbuf, sizeof(prefixbuf)),
 			    pinfo->nd_opt_pi_prefix_len,
 			    ifi->ifi_ifname, preferred_time,
 			    inet_ntop(AF_INET6, &from->sin6_addr, ntopbuf,
@@ -1512,7 +1486,7 @@ skip:
 
 	return (0);
 
-  bad:
+bad:
 	free_ndopts(ndopts);
 
 	return (-1);
@@ -1608,8 +1582,6 @@ sock_open(struct sockinfo *s)
 	sndmhdr.msg_iovlen = 1;
 	sndmhdr.msg_control = (caddr_t)sndcmsgbuf;
 	sndmhdr.msg_controllen = sndcmsgbuflen;
-
-	return;
 }
 
 /* open a routing socket to watch the routing table */
@@ -1911,6 +1883,4 @@ ra_timer_update(void *arg, struct timespec *tm)
 	    "<%s> RA timer on %s is set to %ld:%ld",
 	    __func__, ifi->ifi_ifname,
 	    (long int)tm->tv_sec, (long int)tm->tv_nsec / 1000);
-
-	return;
 }

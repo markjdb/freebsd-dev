@@ -34,6 +34,7 @@
 
 #include <sys/queue.h>
 #include <sys/socket.h>
+
 #include <syslog.h>
 #include <stdio.h>
 #include <inttypes.h>
@@ -53,8 +54,7 @@ rtadvd_timer_rest(struct rtadvd_timer *rat)
 		    "<%s> a timer must be expired, but not yet",
 		    __func__);
 		returnval.tv_sec = returnval.tv_nsec = 0;
-	}
-	else
+	} else
 		TS_SUB(&rat->rat_tm, &now, &returnval);
 
 	return (&returnval);

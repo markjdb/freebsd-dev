@@ -24,40 +24,44 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
- *
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/uio.h>
+
 #include <net/if.h>
 #include <net/if_dl.h>
 #include <net/if_types.h>
 #include <net/ethernet.h>
+
 #include <netinet/in.h>
 #include <netinet/ip6.h>
 #include <netinet/icmp6.h>
 #include <netinet6/in6_var.h>
 #include <netinet6/nd6.h>
+
 #include <arpa/inet.h>
-#include <fcntl.h>
+
+#include <err.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <netdb.h>
-#include <unistd.h>
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdarg.h>
 #include <syslog.h>
 #include <time.h>
-#include <err.h>
+#include <unistd.h>
 
 #include "pathnames.h"
 #include "rtadvd.h"
@@ -70,6 +74,8 @@
 #define RA_IFSTATUS_INACTIVE	0
 #define RA_IFSTATUS_RA_RECV	1
 #define RA_IFSTATUS_RA_SEND	2
+
+#define	SSBUFLEN	1024
 
 static int vflag = LOG_ERR;
 
@@ -112,10 +118,8 @@ static struct dispatch_table {
 	{ "shutdown", action_shutdown },
 	{ "enable", action_enable },
 	{ "disable", action_disable },
-	{ NULL, NULL },
 	{ "echo", action_echo },
 	{ "version", action_version },
-	{ NULL, NULL },
 };
 
 static char errmsgbuf[1024];
@@ -137,9 +141,9 @@ mysyslog(int priority, const char * restrict fmt, ...)
 static void
 usage(void)
 {
-	int i;
+	size_t i;
 
-	for (i = 0; (size_t)i < sizeof(dtable)/sizeof(dtable[0]); i++) {
+	for (i = 0; i < nitems(dtable); i++) {
 		if (dtable[i].dt_comm == NULL)
 			break;
 		printf("%s\n", dtable[i].dt_comm);
@@ -151,10 +155,9 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
-	int i;
-	int ch;
 	int (*action)(int, char **) = NULL;
-	int error;
+	size_t i;
+	int ch, error;
 
 	while ((ch = getopt(argc, argv, "Dv")) != -1) {
 		switch (ch) {
@@ -174,19 +177,17 @@ main(int argc, char *argv[])
 	if (argc == 0)
 		usage();
 
-	for (i = 0; (size_t)i < sizeof(dtable)/sizeof(dtable[0]); i++) {
-		if (dtable[i].dt_comm == NULL ||
-		    strcmp(dtable[i].dt_comm, argv[0]) == 0) {
+	action = NULL;
+	for (i = 0; i < nitems(dtable); i++)
+		if (strcmp(dtable[i].dt_comm, argv[0]) == 0) {
 			action = dtable[i].dt_act;
 			break;
 		}
-	}
-
 	if (action == NULL)
 		usage();
 
-	error = (dtable[i].dt_act)(--argc, ++argv);
-	if (error) {
+	error = (action)(--argc, ++argv);
+	if (error != 0) {
 		fprintf(stderr, "%s failed", dtable[i].dt_comm);
 		if (errmsg != NULL)
 			fprintf(stderr, ": %s", errmsg);
