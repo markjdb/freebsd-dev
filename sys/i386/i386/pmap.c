@@ -3822,6 +3822,8 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 			pv = pmap_pvh_remove(&om->md, pmap, va);
 			if ((newpte & PG_MANAGED) == 0)
 				free_pv_entry(pmap, pv);
+			KASSERT((origpte & PG_MANAGED) == 0 || pv != NULL,
+			    ("pmap_enter: no PV entry for %#x", va));
 			if ((om->aflags & PGA_WRITEABLE) != 0 &&
 			    TAILQ_EMPTY(&om->md.pv_list) &&
 			    ((om->flags & PG_FICTITIOUS) != 0 ||

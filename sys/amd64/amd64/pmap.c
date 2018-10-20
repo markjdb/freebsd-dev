@@ -5060,6 +5060,8 @@ retry:
 			pv = pmap_pvh_remove(&om->md, pmap, va);
 			if ((newpte & PG_MANAGED) == 0)
 				free_pv_entry(pmap, pv);
+			KASSERT((origpte & PG_MANAGED) == 0 || pv != NULL,
+			    ("pmap_enter: no PV entry for %#lx", va));
 			if ((om->aflags & PGA_WRITEABLE) != 0 &&
 			    TAILQ_EMPTY(&om->md.pv_list) &&
 			    ((om->flags & PG_FICTITIOUS) != 0 ||
