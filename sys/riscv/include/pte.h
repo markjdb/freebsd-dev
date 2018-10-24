@@ -44,9 +44,6 @@ typedef	uint64_t	pt_entry_t;		/* page table entry */
 typedef	uint64_t	pn_t;			/* page number */
 #endif
 
-/* Level 0 table, 512GiB per entry */
-#define	L0_SHIFT	39
-
 /* Level 1 table, 1GiB per entry */
 #define	L1_SHIFT	30
 #define	L1_SIZE 	(1 << L1_SHIFT)
@@ -87,5 +84,3 @@ typedef	uint64_t	pn_t;			/* page number */
 #define	PTE_SIZE	8
 
 #endif /* !_MACHINE_PTE_H_ */
-
-/* End of pte.h */
