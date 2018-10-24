@@ -319,6 +319,7 @@ pmap_l2(pmap_t pmap, vm_offset_t va)
 
 	l1 = pmap_l1(pmap, va);
 	if (l1 == NULL)
+		/* XXX needed? */
 		return (NULL);
 	if ((pmap_load(l1) & PTE_V) == 0)
 		return (NULL);
@@ -2580,11 +2581,94 @@ pmap_unwire(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
  *
  *	This routine is only advisory and need not do anything.
  */
-
 void
 pmap_copy(pmap_t dst_pmap, pmap_t src_pmap, vm_offset_t dst_addr, vm_size_t len,
     vm_offset_t src_addr)
 {
+	struct spglist free;
+	struct rwlock *lock;
+	pd_entry_t *l1, l1e, *l2, l2e;
+	pt_entry_t *dl3, *sl3;
+	vm_offset_t end_addr, va, va_next;
+	vm_page_t dptpg;
+
+	if (dst_addr != src_addr)
+		return;
+
+	end_addr = src_addr + len;
+	lock = NULL;
+
+	if (dst_pmap < src_pmap) {
+		PMAP_LOCK(dst_pmap);
+		PMAP_LOCK(src_pmap);
+	} else {
+		PMAP_LOCK(src_pmap);
+		PMAP_LOCK(dst_pmap);
+	}
+
+	for (va = src_addr; va < end_addr; va = va_next) {
+		l1 = pmap_l1(src_pmap, va);
+		l1e = pmap_load(l1);
+		if ((l1e & PTE_V) == 0 || (l1e & PTE_RWX) == 0) {
+			va_next = (va + L1_SIZE) & ~L1_OFFSET;
+			if (va_next > end_addr)
+				va_next = end_addr;
+			continue;
+		}
+
+		va_next = (va + L2_SIZE) & ~L2_OFFSET;
+		if (va_next > end_addr)
+			va_next = end_addr;
+		l2 = pmap_l1_to_l2(l1, va);
+		l2e = pmap_load(l2);
+		if ((l2e & PTE_V) == 0 || (l2e & PTE_RWX) == 0)
+			continue;
+
+		dptpg = NULL;
+		sl3 = (pt_entry_t *)PHYS_TO_DMAP(PTE_TO_PHYS(l2e));
+		for (sl3 = &sl3[pmap_l3_index(va)]; va < va_next;
+		    va += L3_SIZE, sl3++) {
+			if ((pmap_load(sl3) & PTE_SW_MANAGED) == 0)
+				continue;
+
+			if (dptpg == NULL &&
+			    dptpg->pindex == pmap_l2_pindex(va))
+				dptpg->wire_count++;
+			else if ((dptpg = pmap_alloc_l3(dst_pmap, va,
+			    &lock)) == NULL)
+				goto out;
+			dl3 =
+			    (pt_entry_t *)PHYS_TO_DMAP(VM_PAGE_TO_PHYS(dptpg));
+			dl3 = &dl3[pmap_l3_index(va)];
+			if ((pmap_load(dl3) & PTE_V) == 0 &&
+			    pmap_try_insert_pv_entry(dst_pmap, va,
+			    PHYS_TO_VM_PAGE(PTE_TO_PHYS(pmap_load(sl3))),
+			    &lock)) {
+				/*
+				 * Clear the wired, modified, and accessed bits
+				 * in the copy.
+				 */
+				*dl3 = pmap_load(sl3) & ~(PTE_SW_WIRED |
+				    PTE_D | PTE_A);
+				pmap_resident_count_inc(dst_pmap, 1);
+			} else {
+				SLIST_INIT(&free);
+				if (pmap_unwire_l3(dst_pmap, va, dptpg,
+				    &free)) {
+					pmap_invalidate_page(dst_pmap, va);
+					vm_page_free_pages_toq(&free, true);
+				}
+				goto out;
+			}
+
+		}
+	}
+
+out:
+	if (lock != NULL)
+		rw_wunlock(lock);
+	PMAP_UNLOCK(src_pmap);
+	PMAP_UNLOCK(dst_pmap);
 
 }
 
