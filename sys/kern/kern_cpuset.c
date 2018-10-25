@@ -492,20 +492,29 @@ _domainset_create(struct domainset *domain, struct domainlist *freelist)
 }
 
 /*
- * Are any of the domains in the mask empty? If so, silently
- * remove them.  If only empty domains are present, we must
- * return failure.
+ * Are any of the domains in the mask empty?  If so, silently
+ * remove them and update the domainset accordingly.  If only empty
+ * domains are present, we must return failure.
  */
 static bool
 domainset_empty_vm(struct domainset *domain)
 {
-	int i, max;
+	int i, j, max;
 
 	max = DOMAINSET_FLS(&domain->ds_mask) + 1;
-	for (i = 0; i < max; i++) {
-		if (DOMAINSET_ISSET(i, &domain->ds_mask) &&
-		    VM_DOMAIN_EMPTY(i))
+	for (i = 0; i < max; i++)
+		if (DOMAINSET_ISSET(i, &domain->ds_mask) && VM_DOMAIN_EMPTY(i))
 			DOMAINSET_CLR(i, &domain->ds_mask);
+	domain->ds_cnt = DOMAINSET_COUNT(&domain->ds_mask);
+	max = DOMAINSET_FLS(&domain->ds_mask) + 1;
+	for (i = j = 0; i < max; i++) {
+		if (DOMAINSET_ISSET(i, &domain->ds_mask))
+			domain->ds_order[j++] = i;
+		else if (domain->ds_policy == DOMAINSET_POLICY_PREFER &&
+		    domain->ds_prefer == i) {
+			domain->ds_policy = DOMAINSET_POLICY_ROUNDROBIN;
+			domain->ds_prefer = -1;
+		}
 	}
 
 	return (DOMAINSET_EMPTY(&domain->ds_mask));
@@ -1423,7 +1432,8 @@ domainset_zero(void)
 
 	/* Remove empty domains from the global policies. */
 	LIST_FOREACH(dset, &cpuset_domains, ds_link)
-		(void)domainset_empty_vm(dset);
+		if (domainset_empty_vm(dset))
+			panic("empty global domainset %p", dset);
 }
 
 /*
