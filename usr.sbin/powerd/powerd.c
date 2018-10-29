@@ -31,23 +31,29 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
-#include <sys/sysctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
 #include <sys/un.h>
 
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <libutil.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
+
+#include <libcasper.h>
+#include <capsicum_helpers.h>
+#include <casper/cap_sysctl.h>
+
+#include <libutil.h>
 
 #ifdef __i386__
 #define USE_APM
@@ -83,9 +89,16 @@ static const char *modes[] = {
 #define ACPIAC		"hw.acpi.acline"
 #define PMUAC		"dev.pmu.0.acline"
 #define APMDEV		"/dev/apm"
-#define DEVDPIPE	"/var/run/devd.pipe"
+#define DEVDPIPE_DIR	"/var/run/"
+#define DEVDPIPE_NAME	"devd.pipe"
 #define DEVCTL_MAXBUF	1024
 
+static int	get_sysctl(const char *name, int *mibp, size_t *oldlenp);
+static int	read_sysctl(const int *name, u_int namelen, void *buf,
+		    size_t *buflenp);
+static int	write_sysctl(const int *name, u_int namelen, void *buf,
+		    size_t buflen);
+static void	sysctl_cap_init(void);
 static int	read_usage_times(int *load);
 static int	read_freqs(int *numfreqs, int **freqs, int **power,
 		    int minfreq, int maxfreq);
@@ -124,10 +137,78 @@ static enum {
 #ifdef USE_APM
 static int	apm_fd = -1;
 #endif
+static int	devd_dirfd = -1;
 static int	devd_pipe = -1;
 
 #define DEVD_RETRY_INTERVAL 60 /* seconds */
 static struct timeval tried_devd;
+
+static cap_channel_t *capsysctl;
+
+/*
+ * These functions are convenience wrappers around our sysctl capability.
+ */
+static int
+get_sysctl(const char *name, int *mibp, size_t *sizep)
+{
+
+	return (cap_sysctlnametomib(capsysctl, name, mibp, sizep));
+}
+
+static int
+read_sysctl(const int *name, u_int namelen, void *buf, size_t *buflenp)
+{
+
+	return (cap_sysctl(capsysctl, name, namelen, buf, buflenp, NULL, 0));
+}
+
+static int
+write_sysctl(const int *name, u_int namelen, void *buf, size_t buflen)
+{
+
+	return (cap_sysctl(capsysctl, name, namelen, NULL, NULL, buf, buflen));
+}
+
+static void
+sysctl_cap_init(void)
+{
+	cap_channel_t *capcas;
+	void *limit;
+	size_t len;
+	int error;
+
+	capcas = cap_init();
+	if (capcas == NULL)
+		err(1, "cap_init");
+	capsysctl = cap_service_open(capcas, "system.sysctl");
+	if (capsysctl == NULL)
+		err(1, "cap_service_open(system.sysctl)");
+	cap_close(capcas);
+
+	limit = cap_sysctl_limit_init(capsysctl);
+	(void)cap_sysctl_limit_name(limit, ACPIAC, CAP_SYSCTL_READ);
+#ifdef __powerpc__
+	(void)cap_sysctl_limit_name(limit, PMUAC, CAP_SYSCTL_READ);
+#endif
+	(void)cap_sysctl_limit_name(limit, "kern.cp_times", CAP_SYSCTL_READ);
+	(void)cap_sysctl_limit_name(limit, "dev.cpu.0.freq", CAP_SYSCTL_RDWR);
+	(void)cap_sysctl_limit_name(limit, "dev.cpu.0.freq_levels",
+	    CAP_SYSCTL_READ);
+	error = cap_sysctl_limit(limit);
+	if (error != 0)
+		err(1, "cap_sysctl_limit");
+
+	/* Look up various sysctl MIBs. */
+	len = 2;
+	if (get_sysctl("kern.cp_times", cp_times_mib, &len) != 0)
+		err(1, "lookup kern.cp_times");
+	len = 4;
+	if (get_sysctl("dev.cpu.0.freq", freq_mib, &len) != 0)
+		err(EX_UNAVAILABLE, "no cpufreq(4) support -- aborting");
+	len = 4;
+	if (get_sysctl("dev.cpu.0.freq_levels", levels_mib, &len) != 0)
+		err(1, "lookup freq_levels");
+}
 
 /*
  * This function returns summary load of all CPUs.  It was made so
@@ -145,7 +226,7 @@ read_usage_times(int *load)
 
 	if (cp_times == NULL) {
 		cp_times_len = 0;
-		error = sysctl(cp_times_mib, 2, NULL, &cp_times_len, NULL, 0);
+		error = read_sysctl(cp_times_mib, 2, NULL, &cp_times_len);
 		if (error)
 			return (error);
 		if ((cp_times = malloc(cp_times_len)) == NULL)
@@ -159,7 +240,7 @@ read_usage_times(int *load)
 	}
 
 	cp_times_len = sizeof(long) * CPUSTATES * ncpus;
-	error = sysctl(cp_times_mib, 2, cp_times, &cp_times_len, NULL, 0);
+	error = read_sysctl(cp_times_mib, 2, cp_times, &cp_times_len);
 	if (error)
 		return (error);
 
@@ -190,11 +271,11 @@ read_freqs(int *numfreqs, int **freqs, int **power, int minfreq, int maxfreq)
 	int i, j;
 	size_t len = 0;
 
-	if (sysctl(levels_mib, 4, NULL, &len, NULL, 0))
+	if (read_sysctl(levels_mib, 4, NULL, &len) != 0)
 		return (-1);
 	if ((freqstr = malloc(len)) == NULL)
 		return (-1);
-	if (sysctl(levels_mib, 4, freqstr, &len, NULL, 0))
+	if (read_sysctl(levels_mib, 4, freqstr, &len) != 0)
 		return (-1);
 
 	*numfreqs = 1;
@@ -246,7 +327,7 @@ get_freq(void)
 	int curfreq;
 
 	len = sizeof(curfreq);
-	if (sysctl(freq_mib, 4, &curfreq, &len, NULL, 0) != 0) {
+	if (read_sysctl(freq_mib, 4, &curfreq, &len) != 0) {
 		if (vflag)
 			warn("error reading current CPU frequency");
 		curfreq = 0;
@@ -258,7 +339,7 @@ static int
 set_freq(int freq)
 {
 
-	if (sysctl(freq_mib, 4, NULL, NULL, &freq, sizeof(freq))) {
+	if (write_sysctl(freq_mib, 4, &freq, sizeof(freq)) != 0) {
 		if (errno != EPERM)
 			return (-1);
 	}
@@ -289,12 +370,12 @@ acline_init(void)
 	acline_mib_len = 4;
 	acline_status = SRC_UNKNOWN;
 
-	if (sysctlnametomib(ACPIAC, acline_mib, &acline_mib_len) == 0) {
+	if (get_sysctl(ACPIAC, acline_mib, &acline_mib_len) == 0) {
 		acline_mode = ac_sysctl;
 		if (vflag)
 			warnx("using sysctl for AC line status");
 #ifdef __powerpc__
-	} else if (sysctlnametomib(PMUAC, acline_mib, &acline_mib_len) == 0) {
+	} else if (get_sysctl(PMUAC, acline_mib, &acline_mib_len) == 0) {
 		acline_mode = ac_sysctl;
 		if (vflag)
 			warnx("using sysctl for AC line status");
@@ -339,8 +420,7 @@ acline_read(void)
 		size_t len;
 
 		len = sizeof(acline);
-		if (sysctl(acline_mib, acline_mib_len, &acline, &len,
-		    NULL, 0) == 0)
+		if (read_sysctl(acline_mib, acline_mib_len, &acline, &len) == 0)
 			acline_status = (acline ? SRC_AC : SRC_BATTERY);
 		else
 			acline_status = SRC_UNKNOWN;
@@ -388,13 +468,12 @@ devd_init(void)
 	}
 
 	devd_addr.sun_family = PF_LOCAL;
-	strlcpy(devd_addr.sun_path, DEVDPIPE, sizeof(devd_addr.sun_path));
-	if (connect(devd_pipe, (struct sockaddr *)&devd_addr,
+	strlcpy(devd_addr.sun_path, DEVDPIPE_NAME, sizeof(devd_addr.sun_path));
+	if (connectat(devd_dirfd, devd_pipe, (struct sockaddr *)&devd_addr,
 	    sizeof(devd_addr)) == -1) {
 		if (vflag)
-			warn("%s(): connect()", __func__);
-		close(devd_pipe);
-		devd_pipe = -1;
+			warn("%s(): connectat()", __func__);
+		devd_close();
 		return (-1);
 	}
 
@@ -405,7 +484,7 @@ static void
 devd_close(void)
 {
 
-	close(devd_pipe);
+	(void)close(devd_pipe);
 	devd_pipe = -1;
 }
 
@@ -447,6 +526,7 @@ main(int argc, char * argv[])
 	struct timeval timeout;
 	fd_set fdset;
 	int nfds;
+	cap_rights_t rights;
 	struct pidfh *pfh = NULL;
 	const char *pidfile = NULL;
 	int freq, curfreq, initfreq, *freqs, i, j, *mwatts, numfreqs, load;
@@ -530,19 +610,17 @@ main(int argc, char * argv[])
 
 	mode = mode_none;
 
+	/* Open capabilities. */
+	devd_dirfd = open(DEVDPIPE_DIR, O_DIRECTORY | O_RDONLY);
+	if (devd_dirfd < 0)
+		err(1, "open(%s)", DEVDPIPE_DIR);
+	if (cap_rights_limit(devd_dirfd,
+	    cap_rights_init(&rights, CAP_CONNECTAT)) != 0)
+		err(1, "cap_rights_limit");
+	sysctl_cap_init();
+
 	/* Poll interval is in units of ms. */
 	poll_ival *= 1000;
-
-	/* Look up various sysctl MIBs. */
-	len = 2;
-	if (sysctlnametomib("kern.cp_times", cp_times_mib, &len))
-		err(1, "lookup kern.cp_times");
-	len = 4;
-	if (sysctlnametomib("dev.cpu.0.freq", freq_mib, &len))
-		err(EX_UNAVAILABLE, "no cpufreq(4) support -- aborting");
-	len = 4;
-	if (sysctlnametomib("dev.cpu.0.freq_levels", levels_mib, &len))
-		err(1, "lookup freq_levels");
 
 	/* Check if we can read the load and supported freqs. */
 	if (read_usage_times(NULL))
@@ -570,11 +648,15 @@ main(int argc, char * argv[])
 			exit(EXIT_FAILURE);
 
 		}
-		pidfile_write(pfh);
+		(void)pidfile_write(pfh);
 	}
 
 	/* Decide whether to use ACPI or APM to read the AC line status. */
 	acline_init();
+
+	/* Enter capability mode. */
+	if (caph_enter() != 0)
+		err(1, "cap_enter");
 
 	/*
 	 * Exit cleanly on signals.
@@ -602,7 +684,7 @@ main(int argc, char * argv[])
 	    (mode_none == MODE_ADAPTIVE || mode_none == MODE_HIADAPTIVE))) {
 		/* Read the current frequency. */
 		len = sizeof(curfreq);
-		if (sysctl(freq_mib, 4, &curfreq, &len, NULL, 0) != 0) {
+		if (read_sysctl(freq_mib, 4, &curfreq, &len) != 0) {
 			if (vflag)
 				warn("error reading current CPU frequency");
 		}
@@ -788,6 +870,7 @@ main(int argc, char * argv[])
 	free(freqs);
 	free(mwatts);
 	devd_close();
+	(void)close(devd_dirfd);
 	if (!vflag)
 		pidfile_remove(pfh);
 
