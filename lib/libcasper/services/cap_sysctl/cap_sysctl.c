@@ -1,11 +1,14 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * Copyright (c) 2013 The FreeBSD Foundation
+ * Copyright (c) 2013, 2018 The FreeBSD Foundation
  * All rights reserved.
  *
  * This software was developed by Pawel Jakub Dawidek under sponsorship from
  * the FreeBSD Foundation.
+ *
+ * Portions of this software were developed by Mark Johnston
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,8 +36,9 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
-#include <sys/sysctl.h>
+#include <sys/dnv.h>
 #include <sys/nv.h>
+#include <sys/sysctl.h>
 
 #include <assert.h>
 #include <errno.h>
@@ -46,24 +50,20 @@ __FBSDID("$FreeBSD$");
 
 #include "cap_sysctl.h"
 
-int
-cap_sysctlbyname(cap_channel_t *chan, const char *name, void *oldp,
-    size_t *oldlenp, const void *newp, size_t newlen)
+static int
+do_sysctl(cap_channel_t *chan, nvlist_t *nvl, void *oldp, size_t *oldlenp,
+    const void *newp, size_t newlen)
 {
-	nvlist_t *nvl;
 	const uint8_t *retoldp;
-	uint8_t operation;
 	size_t oldlen;
+	int error;
+	uint8_t operation;
 
 	operation = 0;
 	if (oldp != NULL)
 		operation |= CAP_SYSCTL_READ;
 	if (newp != NULL)
 		operation |= CAP_SYSCTL_WRITE;
-
-	nvl = nvlist_create(0);
-	nvlist_add_string(nvl, "cmd", "sysctl");
-	nvlist_add_string(nvl, "name", name);
 	nvlist_add_number(nvl, "operation", (uint64_t)operation);
 	if (oldp == NULL && oldlenp != NULL)
 		nvlist_add_null(nvl, "justsize");
@@ -71,11 +71,13 @@ cap_sysctlbyname(cap_channel_t *chan, const char *name, void *oldp,
 		nvlist_add_number(nvl, "oldlen", (uint64_t)*oldlenp);
 	if (newp != NULL)
 		nvlist_add_binary(nvl, "newp", newp, newlen);
+
 	nvl = cap_xfer_nvlist(chan, nvl);
 	if (nvl == NULL)
 		return (-1);
-	if (nvlist_get_number(nvl, "error") != 0) {
-		errno = (int)nvlist_get_number(nvl, "error");
+	error = (int)dnvlist_get_number(nvl, "error", 0);
+	if (error != 0) {
+		errno = error;
 		nvlist_destroy(nvl);
 		return (-1);
 	}
@@ -88,6 +90,64 @@ cap_sysctlbyname(cap_channel_t *chan, const char *name, void *oldp,
 		if (oldlenp != NULL)
 			*oldlenp = oldlen;
 	}
+
+	nvlist_destroy(nvl);
+
+	return (0);
+}
+
+int
+cap_sysctl(cap_channel_t *chan, const int *name, u_int namelen, void *oldp,
+    size_t *oldlenp, const void *newp, size_t newlen)
+{
+	nvlist_t *nvl;
+
+	nvl = nvlist_create(0);
+	nvlist_add_string(nvl, "cmd", "sysctl");
+	nvlist_add_binary(nvl, "name", name, (size_t)namelen * sizeof(int));
+	return (do_sysctl(chan, nvl, oldp, oldlenp, newp, newlen));
+}
+
+int
+cap_sysctlbyname(cap_channel_t *chan, const char *name, void *oldp,
+    size_t *oldlenp, const void *newp, size_t newlen)
+{
+	nvlist_t *nvl;
+
+	nvl = nvlist_create(0);
+	nvlist_add_string(nvl, "cmd", "sysctlbyname");
+	nvlist_add_string(nvl, "name", name);
+	return (do_sysctl(chan, nvl, oldp, oldlenp, newp, newlen));
+}
+
+int
+cap_sysctlnametomib(cap_channel_t *chan, const char *name, int *mibp,
+    size_t *sizep)
+{
+	nvlist_t *nvl;
+	const void *mib;
+	size_t mibsz;
+	int error;
+
+	nvl = nvlist_create(0);
+	nvlist_add_string(nvl, "cmd", "sysctlnametomib");
+	nvlist_add_string(nvl, "name", name);
+	nvlist_add_number(nvl, "size", (uint64_t)*sizep);
+
+	nvl = cap_xfer_nvlist(chan, nvl);
+	if (nvl == NULL)
+		return (-1);
+	error = (int)dnvlist_get_number(nvl, "error", 0);
+	if (error != 0) {
+		errno = error;
+		nvlist_destroy(nvl);
+		return (-1);
+	}
+
+	mib = nvlist_get_binary(nvl, "mib", &mibsz);
+	*sizep = mibsz / sizeof(int);
+	memcpy(mibp, mib, mibsz); 
+
 	nvlist_destroy(nvl);
 
 	return (0);
@@ -96,6 +156,32 @@ cap_sysctlbyname(cap_channel_t *chan, const char *name, void *oldp,
 /*
  * Service functions.
  */
+static int
+sysctl_nametomib(const nvlist_t *nvlin, nvlist_t *nvlout)
+{
+	const char *name;
+	size_t size;
+	int error, *mibp;
+
+	name = nvlist_get_string(nvlin, "name");
+	size = (size_t)nvlist_get_number(nvlin, "size");
+
+	mibp = malloc(size * sizeof(*mibp));
+	if (mibp == NULL)
+		return (ENOMEM);
+
+	error = sysctlnametomib(name, mibp, &size);
+	if (error != 0) {
+		error = errno;
+		free(mibp);
+		return (error);
+	}
+
+	nvlist_add_binary(nvlout, "mib", mibp, size * sizeof(*mibp));
+
+	return (0);
+}
+
 static int
 sysctl_check_one(const nvlist_t *nvl, bool islimit)
 {
@@ -134,10 +220,10 @@ sysctl_check_one(const nvlist_t *nvl, bool islimit)
 			 * CAP_SYSCTL_WRITE flags.
 			 */
 			operation = nvlist_get_number(nvl, name);
-			if ((operation & ~(CAP_SYSCTL_RDWR)) != 0)
+			if ((operation & ~CAP_SYSCTL_RDWR) != 0)
 				return (EINVAL);
 			/* ...but there has to be at least one of them. */
-			if ((operation & (CAP_SYSCTL_RDWR)) == 0)
+			if ((operation & CAP_SYSCTL_RDWR) == 0)
 				return (EINVAL);
 			/* Only one 'operation' can be present. */
 			if ((fields & HAS_OPERATION) != 0)
@@ -233,7 +319,9 @@ sysctl_command(const char *cmd, const nvlist_t *limits, nvlist_t *nvlin,
 	size_t *oldlenp;
 	int error;
 
-	if (strcmp(cmd, "sysctl") != 0)
+	if (strcmp(cmd, "sysctlnametomib") == 0)
+		return (sysctl_nametomib(nvlin, nvlout));
+	if (strcmp(cmd, "sysctlbyname") != 0 && strcmp(cmd, "sysctl") != 0)
 		return (EINVAL);
 	error = sysctl_check_one(nvlin, false);
 	if (error != 0)

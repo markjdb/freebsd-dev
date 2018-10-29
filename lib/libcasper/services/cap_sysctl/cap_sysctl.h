@@ -29,11 +29,11 @@
  * $FreeBSD$
  */
 
-#ifndef	_CAP_SYSCTL_H_
+#ifndef _CAP_SYSCTL_H_
 #define	_CAP_SYSCTL_H_
 
 #ifdef HAVE_CASPER
-#define WITH_CASPER
+#define	WITH_CASPER
 #endif
 
 #define	CAP_SYSCTL_READ		0x01
@@ -42,11 +42,19 @@
 #define	CAP_SYSCTL_RECURSIVE	0x04
 
 #ifdef WITH_CASPER
+int cap_sysctl(cap_channel_t *chan, const int *name, u_int namelen, void *oldp,
+    size_t *oldlenp, const void *newp, size_t newlen);
 int cap_sysctlbyname(cap_channel_t *chan, const char *name, void *oldp,
     size_t *oldlenp, const void *newp, size_t newlen);
+int cap_sysctlnametomib(cap_channel_t *chan, const char *name, int *mibp,
+    size_t *sizep);
 #else
-#define	cap_sysctlbyname(chan, name, oldp, oldlenp, newp, newlen)		\
-	sysctlbyname(name, oldp, oldlenp, newp, newlen)
+#define	cap_sysctl(chan, name, namelen, oldp, oldlenp, newp, newlen)	\
+	sysctl((name), (namelen), (oldp), (oldlenp), (newp), (newlen))
+#define	cap_sysctlbyname(chan, name, oldp, oldlenp, newp, newlen)	\
+	sysctlbyname((name), (oldp), (oldlenp), (newp), (newlen))
+#define	cap_sysctlnametomib(chan, name, mibp, sizep)			\
+	sysctlnametomib((name), (mibp), (sizep))
 #endif
 
 #endif	/* !_CAP_SYSCTL_H_ */
