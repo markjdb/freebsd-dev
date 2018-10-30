@@ -19,46 +19,15 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#ifndef _CRT_H_
+#define	_CRT_H_
 
-#include "crt.h"
+#define	HAVE_CTORS
+#define	CTORS_CONSTRUCTORS
+#define	INIT_CALL_SEQ(func)	"bl " __STRING(func) "; nop"
 
-#ifdef HAVE_CTORS
-typedef void (*crt_func)(void);
-
-/*
- * On some architectures and toolchains we may need to call the .ctors.
- * These are called in the reverse order they are in the ELF file.
- */
-static void __do_global_ctors_aux(void) __used;
-
-static crt_func __CTOR_END__[] __section(".ctors") __used = {
-	(crt_func)0
-};
-static crt_func __DTOR_END__[] __section(".dtors") __used = {
-	(crt_func)0
-};
-
-static void
-__do_global_ctors_aux(void)
-{
-	crt_func fn;
-	int n;
-
-	for (n = 1;; n++) {
-		fn = __CTOR_END__[-n];
-		if (fn == (crt_func)0 || fn == (crt_func)-1)
-			break;
-		fn();
-	}
-}
-
-asm (
-    ".pushsection .init		\n"
-    "\t" INIT_CALL_SEQ(__do_global_ctors_aux) "\n"
-    ".popsection		\n"
-);
 #endif
