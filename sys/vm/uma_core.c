@@ -2556,14 +2556,14 @@ zalloc_start:
 		critical_enter();
 		cpu = curcpu;
 		cache = &zone->uz_cpu[cpu];
+
 		/*
 		 * See if we lost the race or were migrated.  Cache the
 		 * initialized bucket to make this less likely or claim
 		 * the memory directly.
 		 */
 		if (cache->uc_allocbucket == NULL &&
-		    ((zone->uz_flags & UMA_ZONE_NUMA) == 0 ||
-		    domain == PCPU_GET(domain))) {
+		    (domain == UMA_ANYDOMAIN || domain == PCPU_GET(domain))) {
 			cache->uc_allocbucket = bucket;
 		} else if ((zone->uz_flags & UMA_ZONE_NOBUCKETCACHE) != 0) {
 			critical_exit();
@@ -3219,11 +3219,11 @@ zfree_start:
 		cpu = curcpu;
 		cache = &zone->uz_cpu[cpu];
 		if (cache->uc_freebucket == NULL &&
-		    ((zone->uz_flags & UMA_ZONE_NUMA) == 0 ||
-		    domain == PCPU_GET(domain))) {
+		    (domain == UMA_ANYDOMAIN || domain == PCPU_GET(domain))) {
 			cache->uc_freebucket = bucket;
 			goto zfree_start;
 		}
+
 		/*
 		 * We lost the race, start over.  We have to drop our
 		 * critical section to free the bucket.
