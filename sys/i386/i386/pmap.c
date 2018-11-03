@@ -3531,8 +3531,8 @@ pmap_promote_pde(pmap_t pmap, pd_entry_t *pde, vm_offset_t va)
 	 * within a 2- or 4MB page.
 	 */
 	firstpte = pmap_pte_quick(pmap, trunc_4mpage(va));
-setpde:
 	newpde = *firstpte;
+setpde:
 	if ((newpde & ((PG_FRAME & PDRMASK) | PG_A | PG_V)) != (PG_A | PG_V)) {
 		pmap_pde_p_failures++;
 		CTR2(KTR_PMAP, "pmap_promote_pde: failure for va %#x"
@@ -3550,10 +3550,9 @@ setpde:
 		 * When PG_M is already clear, PG_RW can be cleared without
 		 * a TLB invalidation.
 		 */
-		if (!atomic_cmpset_int((u_int *)firstpte, newpde, newpde &
+		if (!atomic_fcmpset_int((u_int *)firstpte, &newpde, newpde &
 		    ~PG_RW))  
 			goto setpde;
-		newpde &= ~PG_RW;
 	}
 
 	/* 
@@ -3563,8 +3562,8 @@ setpde:
 	 */
 	pa = (newpde & (PG_PS_FRAME | PG_A | PG_V)) + NBPDR - PAGE_SIZE;
 	for (pte = firstpte + NPTEPG - 1; pte > firstpte; pte--) {
-setpte:
 		oldpte = *pte;
+setpte:
 		if ((oldpte & (PG_FRAME | PG_A | PG_V)) != pa) {
 			pmap_pde_p_failures++;
 			CTR2(KTR_PMAP, "pmap_promote_pde: failure for va %#x"
@@ -3576,7 +3575,7 @@ setpte:
 			 * When PG_M is already clear, PG_RW can be cleared
 			 * without a TLB invalidation.
 			 */
-			if (!atomic_cmpset_int((u_int *)pte, oldpte,
+			if (!atomic_fcmpset_int((u_int *)pte, &oldpte,
 			    oldpte & ~PG_RW))
 				goto setpte;
 			oldpte &= ~PG_RW;
