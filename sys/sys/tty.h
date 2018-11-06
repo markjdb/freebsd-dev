@@ -133,12 +133,8 @@ struct tty {
 	void		*t_hooksoftc;	/* (t) Soft config, for hooks. */
 	struct cdev	*t_dev;		/* (c) Primary character device. */
 
-#ifndef PRINTF_BUFR_SIZE
-#define TTY_PRINTF_SIZE 256
-#else
-#define TTY_PRINTF_SIZE PRINTF_BUFR_SIZE
-#endif
-	char		t_prbuf[TTY_PRINTF_SIZE]; /* (t) */
+#define	TTY_PRINTF_SIZE	PRINTF_BUFR_SIZE
+	char		t_prbuf[0];	/* (t) SIGINFO buffer. */
 };
 
 /*

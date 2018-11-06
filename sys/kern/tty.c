@@ -33,6 +33,7 @@
 __FBSDID("$FreeBSD$");
 
 #include "opt_capsicum.h"
+#include "opt_printf.h"
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -1051,7 +1052,8 @@ tty_alloc_mutex(struct ttydevsw *tsw, void *sc, struct mtx *mutex)
 	PATCH_FUNC(busy);
 #undef PATCH_FUNC
 
-	tp = malloc(sizeof(struct tty), M_TTY, M_WAITOK|M_ZERO);
+	tp = malloc(sizeof(struct tty) + TTY_PRINTF_SIZE, M_TTY,
+	    M_WAITOK | M_ZERO);
 	tp->t_devsw = tsw;
 	tp->t_devswsoftc = sc;
 	tp->t_flags = tsw->tsw_flags;
