@@ -625,7 +625,7 @@ kmem_free(vm_offset_t addr, vm_size_t size)
  *	This routine may block.
  */
 vm_offset_t
-kmap_alloc_wait(vm_map_t map, vm_size_t size, vm_prot_t prot, vm_prot_t max)
+kmap_alloc_wait(vm_map_t map, vm_size_t size)
 {
 	vm_offset_t addr;
 
@@ -650,7 +650,7 @@ kmap_alloc_wait(vm_map_t map, vm_size_t size, vm_prot_t prot, vm_prot_t max)
 		map->needs_wakeup = TRUE;
 		vm_map_unlock_and_wait(map, 0);
 	}
-	vm_map_insert(map, NULL, 0, addr, addr + size, prot, max,
+	vm_map_insert(map, NULL, 0, addr, addr + size, VM_PROT_RW, VM_PROT_RW,
 	    MAP_ACC_CHARGED);
 	vm_map_unlock(map);
 	return (addr);
