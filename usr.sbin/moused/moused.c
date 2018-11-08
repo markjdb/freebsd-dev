@@ -50,6 +50,7 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/consio.h>
 #include <sys/mouse.h>
 #include <sys/socket.h>
@@ -57,6 +58,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/time.h>
 #include <sys/un.h>
 
+#include <capsicum_helpers.h>
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
@@ -495,6 +497,13 @@ static int		mouse_button_state;
 static struct timespec	mouse_button_state_ts;
 static int		mouse_move_delayed;
 
+static u_long cfdioctls[] = { CONS_MOUSECTL };
+
+static u_long mfdioctls[] = {
+    MOUSE_GETLEVEL, MOUSE_SETLEVEL, MOUSE_GETMODE, MOUSE_SETMODE, MOUSE_GETHWINFO,
+    TIOCFLUSH, TIOCMBIC, TIOCMBIS, TIOCMGET, TIOCMSET,
+};
+
 static jmp_buf env;
 
 struct drift_xy {
@@ -559,6 +568,7 @@ static int	gtco_digipad(u_char, mousestatus_t *);
 int
 main(int argc, char *argv[])
 {
+    cap_rights_t rights;
     int c;
     int	i;
     int	j;
@@ -872,6 +882,13 @@ main(int argc, char *argv[])
 	    rodent.mfd = open(rodent.portname, O_RDWR | O_NONBLOCK);
 	    if (rodent.mfd == -1)
 		logerr(1, "unable to open %s", rodent.portname);
+	    cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_IOCTL, CAP_EVENT);
+	    if (caph_rights_limit(rodent.mfd, &rights) == -1)
+		logerr(1, "cannot limit rights on %s", rodent.portname);
+	    if (caph_ioctls_limit(rodent.mfd, mfdioctls,
+		nitems(mfdioctls)) == -1)
+		logerr(1, "cannot limit ioctls on %s", rodent.portname);
+
 	    if (r_identify() == MOUSE_PROTO_UNKNOWN) {
 		logwarnx("cannot determine mouse type on %s", rodent.portname);
 		close(rodent.mfd);
@@ -991,6 +1008,7 @@ expoacc(int dx, int dy, int *movex, int *movey)
 static void
 moused(void)
 {
+    cap_rights_t rights;
     struct mouse_info mouse;
     mousestatus_t action0;		/* original mouse action */
     mousestatus_t action;		/* interim buffer */
@@ -1005,6 +1023,11 @@ moused(void)
 
     if ((rodent.cfd = open("/dev/consolectl", O_RDWR, 0)) == -1)
 	logerr(1, "cannot open /dev/consolectl");
+    cap_rights_init(&rights, CAP_IOCTL);
+    if (caph_rights_limit(rodent.cfd, &rights) == -1)
+	logerr(1, "cannot limit rights on /dev/consolectl");
+    if (caph_ioctls_limit(rodent.cfd, cfdioctls, nitems(cfdioctls)) == -1)
+	logerr(1, "cannot limit ioctls on /dev/consolectl");
 
     if (!nodaemon && !background) {
 	pfh = pidfile_open(pidfile, 0600, &mpid);
