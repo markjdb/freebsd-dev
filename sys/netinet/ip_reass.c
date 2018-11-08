@@ -206,6 +206,14 @@ ip_reass(struct mbuf *m)
 	ip = mtod(m, struct ip *);
 	hlen = ip->ip_hl << 2;
 
+	if (ntohs(ip->ip_len) + (ntohs(ip->ip_off & htons(IP_OFFMASK)) << 3) >
+	    IP_MAXPACKET) {
+		IPSTAT_INC(ips_toolong);
+		IPSTAT_INC(ips_fragdropped);
+		m_freem(m);
+		return (NULL);
+	}
+
 	/*
 	 * Adjust ip_len to not reflect header,
 	 * convert offset of this to bytes.
