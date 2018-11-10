@@ -269,6 +269,7 @@ static int
 vm_fault_soft_fast(struct faultstate *fs, vm_offset_t vaddr, vm_prot_t prot,
     int fault_type, int fault_flags, boolean_t wired, vm_page_t *m_hold)
 {
+	pmap_t pmap;
 	vm_page_t m, m_map;
 #if (defined(__aarch64__) || defined(__amd64__) || (defined(__arm__) && \
     __ARM_ARCH >= 6) || defined(__i386__)) && VM_NRESERVLEVEL > 0
@@ -284,6 +285,7 @@ vm_fault_soft_fast(struct faultstate *fs, vm_offset_t vaddr, vm_prot_t prot,
 	    vm_page_busied(m)) || m->valid != VM_PAGE_BITS_ALL)
 		return (KERN_FAILURE);
 	m_map = m;
+	pmap = fs->map->pmap;
 	psind = 0;
 #if (defined(__aarch64__) || defined(__amd64__) || (defined(__arm__) && \
     __ARM_ARCH >= 6) || defined(__i386__)) && VM_NRESERVLEVEL > 0
@@ -292,8 +294,8 @@ vm_fault_soft_fast(struct faultstate *fs, vm_offset_t vaddr, vm_prot_t prot,
 	    rounddown2(vaddr, pagesizes[m_super->psind]) >= fs->entry->start &&
 	    roundup2(vaddr + 1, pagesizes[m_super->psind]) <= fs->entry->end &&
 	    (vaddr & (pagesizes[m_super->psind] - 1)) == (VM_PAGE_TO_PHYS(m) &
-	    (pagesizes[m_super->psind] - 1)) &&
-	    pmap_ps_enabled(fs->map->pmap)) {
+	    (pagesizes[m_super->psind] - 1)) && pmap != kernel_pmap &&
+	    pmap_ps_enabled(pmap)) {
 		flags = PS_ALL_VALID;
 		if ((prot & VM_PROT_WRITE) != 0) {
 			/*
@@ -316,7 +318,7 @@ vm_fault_soft_fast(struct faultstate *fs, vm_offset_t vaddr, vm_prot_t prot,
 		}
 	}
 #endif
-	rv = pmap_enter(fs->map->pmap, vaddr, m_map, prot, fault_type |
+	rv = pmap_enter(pmap, vaddr, m_map, prot, fault_type |
 	    PMAP_ENTER_NOSLEEP | (wired ? PMAP_ENTER_WIRED : 0), psind);
 	if (rv != KERN_SUCCESS)
 		return (rv);
