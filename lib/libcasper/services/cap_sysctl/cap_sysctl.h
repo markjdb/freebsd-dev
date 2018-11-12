@@ -49,10 +49,15 @@ int cap_sysctlbyname(cap_channel_t *chan, const char *name, void *oldp,
 int cap_sysctlnametomib(cap_channel_t *chan, const char *name, int *mibp,
     size_t *sizep);
 
-void *cap_sysctl_limit_init(cap_channel_t *);
-void *cap_sysctl_limit_name(void *limit, const char *name, int flags);
-void *cap_sysctl_limit_mib(void *limit, int *mibp, u_int miblen, int flags);
-int cap_sysctl_limit(void *limit);
+struct cap_sysctl_limit;
+typedef struct cap_sysctl_limit cap_sysctl_limit_t;
+
+cap_sysctl_limit_t *cap_sysctl_limit_init(cap_channel_t *);
+cap_sysctl_limit_t *cap_sysctl_limit_name(cap_sysctl_limit_t *limit,
+    const char *name, int flags);
+cap_sysctl_limit_t *cap_sysctl_limit_mib(cap_sysctl_limit_t *limit, int *mibp,
+    u_int miblen, int flags);
+int cap_sysctl_limit(cap_sysctl_limit_t *limit);
 #else /* !WITH_CASPER */
 #define	cap_sysctl(chan, name, namelen, oldp, oldlenp, newp, newlen)	\
 	sysctl((name), (namelen), (oldp), (oldlenp), (newp), (newlen))

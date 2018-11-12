@@ -57,95 +57,91 @@ __FBSDID("$FreeBSD$");
 
 struct cap_sysctl_limit {
 	cap_channel_t *chan;
-	nvlist_t *limits;
+	nvlist_t *nv;
 };
 
-void *
+cap_sysctl_limit_t *
 cap_sysctl_limit_init(cap_channel_t *chan)
 {
-	struct cap_sysctl_limit *sysctl_limit;
+	cap_sysctl_limit_t *limit;
+	int error;
 
-	sysctl_limit = malloc(sizeof(*sysctl_limit));
-	if (sysctl_limit != NULL) {
-		sysctl_limit->chan = chan;
-		sysctl_limit->limits = nvlist_create(NV_FLAG_NO_UNIQUE);
-		if (sysctl_limit->limits == NULL) {
-			free(sysctl_limit);
-			sysctl_limit = NULL;
+	limit = malloc(sizeof(*limit));
+	if (limit != NULL) {
+		limit->chan = chan;
+		limit->nv = nvlist_create(NV_FLAG_NO_UNIQUE);
+		if (limit->nv == NULL) {
+			error = errno;
+			free(limit);
+			limit = NULL;
+			errno = error;
 		}
 	}
-	return (sysctl_limit);
+	return (limit);
 }
 
-void *
-cap_sysctl_limit_name(void *_limit, const char *name, int flags)
+cap_sysctl_limit_t *
+cap_sysctl_limit_name(cap_sysctl_limit_t *limit, const char *name, int flags)
 {
-	struct cap_sysctl_limit *sysctl_limit;
-	nvlist_t *limit;
+	nvlist_t *lnv;
 	size_t mibsz;
 	int error, mib[CTL_MAXNAME];
 
-	sysctl_limit = _limit;
-
-	limit = nvlist_create(0);
-	if (limit == NULL) {
+	lnv = nvlist_create(0);
+	if (lnv == NULL) {
 		error = errno;
-		if (sysctl_limit->limits != NULL)
-			nvlist_destroy(sysctl_limit->limits);
-		free(sysctl_limit);
+		if (limit->nv != NULL)
+			nvlist_destroy(limit->nv);
+		free(limit);
 		errno = error;
 		return (NULL);
 	}
-	nvlist_add_string(limit, "name", name);
-	nvlist_add_number(limit, "operation", flags);
+	nvlist_add_string(lnv, "name", name);
+	nvlist_add_number(lnv, "operation", flags);
 
 	mibsz = nitems(mib);
-	error = cap_sysctlnametomib(sysctl_limit->chan, name, mib, &mibsz);
+	error = cap_sysctlnametomib(limit->chan, name, mib, &mibsz);
 	if (error == 0)
-		nvlist_add_binary(limit, "mib", mib, mibsz * sizeof(int));
+		nvlist_add_binary(lnv, "mib", mib, mibsz * sizeof(int));
 
-	nvlist_add_nvlist(sysctl_limit->limits, "limit", limit);
-	return (sysctl_limit);
+	nvlist_move_nvlist(limit->nv, "limit", lnv);
+	return (limit);
 }
 
-void *
-cap_sysctl_limit_mib(void *_limit, int *mibp, u_int miblen, int flags)
+cap_sysctl_limit_t *
+cap_sysctl_limit_mib(cap_sysctl_limit_t *limit, int *mibp, u_int miblen,
+    int flags)
 {
-	struct cap_sysctl_limit *sysctl_limit;
-	nvlist_t *limit;
+	nvlist_t *lnv;
 	int error;
 
-	sysctl_limit = _limit;
-
-	limit = nvlist_create(0);
-	if (limit == NULL) {
+	lnv = nvlist_create(0);
+	if (lnv == NULL) {
 		error = errno;
-		if (sysctl_limit->limits != NULL)
-			nvlist_destroy(sysctl_limit->limits);
-		free(sysctl_limit);
+		if (limit->nv != NULL)
+			nvlist_destroy(limit->nv);
+		free(limit);
 		errno = error;
 		return (NULL);
 	}
-	nvlist_add_binary(limit, "mib", mibp, miblen * sizeof(int));
-	nvlist_add_number(limit, "operation", flags);
-	nvlist_add_nvlist(sysctl_limit->limits, "limit", limit);
-	return (sysctl_limit);
+	nvlist_add_binary(lnv, "mib", mibp, miblen * sizeof(int));
+	nvlist_add_number(lnv, "operation", flags);
+	nvlist_add_nvlist(limit->nv, "limit", lnv);
+	return (limit);
 }
 
 int
-cap_sysctl_limit(void *_limit)
+cap_sysctl_limit(cap_sysctl_limit_t *limit)
 {
-	struct cap_sysctl_limit *sysctl_limit;
 	cap_channel_t *chan;
-	nvlist_t *limits;
+	nvlist_t *lnv;
 
-	sysctl_limit = _limit;
-	chan = sysctl_limit->chan;
-	limits = sysctl_limit->limits;
-	free(sysctl_limit);
+	chan = limit->chan;
+	lnv = limit->nv;
+	free(limit);
 
 	/* cap_limit_set(3) will always free the nvlist. */
-	return (cap_limit_set(chan, limits));
+	return (cap_limit_set(chan, lnv));
 }
 
 /*
@@ -356,12 +352,8 @@ sysctl_allowed(const nvlist_t *limits, const nvlist_t *req)
 	if (limits == NULL)
 		return (true);
 
-	reqmib = NULL;
-	reqname = NULL;
-	if (nvlist_exists_string(req, "name"))
-		reqname = nvlist_get_string(req, "name");
-	else
-		reqmib = nvlist_get_binary(req, "mib", &reqsize);
+	reqmib = dnvlist_get_binary(req, "mib", &reqsize, NULL, 0);
+	reqname = dnvlist_get_string(req, "name", NULL);
 	reqop = nvlist_get_number(req, "operation");
 
 	cookie = NULL;

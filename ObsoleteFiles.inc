@@ -38,6 +38,8 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20181112: cap_sysctl interface change
+OLD_LIBS+=lib/casper/libcap_sysctl.1
 # 20181030: malloc_domain(9) KPI change
 OLD_FILES+=share/man/man9/malloc_domain.9.gz
 # 20181026: joy(4) removal
