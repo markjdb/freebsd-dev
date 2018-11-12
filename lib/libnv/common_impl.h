@@ -34,6 +34,7 @@
 #ifndef	_COMMON_IMPL_H_
 #define	_COMMON_IMPL_H_
 
-#define	fd_is_valid(fd)	(fcntl((fd), F_GETFL) != -1 || errno != EBADF)
+/* dup2(2) does not require any capability rights. */
+#define	fd_is_valid(fd)	(dup2((fd), (fd)) != -1 || errno != EBADF)
 
 #endif	/* !_COMMON_IMPL_H_ */
