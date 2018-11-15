@@ -224,6 +224,7 @@ SYSCTL_UINT(_kern, OID_AUTO, kq_calloutmax, CTLFLAG_RW,
 #define KQ_LOCK(kq) do {						\
 	mtx_lock(&(kq)->kq_lock);					\
 } while (0)
+#define	KQ_LOCKPTR(kq)	(&(kq)->kq_lock)
 #define KQ_FLUX_WAKEUP(kq) do {						\
 	if (((kq)->kq_state & KQ_FLUXWAIT) == KQ_FLUXWAIT) {		\
 		(kq)->kq_state &= ~KQ_FLUXWAIT;				\
@@ -687,8 +688,11 @@ filt_timerexpire(void *knx)
 	struct kq_timer_cb_data *kc;
 
 	kn = knx;
+	KQ_OWNED(kn->kn_kq);
 	kn->kn_data++;
-	KNOTE_ACTIVATE(kn, 0);	/* XXX - handle locking */
+
+	if (!kn_in_flux(kn) || (kn->kn_status & KN_SCAN) != 0)
+		KNOTE_ACTIVATE(kn, 1);
 
 	if ((kn->kn_flags & EV_ONESHOT) != 0)
 		return;
@@ -753,7 +757,7 @@ filt_timerattach(struct knote *kn)
 		kn->kn_flags |= EV_CLEAR;	/* automatically set */
 	kn->kn_status &= ~KN_DETACHED;		/* knlist_add clears it */
 	kn->kn_ptr.p_v = kc = malloc(sizeof(*kc), M_KQUEUE, M_WAITOK);
-	callout_init(&kc->c, 1);
+	callout_init_mtx(&kc->c, KQ_LOCKPTR(kn->kn_kq), 0);
 	filt_timerstart(kn, to);
 
 	return (0);
@@ -772,8 +776,10 @@ filt_timerstart(struct knote *kn, sbintime_t to)
 		kc->next = to + sbinuptime();
 		kc->to = to;
 	}
+	KQ_LOCK(kn->kn_kq);
 	callout_reset_sbt_on(&kc->c, kc->next, 0, filt_timerexpire, kn,
 	    PCPU_GET(cpuid), C_ABSOLUTE);
+	KQ_UNLOCK(kn->kn_kq);
 }
 
 static void
@@ -826,7 +832,6 @@ filt_timertouch(struct knote *kn, struct kevent *kev, u_long type)
 			KQ_LOCK(kq);
 			if (kn->kn_status & KN_QUEUED)
 				knote_dequeue(kn);
-
 			kn->kn_status &= ~KN_ACTIVE;
 			kn->kn_data = 0;
 			KQ_UNLOCK(kq);
@@ -1843,6 +1848,7 @@ retry:
 	}
 
 	TAILQ_INSERT_TAIL(&kq->kq_head, marker, kn_tqe);
+	marker->kn_status |= KN_QUEUED;
 	influx = 0;
 	while (count) {
 		KQ_OWNED(kq);
@@ -1861,8 +1867,10 @@ retry:
 		}
 
 		TAILQ_REMOVE(&kq->kq_head, kn, kn_tqe);
+		KASSERT((kn->kn_status & KN_QUEUED) != 0,
+		    ("knote %p not queued", kn));
+		kn->kn_status &= ~KN_QUEUED;
 		if ((kn->kn_status & KN_DISABLED) == KN_DISABLED) {
-			kn->kn_status &= ~KN_QUEUED;
 			kq->kq_count--;
 			continue;
 		}
@@ -1876,7 +1884,6 @@ retry:
 		    ("knote %p is unexpectedly in flux", kn));
 
 		if ((kn->kn_flags & EV_DROP) == EV_DROP) {
-			kn->kn_status &= ~KN_QUEUED;
 			kn_enter_flux(kn);
 			kq->kq_count--;
 			KQ_UNLOCK(kq);
@@ -1888,7 +1895,6 @@ retry:
 			KQ_LOCK(kq);
 			continue;
 		} else if ((kn->kn_flags & EV_ONESHOT) == EV_ONESHOT) {
-			kn->kn_status &= ~KN_QUEUED;
 			kn_enter_flux(kn);
 			kq->kq_count--;
 			KQ_UNLOCK(kq);
@@ -1910,8 +1916,8 @@ retry:
 			if (kn->kn_fop->f_event(kn, 0) == 0) {
 				KQ_LOCK(kq);
 				KQ_GLOBAL_UNLOCK(&kq_global, haskqglobal);
-				kn->kn_status &= ~(KN_QUEUED | KN_ACTIVE |
-				    KN_SCAN);
+				/* XXXMJ races with EVFILT_TIMER activation. */
+				kn->kn_status &= ~(KN_ACTIVE | KN_SCAN);
 				kn_leave_flux(kn);
 				kq->kq_count--;
 				kn_list_unlock(knl);
@@ -1937,11 +1943,13 @@ retry:
 				}
 				if (kn->kn_flags & EV_DISPATCH)
 					kn->kn_status |= KN_DISABLED;
-				kn->kn_status &= ~(KN_QUEUED | KN_ACTIVE);
+				kn->kn_status &= ~KN_ACTIVE;
 				kq->kq_count--;
-			} else
+			} else if ((kn->kn_status & KN_QUEUED) == 0) {
+				kn->kn_status |= KN_QUEUED;
 				TAILQ_INSERT_TAIL(&kq->kq_head, kn, kn_tqe);
-			
+			}
+
 			kn->kn_status &= ~KN_SCAN;
 			kn_leave_flux(kn);
 			kn_list_unlock(knl);
