@@ -87,7 +87,7 @@ static struct dadq *nd6_dad_find(struct ifaddr *, struct nd_opt_nonce *);
 static void nd6_dad_add(struct dadq *dp);
 static void nd6_dad_del(struct dadq *dp);
 static void nd6_dad_rele(struct dadq *);
-static void nd6_dad_starttimer(struct dadq *, int, int);
+static void nd6_dad_starttimer(struct dadq *, int);
 static void nd6_dad_stoptimer(struct dadq *);
 static void nd6_dad_timer(struct dadq *);
 static void nd6_dad_duplicated(struct ifaddr *, struct dadq *);
@@ -1125,19 +1125,36 @@ VNET_DEFINE_STATIC(struct rwlock, dad_rwlock);
 #define	V_dadq			VNET(dadq)
 #define	V_dad_rwlock		VNET(dad_rwlock)
 
-#define	DADQ_RLOCK()		rw_rlock(&V_dad_rwlock)	
-#define	DADQ_RUNLOCK()		rw_runlock(&V_dad_rwlock)	
-#define	DADQ_WLOCK()		rw_wlock(&V_dad_rwlock)	
-#define	DADQ_WUNLOCK()		rw_wunlock(&V_dad_rwlock)	
+#define	DADQ_RLOCK()		rw_rlock(&V_dad_rwlock)
+#define	DADQ_RUNLOCK()		rw_runlock(&V_dad_rwlock)
+#define	DADQ_WLOCK()		rw_wlock(&V_dad_rwlock)
+#define	DADQ_WUNLOCK()		rw_wunlock(&V_dad_rwlock)
+#define	DADQ_RLOCK_ASSERT()	rw_assert(&V_dad_rwlock, RA_RLOCKED)
+#define	DADQ_WLOCK_ASSERT()	rw_assert(&V_dad_rwlock, RA_WLOCKED)
+#define	DADQ_LOCK_ASSERT()	rw_assert(&V_dad_rwlock, RA_LOCKED)
 
 static void
 nd6_dad_add(struct dadq *dp)
 {
 
-	DADQ_WLOCK();
+	DADQ_WLOCK_ASSERT();
+	KASSERT(!dp->dad_ondadq, ("dp %p already on DAD queue", dp));
+
 	TAILQ_INSERT_TAIL(&V_dadq, dp, dad_list);
 	dp->dad_ondadq = true;
-	DADQ_WUNLOCK();
+}
+
+static void
+nd6_dad_del_locked(struct dadq *dp)
+{
+
+	DADQ_WLOCK_ASSERT();
+
+	if (dp->dad_ondadq) {
+		TAILQ_REMOVE(&V_dadq, dp, dad_list);
+		dp->dad_ondadq = false;
+		nd6_dad_rele(dp);
+	}
 }
 
 static void
@@ -1145,17 +1162,8 @@ nd6_dad_del(struct dadq *dp)
 {
 
 	DADQ_WLOCK();
-	if (dp->dad_ondadq) {
-		/*
-		 * Remove dp from the dadq and release the dadq's
-		 * reference.
-		 */
-		TAILQ_REMOVE(&V_dadq, dp, dad_list);
-		dp->dad_ondadq = false;
-		DADQ_WUNLOCK();
-		nd6_dad_rele(dp);
-	} else
-		DADQ_WUNLOCK();
+	nd6_dad_del_locked(dp);
+	DADQ_WUNLOCK();
 }
 
 static struct dadq *
@@ -1188,13 +1196,13 @@ nd6_dad_find(struct ifaddr *ifa, struct nd_opt_nonce *n)
 }
 
 static void
-nd6_dad_starttimer(struct dadq *dp, int ticks, int send_ns)
+nd6_dad_starttimer(struct dadq *dp, int ticks)
 {
 
-	if (send_ns != 0)
-		nd6_dad_ns_output(dp);
+	DADQ_WLOCK_ASSERT();
+
 	callout_reset(&dp->dad_timer_ch, ticks,
-	    (void (*)(void *))nd6_dad_timer, (void *)dp);
+	    (void (*)(void *))nd6_dad_timer, dp);
 }
 
 static void
@@ -1209,6 +1217,7 @@ nd6_dad_rele(struct dadq *dp)
 {
 
 	if (refcount_release(&dp->dad_refcnt)) {
+		KASSERT(!dp->dad_ondadq, ("dp %p still on DAD queue", dp));
 		ifa_free(dp->dad_ifa);
 		free(dp, M_IP6NDP);
 	}
@@ -1269,7 +1278,8 @@ nd6_dad_start(struct ifaddr *ifa, int delay)
 			ifa->ifa_ifp ? if_name(ifa->ifa_ifp) : "???");
 		return;
 	}
-	callout_init(&dp->dad_timer_ch, 0);
+	callout_init_rw(&dp->dad_timer_ch, &V_dad_rwlock,
+	    CALLOUT_RETURNUNLOCKED);
 #ifdef VIMAGE
 	dp->dad_vnet = curvnet;
 #endif
@@ -1291,8 +1301,10 @@ nd6_dad_start(struct ifaddr *ifa, int delay)
 
 	/* Add this to the dadq and add a reference for the dadq. */
 	refcount_init(&dp->dad_refcnt, 1);
+	DADQ_WLOCK();
 	nd6_dad_add(dp);
-	nd6_dad_starttimer(dp, delay, 0);
+	nd6_dad_starttimer(dp, delay);
+	DADQ_WUNLOCK();
 }
 
 /*
@@ -1325,6 +1337,7 @@ nd6_dad_timer(struct dadq *dp)
 	struct in6_ifaddr *ia = (struct in6_ifaddr *)ifa;
 	char ip6buf[INET6_ADDRSTRLEN];
 
+	DADQ_WLOCK_ASSERT();
 	KASSERT(ia != NULL, ("DAD entry %p with no address", dp));
 
 	if (ND_IFINFO(ifp)->flags & ND6_IFF_IFDISABLED) {
@@ -1364,7 +1377,9 @@ nd6_dad_timer(struct dadq *dp)
 		 * We have more NS to go.  Send NS packet for DAD.
 		 */
 		nd6_dad_starttimer(dp,
-		    (long)ND_IFINFO(ifa->ifa_ifp)->retrans * hz / 1000, 1);
+		    (long)ND_IFINFO(ifa->ifa_ifp)->retrans * hz / 1000);
+		nd6_dad_ns_output(dp);
+		/* DAD queue has been unlocked. */
 		goto done;
 	} else {
 		/*
@@ -1395,8 +1410,9 @@ nd6_dad_timer(struct dadq *dp)
 			dp->dad_count =
 			    dp->dad_ns_ocount + V_nd6_mmaxtries - 1;
 			nd6_dad_starttimer(dp,
-			    (long)ND_IFINFO(ifa->ifa_ifp)->retrans * hz / 1000,
-			    1);
+			    (long)ND_IFINFO(ifa->ifa_ifp)->retrans * hz / 1000);
+			nd6_dad_ns_output(dp);
+			/* DAD queue has been unlocked. */
 			goto done;
 		} else {
 			/*
@@ -1421,7 +1437,8 @@ nd6_dad_timer(struct dadq *dp)
 		}
 	}
 err:
-	nd6_dad_del(dp);
+	nd6_dad_del_locked(dp);
+	DADQ_WUNLOCK();
 done:
 	CURVNET_RESTORE();
 }
@@ -1487,11 +1504,15 @@ nd6_dad_ns_output(struct dadq *dp)
 	struct ifnet *ifp = dp->dad_ifa->ifa_ifp;
 	int i;
 
+	DADQ_WLOCK_ASSERT();
+
 	dp->dad_ns_tcount++;
 	if ((ifp->if_flags & IFF_UP) == 0) {
+		DADQ_WUNLOCK();
 		return;
 	}
 	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0) {
+		DADQ_WUNLOCK();
 		return;
 	}
 
@@ -1508,6 +1529,7 @@ nd6_dad_ns_output(struct dadq *dp)
 		 * should work well in almost all cases.
 		 */
 	}
+	DADQ_WUNLOCK();
 	nd6_ns_output(ifp, NULL, NULL, &ia->ia_addr.sin6_addr,
 	    (uint8_t *)&dp->dad_nonce[0]);
 }
