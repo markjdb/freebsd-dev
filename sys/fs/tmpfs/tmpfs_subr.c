@@ -1110,18 +1110,20 @@ tmpfs_dir_destroy(struct tmpfs_mount *tmp, struct tmpfs_node *dnode)
 static int
 tmpfs_dir_getdotdent(struct tmpfs_node *node, struct uio *uio)
 {
-	int error;
 	struct dirent dent;
+	int error;
+	u_short reclen;
 
 	TMPFS_VALIDATE_DIR(node);
 	MPASS(uio->uio_offset == TMPFS_DIRCOOKIE_DOT);
 
+	reclen = _GENERIC_DIRLEN(1);
+	memset(&dent, 0, reclen);
 	dent.d_fileno = node->tn_id;
 	dent.d_type = DT_DIR;
 	dent.d_namlen = 1;
 	dent.d_name[0] = '.';
-	dent.d_name[1] = '\0';
-	dent.d_reclen = GENERIC_DIRSIZ(&dent);
+	dent.d_reclen = reclen;
 
 	if (dent.d_reclen > uio->uio_resid)
 		error = EJUSTRETURN;
@@ -1143,8 +1145,9 @@ tmpfs_dir_getdotdent(struct tmpfs_node *node, struct uio *uio)
 static int
 tmpfs_dir_getdotdotdent(struct tmpfs_node *node, struct uio *uio)
 {
-	int error;
 	struct dirent dent;
+	int error;
+	u_short reclen;
 
 	TMPFS_VALIDATE_DIR(node);
 	MPASS(uio->uio_offset == TMPFS_DIRCOOKIE_DOTDOT);
@@ -1160,12 +1163,13 @@ tmpfs_dir_getdotdotdent(struct tmpfs_node *node, struct uio *uio)
 	dent.d_fileno = node->tn_dir.tn_parent->tn_id;
 	TMPFS_NODE_UNLOCK(node->tn_dir.tn_parent);
 
+	reclen = _GENERIC_DIRLEN(2);
+	memset(&dent, 0, reclen);
 	dent.d_type = DT_DIR;
 	dent.d_namlen = 2;
 	dent.d_name[0] = '.';
 	dent.d_name[1] = '.';
-	dent.d_name[2] = '\0';
-	dent.d_reclen = GENERIC_DIRSIZ(&dent);
+	dent.d_reclen = reclen;
 
 	if (dent.d_reclen > uio->uio_resid)
 		error = EJUSTRETURN;
@@ -1188,6 +1192,7 @@ int
 tmpfs_dir_getdents(struct tmpfs_node *node, struct uio *uio, int maxcookies,
     u_long *cookies, int *ncookies)
 {
+	struct dirent d;
 	struct tmpfs_dir_cursor dc;
 	struct tmpfs_dirent *de;
 	off_t off;
@@ -1238,9 +1243,8 @@ tmpfs_dir_getdents(struct tmpfs_node *node, struct uio *uio, int maxcookies,
 
 	/* Read as much entries as possible; i.e., until we reach the end of
 	 * the directory or we exhaust uio space. */
+	memset(&d, 0, sizeof(d));
 	do {
-		struct dirent d;
-
 		/* Create a dirent structure representing the current
 		 * tmpfs_node and fill it. */
 		if (de->td_node == NULL) {

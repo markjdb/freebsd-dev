@@ -1414,6 +1414,7 @@ mqfs_readdir(struct vop_readdir_args *ap)
 	pr_root = ap->a_cred->cr_prison->pr_root;
 	sx_xlock(&mi->mi_lock);
 
+	bzero(&entry, sizeof(entry));
 	LIST_FOREACH(pn, &pd->mn_children, mn_sibling) {
 		entry.d_reclen = sizeof(entry);
 

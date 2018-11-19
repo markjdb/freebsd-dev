@@ -259,10 +259,10 @@ sfs_readdir_common(uint64_t parent_id, uint64_t id, struct vop_readdir_args *ap,
 	if (uio->uio_offset < 0)
 		return (SET_ERROR(EINVAL));
 	if (uio->uio_offset == 0) {
+		bzero(&entry, sizeof(entry));
 		entry.d_fileno = id;
 		entry.d_type = DT_DIR;
 		entry.d_name[0] = '.';
-		entry.d_name[1] = '\0';
 		entry.d_namlen = 1;
 		entry.d_reclen = sizeof(entry);
 		error = vfs_read_dirent(ap, &entry, uio->uio_offset);
@@ -273,11 +273,11 @@ sfs_readdir_common(uint64_t parent_id, uint64_t id, struct vop_readdir_args *ap,
 	if (uio->uio_offset < sizeof(entry))
 		return (SET_ERROR(EINVAL));
 	if (uio->uio_offset == sizeof(entry)) {
+		bzero(&entry, sizeof(entry));
 		entry.d_fileno = parent_id;
 		entry.d_type = DT_DIR;
 		entry.d_name[0] = '.';
 		entry.d_name[1] = '.';
-		entry.d_name[2] = '\0';
 		entry.d_namlen = 2;
 		entry.d_reclen = sizeof(entry);
 		error = vfs_read_dirent(ap, &entry, uio->uio_offset);
@@ -689,6 +689,7 @@ zfsctl_root_readdir(ap)
 		return (SET_ERROR(EINVAL));
 
 	CTASSERT(sizeof(node->snapdir->sn_name) <= sizeof(entry.d_name));
+	bzero(&entry, sizeof(entry));
 	entry.d_fileno = node->snapdir->sn_id;
 	entry.d_type = DT_DIR;
 	strcpy(entry.d_name, node->snapdir->sn_name);
@@ -1092,6 +1093,7 @@ zfsctl_snapdir_readdir(ap)
 			return (error);
 		}
 
+		bzero(&entry, sizeof(entry));
 		entry.d_fileno = id;
 		entry.d_type = DT_DIR;
 		strcpy(entry.d_name, snapname);

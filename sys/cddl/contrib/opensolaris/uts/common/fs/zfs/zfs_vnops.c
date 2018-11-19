@@ -2394,6 +2394,7 @@ zfs_readdir(vnode_t *vp, uio_t *uio, cred_t *cr, int *eofp, int *ncookies, u_lon
 	if (uio->uio_segflg != UIO_SYSSPACE || uio->uio_iovcnt != 1) {
 		bufsize = bytes_wanted;
 		outbuf = kmem_alloc(bufsize, KM_SLEEP);
+		bzero(outbuf, bufsize);
 		odp = (struct dirent64 *)outbuf;
 	} else {
 		bufsize = bytes_wanted;
