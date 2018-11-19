@@ -2154,6 +2154,7 @@ tcp_pcblist(SYSCTL_HANDLER_ARGS)
 	if (error != 0)
 		return (error);
 
+	bzero(&xig, sizeof(xig));
 	xig.xig_len = sizeof xig;
 	xig.xig_count = n + m;
 	xig.xig_gen = gencnt;
@@ -3215,8 +3216,8 @@ tcp_inptoxtp(const struct inpcb *inp, struct xtcpcb *xt)
 	struct tcpcb *tp = intotcpcb(inp);
 	sbintime_t now;
 
+	bzero(xt, sizeof(*xt));
 	if (inp->inp_flags & INP_TIMEWAIT) {
-		bzero(xt, sizeof(struct xtcpcb));
 		xt->t_state = TCPS_TIME_WAIT;
 	} else {
 		xt->t_state = tp->t_state;
@@ -3244,7 +3245,6 @@ tcp_inptoxtp(const struct inpcb *inp, struct xtcpcb *xt)
 
 		bcopy(tp->t_fb->tfb_tcp_block_name, xt->xt_stack,
 		    TCP_FUNCTION_NAME_LEN_MAX);
-		bzero(xt->xt_logid, TCP_LOG_ID_LEN);
 #ifdef TCP_BLACKBOX
 		(void)tcp_log_get_id(tp, xt->xt_logid);
 #endif
