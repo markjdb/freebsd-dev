@@ -545,12 +545,12 @@ fdesc_readdir(struct vop_readdir_args *ap)
 	if (off != uio->uio_offset || off < 0 || (u_int)off % UIO_MX != 0 ||
 	    uio->uio_resid < UIO_MX)
 		return (EINVAL);
+
+	bzero(&d, sizeof(d));
 	i = (u_int)off / UIO_MX;
 	fdp = uio->uio_td->td_proc->p_fd;
 	error = 0;
-
 	fcnt = i - 2;		/* The first two nodes are `.' and `..' */
-
 	FILEDESC_SLOCK(fdp);
 	while (i < fdp->fd_nfiles + 2 && uio->uio_resid >= UIO_MX) {
 		bzero((caddr_t)dp, UIO_MX);

@@ -2173,6 +2173,7 @@ ufs_readdir(ap)
 		ncookies = 0;
 		cookies = NULL;
 	}
+	bzero(&dstdp, sizeof(dstdp));
 	offset = startoffset = uio->uio_offset;
 	startresid = uio->uio_resid;
 	error = 0;

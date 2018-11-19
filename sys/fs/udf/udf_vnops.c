@@ -821,6 +821,7 @@ udf_readdir(struct vop_readdir_args *a)
 	ds = udf_opendir(node, uio->uio_offset, le64toh(node->fentry->inf_len),
 	    node->udfmp);
 
+	bzero(&dir, sizeof(dir));
 	while ((fid = udf_getfid(ds)) != NULL) {
 
 		/* XXX Should we return an error on a bad fid? */

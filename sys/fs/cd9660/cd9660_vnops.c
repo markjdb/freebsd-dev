@@ -489,8 +489,7 @@ cd9660_readdir(ap)
 	imp = dp->i_mnt;
 	bmask = imp->im_bmask;
 
-	idp = malloc(sizeof(*idp), M_TEMP, M_WAITOK);
-	idp->saveent.d_namlen = idp->assocent.d_namlen = 0;
+	idp = malloc(sizeof(*idp), M_TEMP, M_WAITOK | M_ZERO);
 	/*
 	 * XXX
 	 * Is it worth trying to figure out the type?
