@@ -171,6 +171,7 @@ ext2_readdir(struct vop_readdir_args *ap)
 		ncookies = 0;
 		cookies = NULL;
 	}
+	bzero(&dstdp, sizeof(dstdp));
 	offset = startoffset = uio->uio_offset;
 	startresid = uio->uio_resid;
 	error = 0;

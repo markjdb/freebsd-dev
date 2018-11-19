@@ -2845,6 +2845,7 @@ nfsrpc_readdir(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 	nfsattrbit_t attrbits, dattrbits;
 	u_int32_t rderr, *tl2 = NULL;
 	size_t tresid;
+	u_short reclen;
 
 	KASSERT(uiop->uio_iovcnt == 1 &&
 	    (uio_uio_resid(uiop) & (DIRBLKSIZ - 1)) == 0,
@@ -2959,13 +2960,13 @@ nfsrpc_readdir(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 			    return (error);
 			nd->nd_mrep = NULL;
 			dp = (struct dirent *)uio_iov_base(uiop);
-			dp->d_off = 0;
+			reclen = _GENERIC_DIRLEN(1) + NFSX_HYPER;
+			bzero(dp, reclen);
 			dp->d_type = DT_DIR;
 			dp->d_fileno = dotfileid;
 			dp->d_namlen = 1;
-			*((uint64_t *)dp->d_name) = 0;	/* Zero pad it. */
 			dp->d_name[0] = '.';
-			dp->d_reclen = _GENERIC_DIRSIZ(dp) + NFSX_HYPER;
+			dp->d_reclen = reclen;
 			/*
 			 * Just make these offset cookie 0.
 			 */
@@ -2978,14 +2979,14 @@ nfsrpc_readdir(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 			uio_iov_base_add(uiop, dp->d_reclen);
 			uio_iov_len_add(uiop, -(dp->d_reclen));
 			dp = (struct dirent *)uio_iov_base(uiop);
-			dp->d_off = 0;
+			reclen = _GENERIC_DIRLEN(2) + NFSX_HYPER;
+			bzero(dp, reclen);
 			dp->d_type = DT_DIR;
 			dp->d_fileno = dotdotfileid;
 			dp->d_namlen = 2;
-			*((uint64_t *)dp->d_name) = 0;
 			dp->d_name[0] = '.';
 			dp->d_name[1] = '.';
-			dp->d_reclen = _GENERIC_DIRSIZ(dp) + NFSX_HYPER;
+			dp->d_reclen = reclen;
 			/*
 			 * Just make these offset cookie 0.
 			 */
@@ -3086,11 +3087,11 @@ nfsrpc_readdir(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 				error = EBADRPC;
 				goto nfsmout;
 			}
-			tlen = roundup2(len, 8);
-			if (tlen == len)
-				tlen += 8;  /* To ensure null termination. */
 			left = DIRBLKSIZ - blksiz;
-			if (_GENERIC_DIRLEN(len) + NFSX_HYPER > left) {
+			reclen = _GENERIC_DIRLEN(len) + NFSX_HYPER;
+			tlen = roundup2(len + 1, 8);
+			if (reclen > left) {
+				bzero((uint8_t *)dp + dp->d_reclen, left);
 				dp->d_reclen += left;
 				uio_iov_base_add(uiop, left);
 				uio_iov_len_add(uiop, -(left));
@@ -3098,15 +3099,13 @@ nfsrpc_readdir(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 				uiop->uio_offset += left;
 				blksiz = 0;
 			}
-			if (_GENERIC_DIRLEN(len) + NFSX_HYPER >
-			    uio_uio_resid(uiop))
+			if (reclen > uio_uio_resid(uiop))
 				bigenough = 0;
 			if (bigenough) {
 				dp = (struct dirent *)uio_iov_base(uiop);
-				dp->d_off = 0;
+				bzero(dp, reclen);
 				dp->d_namlen = len;
-				dp->d_reclen = _GENERIC_DIRLEN(len) +
-				    NFSX_HYPER;
+				dp->d_reclen = reclen;
 				dp->d_type = DT_UNKNOWN;
 				blksiz += dp->d_reclen;
 				if (blksiz == DIRBLKSIZ)
@@ -3208,6 +3207,7 @@ nfsrpc_readdir(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 	 */
 	if (blksiz > 0) {
 		left = DIRBLKSIZ - blksiz;
+		bzero((uint8_t *)dp + dp->d_reclen, left);
 		dp->d_reclen += left;
 		uio_iov_base_add(uiop, left);
 		uio_iov_len_add(uiop, -(left));
@@ -3235,10 +3235,8 @@ nfsrpc_readdir(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 	 */
 	while (uio_uio_resid(uiop) > 0 && uio_uio_resid(uiop) != tresid) {
 		dp = (struct dirent *)uio_iov_base(uiop);
+		bzero(dp, DIRBLKSIZ);
 		dp->d_type = DT_UNKNOWN;
-		dp->d_fileno = 0;
-		dp->d_namlen = 0;
-		dp->d_name[0] = '\0';
 		tl = (u_int32_t *)&dp->d_name[4];
 		*tl++ = cookie.lval[0];
 		*tl = cookie.lval[1];
@@ -3288,6 +3286,7 @@ nfsrpc_readdirplus(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 	size_t tresid;
 	u_int32_t *tl2 = NULL, rderr;
 	struct timespec dctime;
+	u_short reclen;
 
 	KASSERT(uiop->uio_iovcnt == 1 &&
 	    (uio_uio_resid(uiop) & (DIRBLKSIZ - 1)) == 0,
@@ -3393,13 +3392,13 @@ nfsrpc_readdirplus(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 			    return (error);
 			nd->nd_mrep = NULL;
 			dp = (struct dirent *)uio_iov_base(uiop);
-			dp->d_off = 0;
+			reclen = _GENERIC_DIRSIZ(dp) + NFSX_HYPER;
+			bzero(dp, reclen);
 			dp->d_type = DT_DIR;
 			dp->d_fileno = dotfileid;
 			dp->d_namlen = 1;
-			*((uint64_t *)dp->d_name) = 0;	/* Zero pad it. */
 			dp->d_name[0] = '.';
-			dp->d_reclen = _GENERIC_DIRSIZ(dp) + NFSX_HYPER;
+			dp->d_reclen = reclen;
 			/*
 			 * Just make these offset cookie 0.
 			 */
@@ -3412,14 +3411,14 @@ nfsrpc_readdirplus(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 			uio_iov_base_add(uiop, dp->d_reclen);
 			uio_iov_len_add(uiop, -(dp->d_reclen));
 			dp = (struct dirent *)uio_iov_base(uiop);
-			dp->d_off = 0;
+			reclen = _GENERIC_DIRLEN(2) + NFSX_HYPER;
+			bzero(dp, reclen);
 			dp->d_type = DT_DIR;
 			dp->d_fileno = dotdotfileid;
 			dp->d_namlen = 2;
-			*((uint64_t *)dp->d_name) = 0;
 			dp->d_name[0] = '.';
 			dp->d_name[1] = '.';
-			dp->d_reclen = _GENERIC_DIRSIZ(dp) + NFSX_HYPER;
+			dp->d_reclen = reclen;
 			/*
 			 * Just make these offset cookie 0.
 			 */
@@ -3501,11 +3500,11 @@ nfsrpc_readdirplus(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 				error = EBADRPC;
 				goto nfsmout;
 			}
-			tlen = roundup2(len, 8);
-			if (tlen == len)
-				tlen += 8;  /* To ensure null termination. */
 			left = DIRBLKSIZ - blksiz;
-			if (_GENERIC_DIRLEN(len) + NFSX_HYPER > left) {
+			reclen = _GENERIC_DIRLEN(len) + NFSX_HYPER;
+			tlen = roundup2(len + 1, 8);
+			if (reclen > left) {
+				bzero((uint8_t *)dp + dp->d_reclen, left);
 				dp->d_reclen += left;
 				uio_iov_base_add(uiop, left);
 				uio_iov_len_add(uiop, -(left));
@@ -3513,15 +3512,13 @@ nfsrpc_readdirplus(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 				uiop->uio_offset += left;
 				blksiz = 0;
 			}
-			if (_GENERIC_DIRLEN(len) + NFSX_HYPER >
-			    uio_uio_resid(uiop))
+			if (reclen > uio_uio_resid(uiop))
 				bigenough = 0;
 			if (bigenough) {
 				dp = (struct dirent *)uio_iov_base(uiop);
-				dp->d_off = 0;
+				bzero(dp, reclen);
 				dp->d_namlen = len;
-				dp->d_reclen = _GENERIC_DIRLEN(len) +
-				    NFSX_HYPER;
+				dp->d_reclen = reclen;
 				dp->d_type = DT_UNKNOWN;
 				blksiz += dp->d_reclen;
 				if (blksiz == DIRBLKSIZ)
@@ -3708,6 +3705,7 @@ nfsrpc_readdirplus(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 	 */
 	if (blksiz > 0) {
 		left = DIRBLKSIZ - blksiz;
+		bzero((char *)dp + dp->d_reclen, left);
 		dp->d_reclen += left;
 		uio_iov_base_add(uiop, left);
 		uio_iov_len_add(uiop, -(left));
@@ -3735,10 +3733,8 @@ nfsrpc_readdirplus(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 	 */
 	while (uio_uio_resid(uiop) > 0 && uio_uio_resid(uiop) != tresid) {
 		dp = (struct dirent *)uio_iov_base(uiop);
+		bzero(dp, DIRBLKSIZ);
 		dp->d_type = DT_UNKNOWN;
-		dp->d_fileno = 0;
-		dp->d_namlen = 0;
-		dp->d_name[0] = '\0';
 		tl = (u_int32_t *)&dp->d_name[4];
 		*tl++ = cookie.lval[0];
 		*tl = cookie.lval[1];

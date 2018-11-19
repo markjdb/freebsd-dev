@@ -354,13 +354,11 @@ autofs_readdir_one(struct uio *uio, const char *name, int fileno,
     size_t *reclenp)
 {
 	struct dirent dirent;
-	size_t namlen, padded_namlen, reclen;
+	size_t namlen, reclen;
 	int error;
 
 	namlen = strlen(name);
-	padded_namlen = roundup2(namlen + 1, __alignof(struct dirent));
-	KASSERT(padded_namlen <= MAXNAMLEN, ("%zd > MAXNAMLEN", padded_namlen));
-	reclen = offsetof(struct dirent, d_name) + padded_namlen;
+	reclen = _GENERIC_DIRLEN(namlen);
 
 	if (reclenp != NULL)
 		*reclenp = reclen;
@@ -371,12 +369,12 @@ autofs_readdir_one(struct uio *uio, const char *name, int fileno,
 	if (uio->uio_resid < reclen)
 		return (EINVAL);
 
+	memset(&dirent, 0, reclen);
 	dirent.d_fileno = fileno;
 	dirent.d_reclen = reclen;
 	dirent.d_type = DT_DIR;
 	dirent.d_namlen = namlen;
 	memcpy(dirent.d_name, name, namlen);
-	memset(dirent.d_name + namlen, 0, padded_namlen - namlen);
 	error = uiomove(&dirent, reclen, uio);
 
 	return (error);
