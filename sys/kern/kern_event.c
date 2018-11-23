@@ -574,6 +574,7 @@ knote_fork(struct knlist *list, int pid)
 		 * notification since both NOTE_CHILD and NOTE_EXIT are defined
 		 * to use the data field (in conflicting ways).
 		 */
+		memset(&kev, 0, sizeof(kev));
 		kev.ident = pid;
 		kev.filter = kn->kn_filter;
 		kev.flags = kn->kn_flags | EV_ADD | EV_ENABLE | EV_ONESHOT |
@@ -589,6 +590,7 @@ knote_fork(struct knlist *list, int pid)
 		 * Then register another knote to track other potential events
 		 * from the new process.
 		 */
+		memset(&kev, 0, sizeof(kev));
 		kev.ident = pid;
 		kev.filter = kn->kn_filter;
 		kev.flags = kn->kn_flags | EV_ADD | EV_ENABLE | EV_FLAG1;
