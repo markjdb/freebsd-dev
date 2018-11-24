@@ -1510,13 +1510,13 @@ efx_bootcfg_copy_sector(
 extern				efx_rc_t
 efx_bootcfg_read(
 	__in			efx_nic_t *enp,
-	__out_bcount(size)	caddr_t data,
+	__out_bcount(size)	uint8_t *data,
 	__in			size_t size);
 
 extern				efx_rc_t
 efx_bootcfg_write(
 	__in			efx_nic_t *enp,
-	__in_bcount(size)	caddr_t data,
+	__in_bcount(size)	uint8_t *data,
 	__in			size_t size);
 
 #endif	/* EFSYS_OPT_BOOTCFG */
@@ -2006,14 +2006,25 @@ efx_pseudo_hdr_pkt_length_get(
 
 typedef enum efx_rxq_type_e {
 	EFX_RXQ_TYPE_DEFAULT,
-	EFX_RXQ_TYPE_SCATTER,
-	EFX_RXQ_TYPE_PACKED_STREAM_1M,
-	EFX_RXQ_TYPE_PACKED_STREAM_512K,
-	EFX_RXQ_TYPE_PACKED_STREAM_256K,
-	EFX_RXQ_TYPE_PACKED_STREAM_128K,
-	EFX_RXQ_TYPE_PACKED_STREAM_64K,
+	EFX_RXQ_TYPE_PACKED_STREAM,
 	EFX_RXQ_NTYPES
 } efx_rxq_type_t;
+
+/*
+ * Dummy flag to be used instead of 0 to make it clear that the argument
+ * is receive queue flags.
+ */
+#define	EFX_RXQ_FLAG_NONE		0x0
+#define	EFX_RXQ_FLAG_SCATTER		0x1
+/*
+ * If tunnels are supported and Rx event can provide information about
+ * either outer or inner packet classes (e.g. SFN8xxx adapters with
+ * full-feature firmware variant running), outer classes are requested by
+ * default. However, if the driver supports tunnels, the flag allows to
+ * request inner classes which are required to be able to interpret inner
+ * Rx checksum offload results.
+ */
+#define	EFX_RXQ_FLAG_INNER_CLASSES	0x2
 
 extern	__checkReturn	efx_rc_t
 efx_rx_qcreate(
@@ -2024,8 +2035,30 @@ efx_rx_qcreate(
 	__in		efsys_mem_t *esmp,
 	__in		size_t ndescs,
 	__in		uint32_t id,
+	__in		unsigned int flags,
 	__in		efx_evq_t *eep,
 	__deref_out	efx_rxq_t **erpp);
+
+#if EFSYS_OPT_RX_PACKED_STREAM
+
+#define	EFX_RXQ_PACKED_STREAM_BUF_SIZE_1M	(1U * 1024 * 1024)
+#define	EFX_RXQ_PACKED_STREAM_BUF_SIZE_512K	(512U * 1024)
+#define	EFX_RXQ_PACKED_STREAM_BUF_SIZE_256K	(256U * 1024)
+#define	EFX_RXQ_PACKED_STREAM_BUF_SIZE_128K	(128U * 1024)
+#define	EFX_RXQ_PACKED_STREAM_BUF_SIZE_64K	(64U * 1024)
+
+extern	__checkReturn	efx_rc_t
+efx_rx_qcreate_packed_stream(
+	__in		efx_nic_t *enp,
+	__in		unsigned int index,
+	__in		unsigned int label,
+	__in		uint32_t ps_buf_size,
+	__in		efsys_mem_t *esmp,
+	__in		size_t ndescs,
+	__in		efx_evq_t *eep,
+	__deref_out	efx_rxq_t **erpp);
+
+#endif
 
 typedef struct efx_buffer_s {
 	efsys_dma_addr_t	eb_addr;
@@ -2276,35 +2309,43 @@ efx_tx_qdestroy(
 /* Filter is for TX */
 #define	EFX_FILTER_FLAG_TX		0x10
 
-typedef unsigned int efx_filter_flags_t;
+typedef uint8_t efx_filter_flags_t;
 
 /*
  * Flags which specify the fields to match on. The values are the same as in the
  * MC_CMD_FILTER_OP/MC_CMD_FILTER_OP_EXT commands.
  */
-typedef enum efx_filter_match_flags_e {
-	EFX_FILTER_MATCH_REM_HOST = 0x0001,	/* Match by remote IP host
-						 * address */
-	EFX_FILTER_MATCH_LOC_HOST = 0x0002,	/* Match by local IP host
-						 * address */
-	EFX_FILTER_MATCH_REM_MAC = 0x0004,	/* Match by remote MAC address */
-	EFX_FILTER_MATCH_REM_PORT = 0x0008,	/* Match by remote TCP/UDP port */
-	EFX_FILTER_MATCH_LOC_MAC = 0x0010,	/* Match by remote TCP/UDP port */
-	EFX_FILTER_MATCH_LOC_PORT = 0x0020,	/* Match by local TCP/UDP port */
-	EFX_FILTER_MATCH_ETHER_TYPE = 0x0040,	/* Match by Ether-type */
-	EFX_FILTER_MATCH_INNER_VID = 0x0080,	/* Match by inner VLAN ID */
-	EFX_FILTER_MATCH_OUTER_VID = 0x0100,	/* Match by outer VLAN ID */
-	EFX_FILTER_MATCH_IP_PROTO = 0x0200,	/* Match by IP transport
-						 * protocol */
-	/* For encapsulated packets, match all multicast inner frames */
-	EFX_FILTER_MATCH_IFRM_UNKNOWN_MCAST_DST = 0x01000000,
-	/* For encapsulated packets, match all unicast inner frames */
-	EFX_FILTER_MATCH_IFRM_UNKNOWN_UCAST_DST = 0x02000000,
-	/* Match otherwise-unmatched multicast and broadcast packets */
-	EFX_FILTER_MATCH_UNKNOWN_MCAST_DST = 0x40000000,
-	/* Match otherwise-unmatched unicast packets */
-	EFX_FILTER_MATCH_UNKNOWN_UCAST_DST = 0x80000000,
-} efx_filter_match_flags_t;
+
+/* Match by remote IP host address */
+#define	EFX_FILTER_MATCH_REM_HOST		0x00000001
+/* Match by local IP host address */
+#define	EFX_FILTER_MATCH_LOC_HOST		0x00000002
+/* Match by remote MAC address */
+#define	EFX_FILTER_MATCH_REM_MAC		0x00000004
+/* Match by remote TCP/UDP port */
+#define	EFX_FILTER_MATCH_REM_PORT		0x00000008
+/* Match by remote TCP/UDP port */
+#define	EFX_FILTER_MATCH_LOC_MAC		0x00000010
+/* Match by local TCP/UDP port */
+#define	EFX_FILTER_MATCH_LOC_PORT		0x00000020
+/* Match by Ether-type */
+#define	EFX_FILTER_MATCH_ETHER_TYPE		0x00000040
+/* Match by inner VLAN ID */
+#define	EFX_FILTER_MATCH_INNER_VID		0x00000080
+/* Match by outer VLAN ID */
+#define	EFX_FILTER_MATCH_OUTER_VID		0x00000100
+/* Match by IP transport protocol */
+#define	EFX_FILTER_MATCH_IP_PROTO		0x00000200
+/* For encapsulated packets, match all multicast inner frames */
+#define	EFX_FILTER_MATCH_IFRM_UNKNOWN_MCAST_DST	0x01000000
+/* For encapsulated packets, match all unicast inner frames */
+#define	EFX_FILTER_MATCH_IFRM_UNKNOWN_UCAST_DST	0x02000000
+/* Match otherwise-unmatched multicast and broadcast packets */
+#define	EFX_FILTER_MATCH_UNKNOWN_MCAST_DST	0x40000000
+/* Match otherwise-unmatched unicast packets */
+#define	EFX_FILTER_MATCH_UNKNOWN_UCAST_DST	0x80000000
+
+typedef uint32_t efx_filter_match_flags_t;
 
 typedef enum efx_filter_priority_s {
 	EFX_FILTER_PRI_HINT = 0,	/* Performance hint */
@@ -2325,22 +2366,22 @@ typedef enum efx_filter_priority_s {
  */
 
 typedef struct efx_filter_spec_s {
-	uint32_t		efs_match_flags;
-	uint32_t		efs_priority:2;
-	uint32_t		efs_flags:6;
-	uint32_t		efs_dmaq_id:12;
-	uint32_t		efs_rss_context;
-	uint16_t		efs_outer_vid;
-	uint16_t		efs_inner_vid;
-	uint8_t			efs_loc_mac[EFX_MAC_ADDR_LEN];
-	uint8_t			efs_rem_mac[EFX_MAC_ADDR_LEN];
-	uint16_t		efs_ether_type;
-	uint8_t			efs_ip_proto;
-	efx_tunnel_protocol_t	efs_encap_type;
-	uint16_t		efs_loc_port;
-	uint16_t		efs_rem_port;
-	efx_oword_t		efs_rem_host;
-	efx_oword_t		efs_loc_host;
+	efx_filter_match_flags_t	efs_match_flags;
+	uint8_t				efs_priority;
+	efx_filter_flags_t		efs_flags;
+	uint16_t			efs_dmaq_id;
+	uint32_t			efs_rss_context;
+	uint16_t			efs_outer_vid;
+	uint16_t			efs_inner_vid;
+	uint8_t				efs_loc_mac[EFX_MAC_ADDR_LEN];
+	uint8_t				efs_rem_mac[EFX_MAC_ADDR_LEN];
+	uint16_t			efs_ether_type;
+	uint8_t				efs_ip_proto;
+	efx_tunnel_protocol_t		efs_encap_type;
+	uint16_t			efs_loc_port;
+	uint16_t			efs_rem_port;
+	efx_oword_t			efs_rem_host;
+	efx_oword_t			efs_loc_host;
 } efx_filter_spec_t;
 
 
