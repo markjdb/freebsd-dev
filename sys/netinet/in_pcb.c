@@ -439,6 +439,8 @@ in_pcbinfo_init(struct inpcbinfo *pcbinfo, const char *name,
     char *inpcbzone_name, uma_init inpcbzone_init, u_int hashfields)
 {
 
+	porthash_nelements = imin(porthash_nelements, IPPORT_MAX + 1);
+
 	INP_INFO_LOCK_INIT(pcbinfo, name);
 	INP_HASH_LOCK_INIT(pcbinfo, "pcbinfohash");	/* XXXRW: argument? */
 	INP_LIST_LOCK_INIT(pcbinfo, "pcbinfolist");
@@ -452,7 +454,7 @@ in_pcbinfo_init(struct inpcbinfo *pcbinfo, const char *name,
 	    &pcbinfo->ipi_hashmask);
 	pcbinfo->ipi_porthashbase = hashinit(porthash_nelements, M_PCB,
 	    &pcbinfo->ipi_porthashmask);
-	pcbinfo->ipi_lbgrouphashbase = hashinit(hash_nelements, M_PCB,
+	pcbinfo->ipi_lbgrouphashbase = hashinit(porthash_nelements, M_PCB,
 	    &pcbinfo->ipi_lbgrouphashmask);
 #ifdef PCBGROUP
 	in_pcbgroup_init(pcbinfo, hashfields, hash_nelements);
