@@ -801,6 +801,7 @@ _vm_map_init(vm_map_t map, pmap_t pmap, vm_offset_t min, vm_offset_t max)
 	map->root = NULL;
 	map->timestamp = 0;
 	map->busy = 0;
+	map->anon_loc = 0;
 }
 
 void
@@ -1480,6 +1481,26 @@ vm_map_fixed(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	return (result);
 }
 
+static const int aslr_pages_rnd_64[2] = {0x1000, 0x10};
+static const int aslr_pages_rnd_32[2] = {0x100, 0x4};
+
+static int coalesce_anon = 1;
+SYSCTL_INT(_vm, OID_AUTO, coalesce_anon, CTLFLAG_RW,
+    &coalesce_anon, 0,
+    "Coalesce anonymous mappings");
+
+#define	MAP_32BIT_MAX_ADDR	((vm_offset_t)1 << 31)
+
+static bool
+vm_map_find_coalesce_anon(vm_object_t object, vm_prot_t prot, int cow)
+{
+
+	if (object != NULL || (cow & (MAP_INHERIT_SHARE | MAP_STACK_GROWS_UP |
+	    MAP_STACK_GROWS_DOWN)) != 0 || prot == PROT_NONE)
+		return (false);
+	return (coalesce_anon != 0);
+}
+
 /*
  * Searches for the specified amount of free space in the given map with the
  * specified alignment.  Performs an address-ordered, first-fit search from
@@ -1559,8 +1580,9 @@ vm_map_find(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	    vm_size_t length, vm_offset_t max_addr, int find_space,
 	    vm_prot_t prot, vm_prot_t max, int cow)
 {
-	vm_offset_t alignment, min_addr;
-	int rv;
+	vm_offset_t alignment, curr_min_addr, min_addr;
+	int pidx, preserve, rv, try;
+	bool anon, en_aslr, update_anon;
 
 	KASSERT((cow & (MAP_STACK_GROWS_DOWN | MAP_STACK_GROWS_UP)) == 0 ||
 	    object == NULL,
@@ -1573,24 +1595,89 @@ vm_map_find(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 		alignment = (vm_offset_t)1 << (find_space >> 8);
 	} else
 		alignment = 0;
+	en_aslr = (map->flags & MAP_ASLR) != 0;
+	update_anon = anon = vm_map_find_coalesce_anon(object, prot, cow);
+	curr_min_addr = min_addr = *addr;
+	if (en_aslr && min_addr == 0 && !anon && find_space != VMFS_NO_SPACE &&
+	    (map->flags & MAP_ASLR_IGNSTART) != 0)
+		curr_min_addr = min_addr = vm_map_min(map);
+	try = 0;
 	vm_map_lock(map);
+	if (anon) {
+		curr_min_addr = map->anon_loc;
+		if (curr_min_addr == 0)
+			anon = false;
+	}
 	if (find_space != VMFS_NO_SPACE) {
 		KASSERT(find_space == VMFS_ANY_SPACE ||
 		    find_space == VMFS_OPTIMAL_SPACE ||
 		    find_space == VMFS_SUPER_SPACE ||
 		    alignment != 0, ("unexpected VMFS flag"));
-		min_addr = *addr;
 again:
-		if (vm_map_findspace(map, min_addr, length, addr) ||
+		/*
+		 * If anon mapping, try anon coalescing first.
+		 *
+		 * If the coalescing failed or non-anon mapping, do no
+		 * more than two tries for current find_space
+		 * value.  First try might apply randomization.
+		 *
+		 * If tries failed, and find_space is
+		 * VMFS_OPTIMAL_SPACE, fallback to VMFS_ANY_SPACE.
+		 * Again enable coalescing and randomization.
+		 */
+		try++;
+		MPASS(try <= 2);
+
+		if (try == 2) {
+			/*
+			 * Second try: we failed either to find a
+			 * suitable region for randomizing the
+			 * allocation, or the anon coalescing.  Retry
+			 * with free run.
+			 */
+			curr_min_addr = (map->flags & MAP_ASLR_IGNSTART) != 0 ?
+			    vm_map_min(map) : min_addr;
+		}
+
+		if (try == 1 && en_aslr && !anon) {
+			/*
+			 * Find space for allocation, including
+			 * reserve needed for later randomization.
+			 */
+			pidx = MAXPAGESIZES > 1 && pagesizes[1] != 0 &&
+			    (find_space == VMFS_SUPER_SPACE || find_space ==
+			    VMFS_OPTIMAL_SPACE) ? 1 : 0;
+			preserve = vm_map_max(map) > MAP_32BIT_MAX_ADDR &&
+			    (max_addr == 0 || max_addr > MAP_32BIT_MAX_ADDR) ?
+			    aslr_pages_rnd_64[pidx] : aslr_pages_rnd_32[pidx];
+			if (vm_map_findspace(map, curr_min_addr, length +
+			    preserve * pagesizes[pidx], addr) ||
+			    (max_addr != 0 && *addr + length > max_addr)) {
+				curr_min_addr = min_addr;
+				goto again;
+			}
+			/* And randomize the start address. */
+			*addr += (arc4random() % preserve) * pagesizes[pidx];
+		} else if (vm_map_findspace(map, curr_min_addr, length, addr) ||
 		    (max_addr != 0 && *addr + length > max_addr)) {
+			if (anon) {
+				anon = false;
+				try = 0;
+				goto again;
+			}
 			rv = KERN_NO_SPACE;
 			goto done;
 		}
+
 		if (find_space != VMFS_ANY_SPACE &&
 		    (rv = vm_map_alignspace(map, object, offset, addr, length,
 		    max_addr, alignment)) != KERN_SUCCESS) {
 			if (find_space == VMFS_OPTIMAL_SPACE) {
 				find_space = VMFS_ANY_SPACE;
+				curr_min_addr = min_addr;
+				anon = vm_map_find_coalesce_anon(object, prot,
+				    cow);
+				try = 0;
 				goto again;
 			}
 			goto done;
@@ -1604,6 +1691,8 @@ again:
 		    prot, max, cow);
 	}
 done:
+	if (rv == KERN_SUCCESS && update_anon)
+		map->anon_loc = *addr + length;
 	vm_map_unlock(map);
 	return (rv);
 }
@@ -3160,6 +3249,9 @@ vm_map_delete(vm_map_t map, vm_offset_t start, vm_offset_t end)
 		    entry->object.vm_object != NULL)
 			pmap_remove(map->pmap, entry->start, entry->end);
 
+		if (entry->end == map->anon_loc)
+			map->anon_loc = entry->start;
+
 		/*
 		 * Delete the entry only after removing all pmap
 		 * entries pointing to its pages.  (Otherwise, its
@@ -3433,6 +3525,7 @@ vmspace_fork(struct vmspace *vm1, vm_ooffset_t *fork_charge)
 	locked = vm_map_trylock(new_map); /* trylock to silence WITNESS */
 	KASSERT(locked, ("vmspace_fork: lock failed"));
 
+	new_map->anon_loc = old_map->anon_loc;
 	old_entry = old_map->header.next;
 
 	while (old_entry != &old_map->header) {
