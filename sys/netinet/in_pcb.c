@@ -339,8 +339,7 @@ in_pcbinslbgrouphash(struct inpcb *inp)
 	}
 #endif
 
-	idx = INP_PCBLBGROUP_PORTHASH(inp->inp_lport,
-	    pcbinfo->ipi_lbgrouphashmask);
+	idx = INP_PCBPORTHASH(inp->inp_lport, pcbinfo->ipi_lbgrouphashmask);
 	hdr = &pcbinfo->ipi_lbgrouphashbase[idx];
 	CK_LIST_FOREACH(grp, hdr, il_list) {
 		if (grp->il_vflag == inp->inp_vflag &&
@@ -397,9 +396,7 @@ in_pcbremlbgrouphash(struct inpcb *inp)
 	INP_HASH_WLOCK_ASSERT(pcbinfo);
 
 	hdr = &pcbinfo->ipi_lbgrouphashbase[
-	    INP_PCBLBGROUP_PORTHASH(inp->inp_lport,
-	        pcbinfo->ipi_lbgrouphashmask)];
-
+	    INP_PCBPORTHASH(inp->inp_lport, pcbinfo->ipi_lbgrouphashmask)];
 	CK_LIST_FOREACH(grp, hdr, il_list) {
 		for (i = 0; i < grp->il_inpcnt; ++i) {
 			if (grp->il_inp[i] != inp)
@@ -1952,8 +1949,8 @@ in_pcblookup_lbgroup(const struct inpcbinfo *pcbinfo,
 
 	INP_HASH_LOCK_ASSERT(pcbinfo);
 
-	hdr = &pcbinfo->ipi_lbgrouphashbase[INP_PCBLBGROUP_PORTHASH(lport,
-	    pcbinfo->ipi_lbgrouphashmask)];
+	hdr = &pcbinfo->ipi_lbgrouphashbase[
+	    INP_PCBPORTHASH(lport, pcbinfo->ipi_lbgrouphashmask)];
 
 	/*
 	 * Order of socket selection:
