@@ -14,6 +14,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  linux_common linux linux64 linprocfs         \
 				  geom/geom_eli geom/geom_mirror               \
 				  geom/geom_concat                             \
+				  mac_ntpd                                     \
 				  wlan_acl wlan_xauth                          \
 				  procfs nullfs fuse unionfs fdescfs tmpfs zfs \
 				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
