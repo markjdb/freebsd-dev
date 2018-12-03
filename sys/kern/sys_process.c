@@ -573,7 +573,7 @@ sys_ptrace(struct thread *td, struct ptrace_args *uap)
 		struct ptrace_lwpinfo32 pl32;
 		struct ptrace_vm_entry32 pve32;
 #endif
-		char args[nitems(td->td_sa.args) * sizeof(register_t)];
+		char args[sizeof(td->td_sa.args)];
 		int ptevents;
 	} r;
 	void *addr;
@@ -590,11 +590,17 @@ sys_ptrace(struct thread *td, struct ptrace_args *uap)
 	addr = &r;
 	switch (uap->req) {
 	case PT_GET_EVENT_MASK:
-	case PT_GETREGS:
-	case PT_GETFPREGS:
-	case PT_GETDBREGS:
 	case PT_LWPINFO:
 	case PT_GET_SC_ARGS:
+		break;
+	case PT_GETREGS:
+		bzero(&r.reg, sizeof(r.reg));
+		break;
+	case PT_GETFPREGS:
+		bzero(&r.fpreg, sizeof(r.fpreg));
+		break;
+	case PT_GETDBREGS:
+		bzero(&r.dbreg, sizeof(r.dbreg));
 		break;
 	case PT_SETREGS:
 		error = COPYIN(uap->addr, &r.reg, sizeof r.reg);
