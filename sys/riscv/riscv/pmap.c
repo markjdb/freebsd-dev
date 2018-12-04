@@ -355,15 +355,14 @@ pmap_l3(pmap_t pmap, vm_offset_t va)
 	return (pmap_l2_to_l3(l2, va));
 }
 
-
-static __inline int
-pmap_is_write(pt_entry_t entry)
+static inline int
+pmap_l3_writable(pt_entry_t entry)
 {
 
 	return (entry & PTE_W);
 }
 
-static __inline int
+static inline int
 pmap_l3_valid(pt_entry_t l3)
 {
 
@@ -897,7 +896,7 @@ pmap_extract_and_hold(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 retry:
 	l3p = pmap_l3(pmap, va);
 	if (l3p != NULL && (l3 = pmap_load(l3p)) != 0) {
-		if ((pmap_is_write(l3)) || ((prot & VM_PROT_WRITE) == 0)) {
+		if (pmap_l3_writable(l3) || (prot & VM_PROT_WRITE) == 0) {
 			phys = PTE_TO_PHYS(l3);
 			if (vm_page_pa_tryrelock(pmap, phys, &pa))
 				goto retry;
@@ -2216,10 +2215,9 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 			/*
 			 * No, might be a protection or wiring change.
 			 */
-			if ((orig_l3 & PTE_SW_MANAGED) != 0) {
-				if (pmap_is_write(new_l3))
-					vm_page_aflag_set(m, PGA_WRITEABLE);
-			}
+			if ((orig_l3 & PTE_SW_MANAGED) != 0 &&
+			    pmap_l3_writable(new_l3))
+				vm_page_aflag_set(m, PGA_WRITEABLE);
 			goto validate;
 		}
 
@@ -2277,7 +2275,7 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 		CHANGE_PV_LIST_LOCK_TO_PHYS(&lock, pa);
 		TAILQ_INSERT_TAIL(&m->md.pv_list, pv, pv_next);
 		m->md.pv_gen++;
-		if (pmap_is_write(new_l3))
+		if (pmap_l3_writable(new_l3))
 			vm_page_aflag_set(m, PGA_WRITEABLE);
 	}
 
@@ -3126,7 +3124,7 @@ retry_pv_loop:
 retry:
 		oldl3 = pmap_load(l3);
 
-		if (pmap_is_write(oldl3)) {
+		if (pmap_l3_writable(oldl3)) {
 			newl3 = oldl3 & ~(PTE_W);
 			if (!atomic_cmpset_long(l3, oldl3, newl3))
 				goto retry;
