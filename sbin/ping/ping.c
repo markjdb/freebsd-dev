@@ -85,6 +85,7 @@ __FBSDID("$FreeBSD$");
 #include <netipsec/ipsec.h>
 #endif /*IPSEC*/
 
+#include <capsicum_helpers.h>
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
@@ -714,8 +715,11 @@ main(int argc, char *const *argv)
 	 * namespaces (e.g filesystem) is restricted (see capsicum(4)).
 	 * We must connect(2) our socket before this point.
 	 */
-	if (cansandbox && cap_enter() < 0 && errno != ENOSYS)
-		err(1, "cap_enter");
+	if (cansandbox) {
+		caph_cache_catpages();
+		if (cap_enter() < 0 && errno != ENOSYS)
+			err(1, "cap_enter");
+	}
 
 	cap_rights_init(&rights, CAP_RECV, CAP_EVENT, CAP_SETSOCKOPT);
 	if (cap_rights_limit(srecv, &rights) < 0 && errno != ENOSYS)
