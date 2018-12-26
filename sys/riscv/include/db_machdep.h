@@ -53,8 +53,8 @@ typedef long		db_expr_t;
 #define	BKPT_SIZE	(INSN_SIZE)
 #define	BKPT_SET(inst)	(BKPT_INST)
 
-#define	BKPT_SKIP do {				\
-	kdb_frame->tf_sepc += BKPT_SIZE;	\
+#define	BKPT_SKIP do {						\
+	kdb_frame->tf_sepc += _inst_len(kdb_frame->tf_sepc);	\
 } while (0)
 
 #define	db_clear_single_step	kdb_cpu_clear_singlestep
@@ -81,8 +81,25 @@ typedef long		db_expr_t;
 #define	is_load_instr(ins)	(((ins) & 0x7f) == 3)
 #define	is_store_instr(ins)	(((ins) & 0x7f) == 35)
 
-#define	next_instr_address(pc, bd)	((bd) ? (pc) : ((pc) + 4))
+/* XXX where should this really go? */
+#define	_inst_len(p) ({						\
+	u_int len;						\
+	uint16_t parcel;					\
+								\
+	parcel = *(uint16_t *)p;				\
+	if ((parcel & 0x3) != 0x3)				\
+		len = 2;					\
+	else if ((parcel & 0x1c) != 0x1c)			\
+		len = 4;					\
+	else if ((parcel & 0x3f) == 0x1f)			\
+		len = 6;					\
+	else if ((parcel & 0x7f) == 0x3f)			\
+		len = 8;					\
+	else							\
+		len = 10 + ((parcel & 0x7000) >> 12) * 2;	\
+	len;							\
+})
 
-#define	DB_ELFSIZE		64
+#define	next_instr_address(pc, bd)	((bd) ? (pc) : (_inst_len(pc)))
 
 #endif /* !_MACHINE_DB_MACHDEP_H_ */

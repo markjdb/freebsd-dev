@@ -41,7 +41,7 @@ static __inline void
 breakpoint(void)
 {
 
-	__asm("ebreak");
+	__asm __volatile("ebreak");
 }
 
 #ifdef _KERNEL
