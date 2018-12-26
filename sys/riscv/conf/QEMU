@@ -6,5 +6,6 @@ include "GENERIC"
 
 ident QEMU
 
+options 	ALT_BREAK_TO_DEBUGGER
 options 	HZ=100
 options 	ROOTDEVNAME=\"ufs:/dev/vtbd0\"
