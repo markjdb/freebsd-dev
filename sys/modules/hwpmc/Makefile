@@ -6,14 +6,16 @@
 
 KMOD=	hwpmc
 
-SRCS=	hwpmc_mod.c hwpmc_logging.c hwpmc_soft.c vnode_if.h
+SRCS=	hwpmc_mod.c hwpmc_logging.c hwpmc_soft.c hwpmc_vm.c vnode_if.h
 
 .if ${MACHINE_CPUARCH} == "aarch64"
 SRCS+=  hwpmc_arm64.c hwpmc_arm64_md.c
+SRCS+=  hwpmc_cs.c
 .endif
 
 .if ${MACHINE_CPUARCH} == "amd64"
 SRCS+=	hwpmc_amd.c hwpmc_core.c hwpmc_intel.c hwpmc_tsc.c
+SRCS+=	hwpmc_pt.c
 SRCS+=	hwpmc_x86.c hwpmc_uncore.c
 SRCS+=	device_if.h bus_if.h
 .endif
