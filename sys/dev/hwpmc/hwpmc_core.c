@@ -753,6 +753,7 @@ iap_allocate_pmc(int cpu, int ri, struct pmc *pm,
 		break;
 	case PMC_CPU_INTEL_SKYLAKE:
 	case PMC_CPU_INTEL_SKYLAKE_XEON:
+	case PMC_CPU_INTEL_KABYLAKE:
 	case PMC_CPU_INTEL_BROADWELL:
 	case PMC_CPU_INTEL_BROADWELL_XEON:
 	case PMC_CPU_INTEL_SANDYBRIDGE:
@@ -1127,6 +1128,12 @@ core2_intr(struct trapframe *tf)
 	cpu = curcpu;
 	PMCDBG3(MDP,INT, 1, "cpu=%d tf=0x%p um=%d", cpu, (void *) tf,
 	    TRAPF_USERMODE(tf));
+
+	error = pmc_pt_intr(cpu, tf);
+	if (error) {
+		/* Found */
+		return (1);
+	}
 
 	/*
 	 * The IA_GLOBAL_STATUS (MSR 0x38E) register indicates which
