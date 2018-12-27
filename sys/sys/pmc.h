@@ -110,6 +110,7 @@ extern char pmc_cpuid[PMC_CPUID_LEN];
 	__PMC_CPU(INTEL_BROADWELL_XEON, 0x97,   "Intel Broadwell Xeon") \
 	__PMC_CPU(INTEL_SKYLAKE, 0x98,   "Intel Skylake")		\
 	__PMC_CPU(INTEL_SKYLAKE_XEON, 0x99,   "Intel Skylake Xeon")	\
+	__PMC_CPU(INTEL_KABYLAKE, 0x9A,   "Intel Kabylake")	\
 	__PMC_CPU(INTEL_XSCALE,	0x100,	"Intel XScale")		\
 	__PMC_CPU(MIPS_24K,     0x200,  "MIPS 24K")		\
 	__PMC_CPU(MIPS_OCTEON,  0x201,  "Cavium Octeon")	\
@@ -160,7 +161,9 @@ enum pmc_cputype {
 	__PMC_CLASS(ARMV7,	0x10,	"ARMv7")			\
 	__PMC_CLASS(ARMV8,	0x11,	"ARMv8")			\
 	__PMC_CLASS(MIPS74K,	0x12,	"MIPS 74K")			\
-	__PMC_CLASS(E500,	0x13,	"Freescale e500 class")
+	__PMC_CLASS(E500,	0x13,	"Freescale e500 class")		\
+	__PMC_CLASS(PT,		0x14,	"Intel PT")			\
+	__PMC_CLASS(CORESIGHT,	0x15,	"ARM Coresight")
 
 enum pmc_class {
 #undef  __PMC_CLASS
@@ -169,7 +172,7 @@ enum pmc_class {
 };
 
 #define	PMC_CLASS_FIRST	PMC_CLASS_TSC
-#define	PMC_CLASS_LAST	PMC_CLASS_E500
+#define	PMC_CLASS_LAST	PMC_CLASS_CORESIGHT
 
 /*
  * A PMC can be in the following states:
@@ -240,7 +243,9 @@ enum pmc_state {
 	__PMC_MODE(SS,	0)			\
 	__PMC_MODE(SC,	1)			\
 	__PMC_MODE(TS,	2)			\
-	__PMC_MODE(TC,	3)
+	__PMC_MODE(TC,	3)			\
+	__PMC_MODE(ST,	4)			\
+	__PMC_MODE(TT,	5)
 
 enum pmc_mode {
 #undef	__PMC_MODE
@@ -254,11 +259,11 @@ enum pmc_mode {
 #define	PMC_IS_COUNTING_MODE(mode)				\
 	((mode) == PMC_MODE_SC || (mode) == PMC_MODE_TC)
 #define	PMC_IS_SYSTEM_MODE(mode)				\
-	((mode) == PMC_MODE_SS || (mode) == PMC_MODE_SC)
+	((mode) == PMC_MODE_SS || (mode) == PMC_MODE_SC || (mode) == PMC_MODE_ST)
 #define	PMC_IS_SAMPLING_MODE(mode)				\
 	((mode) == PMC_MODE_SS || (mode) == PMC_MODE_TS)
 #define	PMC_IS_VIRTUAL_MODE(mode)				\
-	((mode) == PMC_MODE_TS || (mode) == PMC_MODE_TC)
+	((mode) == PMC_MODE_TS || (mode) == PMC_MODE_TC || (mode) == PMC_MODE_TT)
 
 /*
  * PMC row disposition
@@ -350,7 +355,11 @@ enum pmc_event {
 	__PMC_OP(PMCSTOP, "Stop a PMC")					\
 	__PMC_OP(WRITELOG, "Write a cookie to the log file")		\
 	__PMC_OP(CLOSELOG, "Close log file")				\
-	__PMC_OP(GETDYNEVENTINFO, "Get dynamic events list")
+	__PMC_OP(GETDYNEVENTINFO, "Get dynamic events list")		\
+	__PMC_OP(LOG_KERNEL_MAP, "Log kernel mappings")			\
+	__PMC_OP(THREAD_UNSUSPEND, "Thread unsuspend")			\
+	__PMC_OP(TRACE_READ, "Read trace buffer pointer")		\
+	__PMC_OP(TRACE_CONFIG, "Setup trace IP ranges")
 
 
 enum pmc_ops {
@@ -498,7 +507,6 @@ struct pmc_op_pmcrw {
 	pmc_value_t	pm_value;	/* new&returned value */
 };
 
-
 /*
  * OP GETPMCINFO
  *
@@ -524,13 +532,46 @@ struct pmc_op_getpmcinfo {
 	struct pmc_info	pm_pmcs[];	/* space for 'npmc' structures */
 };
 
+/*
+ * OP PROC_UNSUSPEND
+ *
+ * Unsuspend all threads of proc.
+ */
+
+struct pmc_op_proc_unsuspend {
+	pmc_id_t	pm_pmcid;
+	pid_t		pm_pid;
+};
+
+/*
+ * OP TRACE_CONFIG
+ */
+
+#define	PMC_FILTER_MAX_IP_RANGES	4
+
+struct pmc_op_trace_config {
+	pmc_id_t	pm_pmcid;
+	uint32_t	pm_cpu;		/* CPU number or PMC_CPU_ANY */
+	uint64_t	ranges[2 * PMC_FILTER_MAX_IP_RANGES];
+	uint32_t	nranges;
+};
+
+/*
+ * OP TRACE_READ
+ */
+
+struct pmc_op_trace_read {
+	pmc_id_t	pm_pmcid;
+	uint32_t	pm_cpu;
+	pmc_value_t	pm_cycle;	/* returned value */
+	pmc_value_t	pm_offset;	/* returned value */
+};
 
 /*
  * OP GETCPUINFO
  *
  * Retrieve system CPU information.
  */
-
 
 struct pmc_classinfo {
 	enum pmc_class	pm_class;	/* class id */
@@ -1017,6 +1058,12 @@ struct pmc_classdep {
 	int (*pcd_read_pmc)(int _cpu, int _ri, pmc_value_t *_value);
 	int (*pcd_write_pmc)(int _cpu, int _ri, pmc_value_t _value);
 
+	/* trace */
+	int (*pcd_read_trace)(int _cpu, int _ri, struct pmc *_pm,
+	    pmc_value_t *_cycle, pmc_value_t *_offset);
+	int (*pcd_trace_config)(int _cpu, int _ri, struct pmc *_pm,
+	    uint64_t *ranges, uint32_t nranges);
+
 	/* pmc allocation/release */
 	int (*pcd_allocate_pmc)(int _cpu, int _ri, struct pmc *_t,
 		const struct pmc_op_pmcallocate *_a);
@@ -1044,7 +1091,7 @@ struct pmc_classdep {
  * Machine dependent bits needed per CPU type.
  */
 
-struct pmc_mdep  {
+struct pmc_mdep {
 	uint32_t	pmd_cputype;    /* from enum pmc_cputype */
 	uint32_t	pmd_npmc;	/* number of PMCs per CPU */
 	uint32_t	pmd_nclass;	/* number of PMC classes present */
