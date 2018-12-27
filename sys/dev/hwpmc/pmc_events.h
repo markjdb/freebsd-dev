@@ -217,6 +217,20 @@ __PMC_EV_ALIAS("llc-reference",			IAP_ARCH_LLC_REF)	\
 __PMC_EV_ALIAS("unhalted-reference-cycles",	IAP_ARCH_UNH_REF_CYC)	\
 __PMC_EV_ALIAS("unhalted-core-cycles",		IAP_ARCH_UNH_COR_CYC)
 
+/* Intel PT */
+#define	__PMC_EV_PT()							\
+	__PMC_EV(PT, PT)
+
+#define	PMC_EV_PT_FIRST	PMC_EV_PT_PT
+#define	PMC_EV_PT_LAST	PMC_EV_PT_PT
+
+/* ARM CORESIGHT */
+#define	__PMC_EV_CORESIGHT()							\
+	__PMC_EV(CORESIGHT, CORESIGHT)
+
+#define	PMC_EV_CORESIGHT_FIRST	PMC_EV_CORESIGHT_CORESIGHT
+#define	PMC_EV_CORESIGHT_LAST		PMC_EV_CORESIGHT_CORESIGHT
+
 #define        __PMC_EV_UCP()                          \
 	__PMC_EV(UCP, EVENT_0CH_04H_E)					   \
 	__PMC_EV(UCP, EVENT_0CH_04H_F)					   \
@@ -1763,6 +1777,7 @@ __PMC_EV_ALIAS("unhalted-core-cycles",		IAP_ARCH_UNH_COR_CYC)
  * START	#EVENTS		DESCRIPTION
  * 0		0x1000		Reserved
  * 0x1000	0x0001		TSC
+ * 0x1100	0x0001		PT
  * 0x2000	0x0080		AMD K7 events
  * 0x2080	0x0100		AMD K8 events
  * 0x10000	0x0080		INTEL architectural fixed-function events
@@ -1779,11 +1794,14 @@ __PMC_EV_ALIAS("unhalted-core-cycles",		IAP_ARCH_UNH_COR_CYC)
  * 0x13300	0x00FF		Freescale e500 events
  * 0x14000	0x0100		ARMv7 events
  * 0x14100	0x0100		ARMv8 events
+ * 0x14200	0x0001		ARM Coresight
  * 0x20000	0x1000		Software events
  */
 #define	__PMC_EVENTS()				\
 	__PMC_EV_BLOCK(TSC,	0x01000)	\
 	__PMC_EV_TSC()				\
+	__PMC_EV_BLOCK(PT,	0x1100)		\
+	__PMC_EV_PT()				\
 	__PMC_EV_BLOCK(IAF,     0x10000)	\
 	__PMC_EV_IAF()				\
 	__PMC_EV_BLOCK(K7,	0x2000)		\
@@ -1809,7 +1827,9 @@ __PMC_EV_ALIAS("unhalted-core-cycles",		IAP_ARCH_UNH_COR_CYC)
 	__PMC_EV_BLOCK(ARMV7,	0x14000)	\
 	__PMC_EV_ARMV7()			\
 	__PMC_EV_BLOCK(ARMV8,	0x14100)	\
-	__PMC_EV_ARMV8()
+	__PMC_EV_ARMV8()			\
+	__PMC_EV_BLOCK(CORESIGHT, 0x14200)	\
+	__PMC_EV_CORESIGHT()
 
 #define	PMC_EVENT_FIRST	PMC_EV_TSC_TSC
 #define	PMC_EVENT_LAST	PMC_EV_SOFT_LAST

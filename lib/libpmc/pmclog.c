@@ -356,12 +356,16 @@ pmclog_get_event(void *cookie, char **data, ssize_t *len,
 		PMCLOG_READ32(le,ev->pl_u.pl_a.pl_flags);
 		PMCLOG_READ32(le,noop);
 		PMCLOG_READ64(le,ev->pl_u.pl_a.pl_rate);
-		ev->pl_u.pl_a.pl_evname = pmc_pmu_event_get_by_idx(ps->ps_cpuid, ev->pl_u.pl_a.pl_event);
-		if (ev->pl_u.pl_a.pl_evname != NULL)
-			break;
-		else if ((ev->pl_u.pl_a.pl_evname =
+
+		if ((ev->pl_u.pl_a.pl_evname =
 		    _pmc_name_of_event(ev->pl_u.pl_a.pl_event, ps->ps_arch))
 		    == NULL) {
+
+			ev->pl_u.pl_a.pl_evname = pmc_pmu_event_get_by_idx(ps->ps_cpuid,
+			    ev->pl_u.pl_a.pl_event);
+			if (ev->pl_u.pl_a.pl_evname != NULL)
+				break;
+
 			printf("unknown event\n");
 			goto error;
 		}

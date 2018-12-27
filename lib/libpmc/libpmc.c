@@ -58,6 +58,10 @@ static int k8_allocate_pmc(enum pmc_event _pe, char *_ctrspec,
 static int tsc_allocate_pmc(enum pmc_event _pe, char *_ctrspec,
     struct pmc_op_pmcallocate *_pmc_config);
 #endif
+#if defined(__amd64__)
+static int pt_allocate_pmc(enum pmc_event _pe, char *_ctrspec,
+    struct pmc_op_pmcallocate *_pmc_config);
+#endif
 #if defined(__arm__)
 #if defined(__XSCALE__)
 static int xscale_allocate_pmc(enum pmc_event _pe, char *_ctrspec,
@@ -68,6 +72,8 @@ static int armv7_allocate_pmc(enum pmc_event _pe, char *_ctrspec,
 #endif
 #if defined(__aarch64__)
 static int arm64_allocate_pmc(enum pmc_event _pe, char *_ctrspec,
+    struct pmc_op_pmcallocate *_pmc_config);
+static int coresight_allocate_pmc(enum pmc_event _pe, char *_ctrspec,
     struct pmc_op_pmcallocate *_pmc_config);
 #endif
 #if defined(__mips__)
@@ -185,12 +191,13 @@ static const struct pmc_event_descr cortex_a57_event_table[] =
 		PMC_CLASS_##C, __VA_ARGS__			\
 	}
 
+PMC_MDEP_TABLE(kabylake, PT);
 PMC_MDEP_TABLE(k8, K8, PMC_CLASS_SOFT, PMC_CLASS_TSC);
 PMC_MDEP_TABLE(xscale, XSCALE, PMC_CLASS_SOFT, PMC_CLASS_XSCALE);
 PMC_MDEP_TABLE(cortex_a8, ARMV7, PMC_CLASS_SOFT, PMC_CLASS_ARMV7);
 PMC_MDEP_TABLE(cortex_a9, ARMV7, PMC_CLASS_SOFT, PMC_CLASS_ARMV7);
-PMC_MDEP_TABLE(cortex_a53, ARMV8, PMC_CLASS_SOFT, PMC_CLASS_ARMV8);
-PMC_MDEP_TABLE(cortex_a57, ARMV8, PMC_CLASS_SOFT, PMC_CLASS_ARMV8);
+PMC_MDEP_TABLE(cortex_a53, ARMV8, PMC_CLASS_SOFT, PMC_CLASS_ARMV8, PMC_CLASS_CORESIGHT);
+PMC_MDEP_TABLE(cortex_a57, ARMV8, PMC_CLASS_SOFT, PMC_CLASS_ARMV8, PMC_CLASS_CORESIGHT);
 PMC_MDEP_TABLE(mips24k, MIPS24K, PMC_CLASS_SOFT, PMC_CLASS_MIPS24K);
 PMC_MDEP_TABLE(mips74k, MIPS74K, PMC_CLASS_SOFT, PMC_CLASS_MIPS74K);
 PMC_MDEP_TABLE(octeon, OCTEON, PMC_CLASS_SOFT, PMC_CLASS_OCTEON);
@@ -202,6 +209,16 @@ PMC_MDEP_TABLE(generic, SOFT, PMC_CLASS_SOFT);
 static const struct pmc_event_descr tsc_event_table[] =
 {
 	__PMC_EV_TSC()
+};
+
+static const struct pmc_event_descr pt_event_table[] =
+{
+	__PMC_EV_PT()
+};
+
+static const struct pmc_event_descr coresight_event_table[] =
+{
+	__PMC_EV_CORESIGHT()
 };
 
 #undef	PMC_CLASS_TABLE_DESC
@@ -223,6 +240,9 @@ PMC_CLASS_TABLE_DESC(k8, K8, k8, k8);
 #if	defined(__i386__) || defined(__amd64__)
 PMC_CLASS_TABLE_DESC(tsc, TSC, tsc, tsc);
 #endif
+#if	defined(__amd64__)
+PMC_CLASS_TABLE_DESC(pt, PT, pt, pt);
+#endif
 #if	defined(__arm__)
 #if	defined(__XSCALE__)
 PMC_CLASS_TABLE_DESC(xscale, XSCALE, xscale, xscale);
@@ -233,6 +253,7 @@ PMC_CLASS_TABLE_DESC(cortex_a9, ARMV7, cortex_a9, armv7);
 #if	defined(__aarch64__)
 PMC_CLASS_TABLE_DESC(cortex_a53, ARMV8, cortex_a53, arm64);
 PMC_CLASS_TABLE_DESC(cortex_a57, ARMV8, cortex_a57, arm64);
+PMC_CLASS_TABLE_DESC(coresight, CORESIGHT, coresight, coresight);
 #endif
 #if defined(__mips__)
 PMC_CLASS_TABLE_DESC(mips24k, MIPS24K, mips24k, mips);
@@ -365,6 +386,10 @@ pmc_parse_mask(const struct pmc_masks *pmask, char *p, uint64_t *evmask)
  * AMD K8 PMCs.
  *
  */
+
+static struct pmc_event_alias kabylake_aliases[] = {
+	EV_ALIAS(NULL, NULL)
+};
 
 static struct pmc_event_alias k8_aliases[] = {
 	EV_ALIAS("branches",		"k8-fr-retired-taken-branches"),
@@ -737,6 +762,85 @@ tsc_allocate_pmc(enum pmc_event pe, char *ctrspec,
 }
 #endif
 
+#if	defined(__amd64__)
+
+#define	INTEL_PT_KW_BRANCHES	"branches"
+#define	INTEL_PT_KW_TSC		"tsc"
+#define	INTEL_PT_KW_MTC		"mtc"
+#define	INTEL_PT_KW_DISRETC	"disretc"
+#define	INTEL_PT_KW_ADDRA	"addra"
+#define	INTEL_PT_KW_ADDRB	"addrb"
+
+static int
+pt_allocate_pmc(enum pmc_event pe, char *ctrspec,
+    struct pmc_op_pmcallocate *pmc_config)
+{
+	struct pmc_md_pt_op_pmcallocate *pm_pt;
+	uint64_t addr;
+	uint32_t addrn;
+	char *p, *q, *e;
+
+	if (pe != PMC_EV_PT_PT)
+		return (-1);
+
+	pm_pt = (struct pmc_md_pt_op_pmcallocate *)&pmc_config->pm_md.pm_pt;
+
+	addrn = 0;
+	while ((p = strsep(&ctrspec, ",")) != NULL) {
+		if (KWMATCH(p, INTEL_PT_KW_BRANCHES)) {
+			pm_pt->flags |= INTEL_PT_FLAG_BRANCHES;
+		}
+
+		if (KWMATCH(p, INTEL_PT_KW_TSC)) {
+			pm_pt->flags |= INTEL_PT_FLAG_TSC;
+		}
+
+		if (KWMATCH(p, INTEL_PT_KW_MTC)) {
+			pm_pt->flags |= INTEL_PT_FLAG_MTC;
+		}
+
+		if (KWMATCH(p, INTEL_PT_KW_DISRETC)) {
+			pm_pt->flags |= INTEL_PT_FLAG_DISRETC;
+		}
+
+		if (KWPREFIXMATCH(p, INTEL_PT_KW_ADDRA "=")) {
+			q = strchr(p, '=');
+			if (*++q == '\0') /* skip '=' */
+				return (-1);
+
+			addr = strtoul(q, &e, 0);
+			if (e == q || *e != '\0')
+				return (-1);
+			pm_pt->ranges[addrn * 2] = addr;
+		}
+
+		if (KWPREFIXMATCH(p, INTEL_PT_KW_ADDRB "=")) {
+			q = strchr(p, '=');
+			if (*++q == '\0') /* skip '=' */
+				return (-1);
+
+			addr = strtoul(q, &e, 0);
+			if (e == q || *e != '\0')
+				return (-1);
+			pm_pt->ranges[addrn * 2 + 1] = addr;
+
+			if (pm_pt->ranges[addrn * 2 + 1] < pm_pt->ranges[addrn * 2])
+				return (-1);
+			addrn += 1;
+			if (addrn > PT_NADDR)
+				return (-1);
+		}
+	};
+
+	pm_pt->nranges = addrn;
+
+	pmc_config->pm_caps |= PMC_CAP_READ;
+	pmc_config->pm_caps &= ~PMC_CAP_WRITE;
+
+	return (0);
+}
+#endif
+
 static struct pmc_event_alias generic_aliases[] = {
 	EV_ALIAS("instructions",		"SOFT-CLOCK.HARD"),
 	EV_ALIAS(NULL, NULL)
@@ -822,6 +926,62 @@ arm64_allocate_pmc(enum pmc_event pe, char *ctrspec __unused,
 	default:
 		break;
 	}
+
+	return (0);
+}
+
+#define	ARM_CORESIGHT_KW_ADDRA	"addra"
+#define	ARM_CORESIGHT_KW_ADDRB	"addrb"
+
+static int
+coresight_allocate_pmc(enum pmc_event pe, char *ctrspec,
+    struct pmc_op_pmcallocate *pmc_config)
+{
+	struct pmc_md_coresight_op_pmcallocate *pm_coresight;
+	uint64_t addr;
+	uint32_t addrn;
+	char *p, *q, *e;
+
+	if (pe != PMC_EV_CORESIGHT_CORESIGHT)
+		return (-1);
+
+	pm_coresight = (struct pmc_md_coresight_op_pmcallocate *)&pmc_config->pm_md.pm_coresight;
+
+	addrn = 0;
+	while ((p = strsep(&ctrspec, ",")) != NULL) {
+		if (KWPREFIXMATCH(p, ARM_CORESIGHT_KW_ADDRA "=")) {
+			q = strchr(p, '=');
+			if (*++q == '\0') /* skip '=' */
+				return (-1);
+
+			addr = strtoul(q, &e, 0);
+			if (e == q || *e != '\0')
+				return (-1);
+			pm_coresight->ranges[addrn * 2] = addr;
+		}
+
+		if (KWPREFIXMATCH(p, ARM_CORESIGHT_KW_ADDRB "=")) {
+			q = strchr(p, '=');
+			if (*++q == '\0') /* skip '=' */
+				return (-1);
+
+			addr = strtoul(q, &e, 0);
+			if (e == q || *e != '\0')
+				return (-1);
+			pm_coresight->ranges[addrn * 2 + 1] = addr;
+
+			if (pm_coresight->ranges[addrn * 2 + 1] < pm_coresight->ranges[addrn * 2])
+				return (-1);
+			addrn += 1;
+			if (addrn > CORESIGHT_NADDR)
+				return (-1);
+		}
+	};
+
+	pm_coresight->nranges = addrn;
+
+	pmc_config->pm_caps |= PMC_CAP_READ;
+	pmc_config->pm_caps &= ~PMC_CAP_WRITE;
 
 	return (0);
 }
@@ -1023,8 +1183,9 @@ pmc_allocate(const char *ctrspec, enum pmc_mode mode,
 	retval    = -1;
 
 	if (mode != PMC_MODE_SS && mode != PMC_MODE_TS &&
-	    mode != PMC_MODE_SC && mode != PMC_MODE_TC) {
-		errno = EINVAL;
+	    mode != PMC_MODE_SC && mode != PMC_MODE_TC &&
+	    mode != PMC_MODE_ST && mode != PMC_MODE_TT) {
+		return (EINVAL);
 		goto out;
 	}
 	bzero(&pmc_config, sizeof(pmc_config));
@@ -1048,7 +1209,6 @@ pmc_allocate(const char *ctrspec, enum pmc_mode mode,
 			*pmcid = pmc_config.pm_pmcid;
 			goto out;
 		}
-		errx(EX_USAGE, "ERROR: pmc_pmu_allocate failed, check for ctrname %s\n", ctrname);
 	} else {
 		free(spec_copy);
 		spec_copy = NULL;
@@ -1064,9 +1224,6 @@ pmc_allocate(const char *ctrspec, enum pmc_mode mode,
 
 	if (spec_copy == NULL)
 		spec_copy = strdup(ctrspec);
-
-	r = spec_copy;
-	ctrname = strsep(&r, ",");
 
 	/*
 	 * If a explicit class prefix was given by the user, restrict the
@@ -1165,6 +1322,7 @@ pmc_configure_logfile(int fd)
 int
 pmc_cpuinfo(const struct pmc_cpuinfo **pci)
 {
+
 	if (pmc_syscall == -1) {
 		errno = ENXIO;
 		return (-1);
@@ -1233,6 +1391,10 @@ pmc_event_names_of_class(enum pmc_class cl, const char ***eventnames,
 		ev = tsc_event_table;
 		count = PMC_EVENT_TABLE_SIZE(tsc);
 		break;
+	case PMC_CLASS_PT:
+		ev = pt_event_table;
+		count = PMC_EVENT_TABLE_SIZE(pt);
+		break;
 	case PMC_CLASS_K8:
 		ev = k8_event_table;
 		count = PMC_EVENT_TABLE_SIZE(k8);
@@ -1266,6 +1428,10 @@ pmc_event_names_of_class(enum pmc_class cl, const char ***eventnames,
 			count = PMC_EVENT_TABLE_SIZE(cortex_a57);
 			break;
 		}
+		break;
+	case PMC_CLASS_CORESIGHT:
+		ev = coresight_event_table;
+		count = PMC_EVENT_TABLE_SIZE(coresight);
 		break;
 	case PMC_CLASS_MIPS24K:
 		ev = mips24k_event_table;
@@ -1315,12 +1481,14 @@ pmc_event_names_of_class(enum pmc_class cl, const char ***eventnames,
 int
 pmc_flush_logfile(void)
 {
+
 	return (PMC_CALL(FLUSHLOG,0));
 }
 
 int
 pmc_close_logfile(void)
 {
+
 	return (PMC_CALL(CLOSELOG,0));
 }
 
@@ -1444,6 +1612,11 @@ pmc_init(void)
 	if (cpu_info.pm_cputype != PMC_CPU_GENERIC)
 		pmc_class_table[n++] = &tsc_class_table_descr;
 
+#if defined(__amd64__)
+	if (cpu_info.pm_cputype == PMC_CPU_INTEL_KABYLAKE)
+		pmc_class_table[n++] = &pt_class_table_descr;
+#endif
+
 	/*
  	 * Check if this CPU has fixed function counters.
 	 */
@@ -1475,7 +1648,10 @@ pmc_init(void)
 #if defined(__amd64__) || defined(__i386__)
 	case PMC_CPU_AMD_K8:
 		PMC_MDEP_INIT(k8);
-		pmc_class_table[n] = &k8_class_table_descr;
+		pmc_class_table[n++] = &k8_class_table_descr;
+		break;
+	case PMC_CPU_INTEL_KABYLAKE:
+		PMC_MDEP_INIT(kabylake);
 		break;
 #endif
 	case PMC_CPU_GENERIC:
@@ -1500,11 +1676,13 @@ pmc_init(void)
 #if defined(__aarch64__)
 	case PMC_CPU_ARMV8_CORTEX_A53:
 		PMC_MDEP_INIT(cortex_a53);
-		pmc_class_table[n] = &cortex_a53_class_table_descr;
+		pmc_class_table[n++] = &cortex_a53_class_table_descr;
+		pmc_class_table[n++] = &coresight_class_table_descr;
 		break;
 	case PMC_CPU_ARMV8_CORTEX_A57:
 		PMC_MDEP_INIT(cortex_a57);
-		pmc_class_table[n] = &cortex_a57_class_table_descr;
+		pmc_class_table[n++] = &cortex_a57_class_table_descr;
+		pmc_class_table[n++] = &coresight_class_table_descr;
 		break;
 #endif
 #if defined(__mips__)
@@ -1645,6 +1823,9 @@ _pmc_name_of_event(enum pmc_event pe, enum pmc_cputype cpu)
 		default:	/* Unknown CPU type. */
 			break;
 		}
+	} else if (pe == PMC_EV_CORESIGHT_CORESIGHT) {
+		ev = coresight_event_table;
+		evfence = coresight_event_table + PMC_EVENT_TABLE_SIZE(coresight);
 	} else if (pe >= PMC_EV_MIPS24K_FIRST && pe <= PMC_EV_MIPS24K_LAST) {
 		ev = mips24k_event_table;
 		evfence = mips24k_event_table + PMC_EVENT_TABLE_SIZE(mips24k);
@@ -1666,6 +1847,9 @@ _pmc_name_of_event(enum pmc_event pe, enum pmc_cputype cpu)
 	} else if (pe == PMC_EV_TSC_TSC) {
 		ev = tsc_event_table;
 		evfence = tsc_event_table + PMC_EVENT_TABLE_SIZE(tsc);
+	} else if (pe == PMC_EV_PT_PT) {
+		ev = pt_event_table;
+		evfence = pt_event_table + PMC_EVENT_TABLE_SIZE(pt);
 	} else if ((int)pe >= PMC_EV_SOFT_FIRST && (int)pe <= PMC_EV_SOFT_LAST) {
 		ev = soft_event_table;
 		evfence = soft_event_table + soft_event_info.pm_nevent;
@@ -1780,6 +1964,68 @@ pmc_read(pmc_id_t pmc, pmc_value_t *value)
 
 	*value = pmc_read_op.pm_value;
 	return (0);
+}
+
+int
+pmc_proc_unsuspend(pmc_id_t pmc, pid_t pid)
+{
+	struct pmc_op_proc_unsuspend u;
+
+	u.pm_pmcid = pmc;
+	u.pm_pid = pid;
+
+	return (PMC_CALL(THREAD_UNSUSPEND, &u));
+}
+
+int
+pmc_read_trace(uint32_t cpu, pmc_id_t pmc,
+    pmc_value_t *cycle, pmc_value_t *offset)
+{
+	struct pmc_op_trace_read pmc_trace_read;
+
+	pmc_trace_read.pm_pmcid = pmc;
+	pmc_trace_read.pm_cpu = cpu;
+	pmc_trace_read.pm_cycle = 0;
+	pmc_trace_read.pm_offset = 0;
+
+	if (PMC_CALL(TRACE_READ, &pmc_trace_read) < 0)
+		return (-1);
+
+	*cycle = pmc_trace_read.pm_cycle;
+	*offset = pmc_trace_read.pm_offset;
+
+	return (0);
+}
+
+int
+pmc_trace_config(uint32_t cpu, pmc_id_t pmc,
+    uint64_t *ranges, uint32_t nranges)
+{
+	struct pmc_op_trace_config trc;
+
+	trc.pm_pmcid = pmc;
+	trc.pm_cpu = cpu;
+	trc.nranges = nranges;
+
+	if (nranges > PMC_FILTER_MAX_IP_RANGES)
+		return (-1);
+
+	memcpy(&trc.ranges, ranges, sizeof(uint64_t) * 2 * nranges);
+
+	if (PMC_CALL(TRACE_CONFIG, &trc) < 0)
+		return (-1);
+
+	return (0);
+}
+
+int
+pmc_log_kmap(pmc_id_t pmc)
+{
+	struct pmc_op_simple pmc_log_km;
+
+	pmc_log_km.pm_pmcid = pmc;
+
+	return (PMC_CALL(LOG_KERNEL_MAP, &pmc_log_km));
 }
 
 int
