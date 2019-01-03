@@ -289,7 +289,7 @@ static pv_entry_t pmap_pvh_remove(struct md_page *pvh, pmap_t pmap,
 static bool	pmap_demote_l2(pmap_t pmap, pd_entry_t *l2, vm_offset_t va);
 static bool	pmap_demote_l2_locked(pmap_t pmap, pd_entry_t *l2,
 		    vm_offset_t va, struct rwlock **lockp);
-static int	pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t new_l2,
+static int	pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t newl2,
 		    u_int flags, vm_page_t m, struct rwlock **lockp);
 static vm_page_t pmap_enter_quick_locked(pmap_t pmap, vm_offset_t va,
     vm_page_t m, vm_prot_t prot, vm_page_t mpte, struct rwlock **lockp);
@@ -2081,22 +2081,22 @@ static int
 pmap_remove_l3(pmap_t pmap, pt_entry_t *l3, vm_offset_t va, 
     pd_entry_t l2e, struct spglist *free, struct rwlock **lockp)
 {
-	pt_entry_t old_l3;
+	pt_entry_t oldl3;
 	vm_paddr_t phys;
 	vm_page_t m;
 
 	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
-	old_l3 = pmap_load_clear(l3);
+	oldl3 = pmap_load_clear(l3);
 	pmap_invalidate_page(pmap, va);
-	if (old_l3 & PTE_SW_WIRED)
+	if (oldl3 & PTE_SW_WIRED)
 		pmap->pm_stats.wired_count -= 1;
 	pmap_resident_count_dec(pmap, 1);
-	if (old_l3 & PTE_SW_MANAGED) {
-		phys = PTE_TO_PHYS(old_l3);
+	if (oldl3 & PTE_SW_MANAGED) {
+		phys = PTE_TO_PHYS(oldl3);
 		m = PHYS_TO_VM_PAGE(phys);
-		if ((old_l3 & PTE_D) != 0)
+		if ((oldl3 & PTE_D) != 0)
 			vm_page_dirty(m);
-		if (old_l3 & PTE_A)
+		if (oldl3 & PTE_A)
 			vm_page_aflag_set(m, PGA_REFERENCED);
 		CHANGE_PV_LIST_LOCK_TO_VM_PAGE(lockp, m);
 		pmap_pvh_free(&m->md, pmap, va);
@@ -2625,7 +2625,7 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 {
 	struct rwlock *lock;
 	pd_entry_t *l1, *l2, l2e;
-	pt_entry_t new_l3, orig_l3;
+	pt_entry_t newl3, oldl3;
 	pt_entry_t *l3;
 	pv_entry_t pv;
 	vm_paddr_t opa, pa, l2_pa, l3_pa;
@@ -2641,19 +2641,19 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 	pa = VM_PAGE_TO_PHYS(m);
 	pn = (pa / PAGE_SIZE);
 
-	new_l3 = PTE_V | PTE_R | PTE_A;
+	newl3 = PTE_V | PTE_R | PTE_A;
 	if (prot & VM_PROT_EXECUTE)
-		new_l3 |= PTE_X;
+		newl3 |= PTE_X;
 	if (flags & VM_PROT_WRITE)
-		new_l3 |= PTE_D;
+		newl3 |= PTE_D;
 	if (prot & VM_PROT_WRITE)
-		new_l3 |= PTE_W;
+		newl3 |= PTE_W;
 	if (va < VM_MAX_USER_ADDRESS)
-		new_l3 |= PTE_U;
+		newl3 |= PTE_U;
 
-	new_l3 |= (pn << PTE_PPN0_S);
+	newl3 |= (pn << PTE_PPN0_S);
 	if ((flags & PMAP_ENTER_WIRED) != 0)
-		new_l3 |= PTE_SW_WIRED;
+		newl3 |= PTE_SW_WIRED;
 
 	/*
 	 * Set modified bit gratuitously for writeable mappings if
@@ -2662,9 +2662,9 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 	 */
 	if ((m->oflags & VPO_UNMANAGED) != 0) {
 		if (prot & VM_PROT_WRITE)
-			new_l3 |= PTE_D;
+			newl3 |= PTE_D;
 	} else
-		new_l3 |= PTE_SW_MANAGED;
+		newl3 |= PTE_SW_MANAGED;
 
 	CTR2(KTR_PMAP, "pmap_enter: %.16lx -> %.16lx", va, pa);
 
@@ -2677,7 +2677,7 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 		KASSERT((va & L2_OFFSET) == 0,
 		    ("pmap_enter: va %#lx unaligned", va));
 		KASSERT(m->psind > 0, ("pmap_enter: m->psind < psind"));
-		rv = pmap_enter_l2(pmap, va, new_l3, flags, m, &lock);
+		rv = pmap_enter_l2(pmap, va, newl3, flags, m, &lock);
 		goto out;
 	}
 
@@ -2743,14 +2743,14 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 		pmap_invalidate_page(pmap, va);
 	}
 
-	orig_l3 = pmap_load(l3);
-	opa = PTE_TO_PHYS(orig_l3);
+	oldl3 = pmap_load(l3);
+	opa = PTE_TO_PHYS(oldl3);
 	pv = NULL;
 
 	/*
 	 * Is the specified virtual address already mapped?
 	 */
-	if ((orig_l3 & PTE_V) != 0) {
+	if ((oldl3 & PTE_V) != 0) {
 		/*
 		 * Wiring change, just update stats. We don't worry about
 		 * wiring PT pages as they remain resident as long as there
@@ -2758,10 +2758,10 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 		 * the PT page will be also.
 		 */
 		if ((flags & PMAP_ENTER_WIRED) != 0 &&
-		    (orig_l3 & PTE_SW_WIRED) == 0)
+		    (oldl3 & PTE_SW_WIRED) == 0)
 			pmap->pm_stats.wired_count++;
 		else if ((flags & PMAP_ENTER_WIRED) == 0 &&
-		    (orig_l3 & PTE_SW_WIRED) != 0)
+		    (oldl3 & PTE_SW_WIRED) != 0)
 			pmap->pm_stats.wired_count--;
 
 		/*
@@ -2781,8 +2781,8 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 			/*
 			 * No, might be a protection or wiring change.
 			 */
-			if ((orig_l3 & PTE_SW_MANAGED) != 0 &&
-			    (new_l3 & PTE_W) != 0)
+			if ((oldl3 & PTE_SW_MANAGED) != 0 &&
+			    (newl3 & PTE_W) != 0)
 				vm_page_aflag_set(m, PGA_WRITEABLE);
 			goto validate;
 		}
@@ -2797,10 +2797,10 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 		 *
 		 * For consistency, handle unmanaged mappings the same way.
 		 */
-		orig_l3 = pmap_load_clear(l3);
-		KASSERT(PTE_TO_PHYS(orig_l3) == opa,
+		oldl3 = pmap_load_clear(l3);
+		KASSERT(PTE_TO_PHYS(oldl3) == opa,
 		    ("pmap_enter: unexpected pa update for %#lx", va));
-		if ((orig_l3 & PTE_SW_MANAGED) != 0) {
+		if ((oldl3 & PTE_SW_MANAGED) != 0) {
 			om = PHYS_TO_VM_PAGE(opa);
 
 			/*
@@ -2808,34 +2808,34 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 			 * concurrent calls to pmap_page_test_mappings() and
 			 * pmap_ts_referenced().
 			 */
-			if ((orig_l3 & PTE_D) != 0)
+			if ((oldl3 & PTE_D) != 0)
 				vm_page_dirty(om);
-			if ((orig_l3 & PTE_A) != 0)
+			if ((oldl3 & PTE_A) != 0)
 				vm_page_aflag_set(om, PGA_REFERENCED);
 			CHANGE_PV_LIST_LOCK_TO_PHYS(&lock, opa);
 			pv = pmap_pvh_remove(&om->md, pmap, va);
 			KASSERT(pv != NULL,
 			    ("pmap_enter: no PV entry for %#lx", va));
-			if ((new_l3 & PTE_SW_MANAGED) == 0)
+			if ((newl3 & PTE_SW_MANAGED) == 0)
 				free_pv_entry(pmap, pv);
 			if ((om->aflags & PGA_WRITEABLE) != 0 &&
 			    TAILQ_EMPTY(&om->md.pv_list))
 				vm_page_aflag_clear(om, PGA_WRITEABLE);
 		}
 		pmap_invalidate_page(pmap, va);
-		orig_l3 = 0;
+		oldl3 = 0;
 	} else {
 		/*
 		 * Increment the counters.
 		 */
-		if ((new_l3 & PTE_SW_WIRED) != 0)
+		if ((newl3 & PTE_SW_WIRED) != 0)
 			pmap->pm_stats.wired_count++;
 		pmap_resident_count_inc(pmap, 1);
 	}
 	/*
 	 * Enter on the PV list if part of our managed memory.
 	 */
-	if ((new_l3 & PTE_SW_MANAGED) != 0) {
+	if ((newl3 & PTE_SW_MANAGED) != 0) {
 		if (pv == NULL) {
 			pv = get_pv_entry(pmap, &lock);
 			pv->pv_va = va;
@@ -2843,7 +2843,7 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 		CHANGE_PV_LIST_LOCK_TO_PHYS(&lock, pa);
 		TAILQ_INSERT_TAIL(&m->md.pv_list, pv, pv_next);
 		m->md.pv_gen++;
-		if ((new_l3 & PTE_W) != 0)
+		if ((newl3 & PTE_W) != 0)
 			vm_page_aflag_set(m, PGA_WRITEABLE);
 	}
 
@@ -2858,16 +2858,16 @@ validate:
 	/*
 	 * Update the L3 entry.
 	 */
-	if (orig_l3 != 0) {
-		orig_l3 = pmap_load_store(l3, new_l3);
+	if (oldl3 != 0) {
+		oldl3 = pmap_load_store(l3, newl3);
 		pmap_invalidate_page(pmap, va);
-		KASSERT(PTE_TO_PHYS(orig_l3) == pa,
+		KASSERT(PTE_TO_PHYS(oldl3) == pa,
 		    ("pmap_enter: invalid update"));
-		if ((orig_l3 & (PTE_D | PTE_SW_MANAGED)) ==
+		if ((oldl3 & (PTE_D | PTE_SW_MANAGED)) ==
 		    (PTE_D | PTE_SW_MANAGED))
 			vm_page_dirty(m);
 	} else {
-		pmap_store(l3, new_l3);
+		pmap_store(l3, newl3);
 	}
 
 #if VM_NRESERVLEVEL > 0
@@ -2898,20 +2898,20 @@ static bool
 pmap_enter_2mpage(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
     struct rwlock **lockp)
 {
-	pd_entry_t new_l2;
+	pd_entry_t newl2;
 	pn_t pn;
 
 	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
 
 	pn = VM_PAGE_TO_PHYS(m) / PAGE_SIZE;
-	new_l2 = (pd_entry_t)((pn << PTE_PPN0_S) | PTE_R | PTE_V);
+	newl2 = (pd_entry_t)((pn << PTE_PPN0_S) | PTE_R | PTE_V);
 	if ((m->oflags & VPO_UNMANAGED) == 0)
-		new_l2 |= PTE_SW_MANAGED;
+		newl2 |= PTE_SW_MANAGED;
 	if ((prot & VM_PROT_EXECUTE) != 0)
-		new_l2 |= PTE_X;
+		newl2 |= PTE_X;
 	if (va < VM_MAXUSER_ADDRESS)
-		new_l2 |= PTE_U;
-	return (pmap_enter_l2(pmap, va, new_l2, PMAP_ENTER_NOSLEEP |
+		newl2 |= PTE_U;
+	return (pmap_enter_l2(pmap, va, newl2, PMAP_ENTER_NOSLEEP |
 	    PMAP_ENTER_NOREPLACE | PMAP_ENTER_NORECLAIM, NULL, lockp) ==
 	    KERN_SUCCESS);
 }
@@ -2928,7 +2928,7 @@ pmap_enter_2mpage(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
  * The parameter "m" is only used when creating a managed, writeable mapping.
  */
 static int
-pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t new_l2, u_int flags,
+pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t newl2, u_int flags,
     vm_page_t m, struct rwlock **lockp)
 {
 	struct spglist free;
@@ -2985,11 +2985,11 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t new_l2, u_int flags,
 			    ("pmap_enter_l2: non-zero L2 entry %p", l2));
 	}
 
-	if ((new_l2 & PTE_SW_MANAGED) != 0) {
+	if ((newl2 & PTE_SW_MANAGED) != 0) {
 		/*
 		 * Abort this mapping if its PV entry could not be created.
 		 */
-		if (!pmap_pv_insert_l2(pmap, va, new_l2, flags, lockp)) {
+		if (!pmap_pv_insert_l2(pmap, va, newl2, flags, lockp)) {
 			SLIST_INIT(&free);
 			if (pmap_unwire_ptp(pmap, va, l2pg, &free)) {
 				/*
@@ -3006,7 +3006,7 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t new_l2, u_int flags,
 			    va, pmap);
 			return (KERN_RESOURCE_SHORTAGE);
 		}
-		if ((new_l2 & PTE_W) != 0)
+		if ((newl2 & PTE_W) != 0)
 			for (mt = m; mt < &m[L2_SIZE / PAGE_SIZE]; mt++)
 				vm_page_aflag_set(mt, PGA_WRITEABLE);
 	}
@@ -3014,14 +3014,14 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t new_l2, u_int flags,
 	/*
 	 * Increment counters.
 	 */
-	if ((new_l2 & PTE_SW_WIRED) != 0)
+	if ((newl2 & PTE_SW_WIRED) != 0)
 		pmap->pm_stats.wired_count += L2_SIZE / PAGE_SIZE;
 	pmap->pm_stats.resident_count += L2_SIZE / PAGE_SIZE;
 
 	/*
 	 * Map the superpage.
 	 */
-	pmap_store(l2, new_l2);
+	pmap_store(l2, newl2);
 
 	atomic_add_long(&pmap_l2_mappings, 1);
 	CTR2(KTR_PMAP, "pmap_enter_l2: success for va %#lx in pmap %p",
