@@ -2055,7 +2055,8 @@ pmap_remove_l2(pmap_t pmap, pt_entry_t *l2, vm_offset_t sva,
 				vm_page_aflag_set(m, PGA_REFERENCED);
 			if (TAILQ_EMPTY(&m->md.pv_list) &&
 			    TAILQ_EMPTY(&pvh->pv_list))
-				vm_page_aflag_clear(m, PGA_WRITEABLE);
+				vm_page_aflag_clear(m, PGA_WRITEABLE |
+				    PGA_EXECUTABLE);
 		}
 	}
 	if (pmap == kernel_pmap) {
@@ -2275,7 +2276,7 @@ pmap_remove_all(vm_page_t m)
 		free_pv_entry(pmap, pv);
 		PMAP_UNLOCK(pmap);
 	}
-	vm_page_aflag_clear(m, PGA_WRITEABLE);
+	vm_page_aflag_clear(m, PGA_WRITEABLE | PGA_EXECUTABLE);
 	rw_wunlock(&pvh_global_lock);
 	vm_page_free_pages_toq(&free, false);
 }
@@ -2784,6 +2785,8 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 			if ((oldl3 & PTE_SW_MANAGED) != 0 &&
 			    (newl3 & PTE_W) != 0)
 				vm_page_aflag_set(m, PGA_WRITEABLE);
+			if ((newl3 & PTE_X) != 0)
+				vm_page_aflag_set(m, PGA_EXECUTABLE);
 			goto validate;
 		}
 
@@ -2818,9 +2821,11 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 			    ("pmap_enter: no PV entry for %#lx", va));
 			if ((newl3 & PTE_SW_MANAGED) == 0)
 				free_pv_entry(pmap, pv);
-			if ((om->aflags & PGA_WRITEABLE) != 0 &&
+			if ((om->aflags & (PGA_WRITEABLE |
+			    PGA_EXECUTABLE)) != 0 &&
 			    TAILQ_EMPTY(&om->md.pv_list))
-				vm_page_aflag_clear(om, PGA_WRITEABLE);
+				vm_page_aflag_clear(om, PGA_WRITEABLE |
+				    PGA_EXECUTABLE);
 		}
 		pmap_invalidate_page(pmap, va);
 		oldl3 = 0;
@@ -2850,10 +2855,13 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 validate:
 	/*
 	 * Sync the i-cache on all harts before updating the PTE
-	 * if the new PTE is executable.
+	 * if the new PTE is executable and not already mapped as
+	 * executable.
 	 */
-	if (prot & VM_PROT_EXECUTE)
+	if ((newl3 & PTE_X) != 0 && (m->aflags & PGA_EXECUTABLE) == 0) {
+		vm_page_aflag_set(m, PGA_EXECUTABLE);
 		pmap_sync_icache(pmap, va, PAGE_SIZE);
+	}
 
 	/*
 	 * Update the L3 entry.
@@ -2924,8 +2932,6 @@ pmap_enter_2mpage(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
  * KERN_RESOURCE_SHORTAGE if PMAP_ENTER_NOSLEEP was specified and a page table
  * page allocation failed.  Returns KERN_RESOURCE_SHORTAGE if
  * PMAP_ENTER_NORECLAIM was specified and a PV entry allocation failed.
- *
- * The parameter "m" is only used when creating a managed, writeable mapping.
  */
 static int
 pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t newl2, u_int flags,
@@ -2935,6 +2941,8 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t newl2, u_int flags,
 	pd_entry_t *l2, *l3, oldl2;
 	vm_offset_t sva;
 	vm_page_t l2pg, mt;
+	uint8_t amask;
+	bool executable;
 
 	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
 
@@ -2985,6 +2993,8 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t newl2, u_int flags,
 			    ("pmap_enter_l2: non-zero L2 entry %p", l2));
 	}
 
+	amask = (newl2 & PTE_X) != 0 ? PGA_EXECUTABLE : 0;
+	executable = (m->aflags & PGA_EXECUTABLE) != 0;
 	if ((newl2 & PTE_SW_MANAGED) != 0) {
 		/*
 		 * Abort this mapping if its PV entry could not be created.
@@ -3007,9 +3017,11 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t newl2, u_int flags,
 			return (KERN_RESOURCE_SHORTAGE);
 		}
 		if ((newl2 & PTE_W) != 0)
-			for (mt = m; mt < &m[L2_SIZE / PAGE_SIZE]; mt++)
-				vm_page_aflag_set(mt, PGA_WRITEABLE);
+			amask |= PGA_WRITEABLE;
 	}
+	if (amask != 0)
+		for (mt = m; mt < &m[Ln_ENTRIES]; mt++)
+			vm_page_aflag_set(mt, amask);
 
 	/*
 	 * Increment counters.
@@ -3017,6 +3029,14 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t newl2, u_int flags,
 	if ((newl2 & PTE_SW_WIRED) != 0)
 		pmap->pm_stats.wired_count += L2_SIZE / PAGE_SIZE;
 	pmap->pm_stats.resident_count += L2_SIZE / PAGE_SIZE;
+
+	/*
+	 * Sync the i-cache on all harts before updating the PTE
+	 * if the new PTE is executable and not already mapped as
+	 * executable.
+	 */
+	if ((newl2 & PTE_X) != 0 && !executable)
+		pmap_sync_icache(pmap, va, L2_SIZE);
 
 	/*
 	 * Map the superpage.
@@ -3203,10 +3223,13 @@ pmap_enter_quick_locked(pmap_t pmap, vm_offset_t va, vm_page_t m,
 
 	/*
 	 * Sync the i-cache on all harts before updating the PTE
-	 * if the new PTE is executable.
+	 * if the new PTE is executable and not already mapped as
+	 * executable.
 	 */
-	if (prot & VM_PROT_EXECUTE)
+	if ((newl3 & PTE_X) != 0 && (m->aflags & PGA_EXECUTABLE) == 0) {
+		vm_page_aflag_set(m, PGA_EXECUTABLE);
 		pmap_sync_icache(pmap, va, PAGE_SIZE);
+	}
 
 	pmap_store(l3, newl3);
 
@@ -3551,8 +3574,10 @@ pmap_remove_pages_pv(pmap_t pmap, vm_page_t m, pv_entry_t pv,
 		if (TAILQ_EMPTY(&pvh->pv_list)) {
 			for (mt = m; mt < &m[Ln_ENTRIES]; mt++)
 				if (TAILQ_EMPTY(&mt->md.pv_list) &&
-				    (mt->aflags & PGA_WRITEABLE) != 0)
-					vm_page_aflag_clear(mt, PGA_WRITEABLE);
+				    (mt->aflags & (PGA_WRITEABLE |
+				    PGA_EXECUTABLE)) != 0)
+					vm_page_aflag_clear(mt, PGA_WRITEABLE |
+					    PGA_EXECUTABLE);
 		}
 		mpte = pmap_remove_pt_page(pmap, pv->pv_va);
 		if (mpte != NULL) {
@@ -3567,10 +3592,11 @@ pmap_remove_pages_pv(pmap_t pmap, vm_page_t m, pv_entry_t pv,
 		TAILQ_REMOVE(&m->md.pv_list, pv, pv_next);
 		m->md.pv_gen++;
 		if (TAILQ_EMPTY(&m->md.pv_list) &&
-		    (m->aflags & PGA_WRITEABLE) != 0) {
+		    (m->aflags & (PGA_WRITEABLE | PGA_EXECUTABLE)) != 0) {
 			pvh = pa_to_pvh(m->phys_addr);
 			if (TAILQ_EMPTY(&pvh->pv_list))
-				vm_page_aflag_clear(m, PGA_WRITEABLE);
+				vm_page_aflag_clear(m, PGA_WRITEABLE |
+				    PGA_EXECUTABLE);
 		}
 	}
 }
@@ -3906,7 +3932,7 @@ retry:
 		PMAP_UNLOCK(pmap);
 	}
 	rw_wunlock(lock);
-	vm_page_aflag_clear(m, PGA_WRITEABLE);
+	vm_page_aflag_clear(m, PGA_WRITEABLE | PGA_EXECUTABLE);
 	rw_runlock(&pvh_global_lock);
 }
 
