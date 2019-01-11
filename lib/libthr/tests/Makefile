@@ -4,6 +4,8 @@ PACKAGE=	tests
 
 TESTSRC=	${SRCTOP}/contrib/netbsd-tests/lib/libpthread
 
+ATF_TESTS_C=	stack_test
+
 # TODO: t_name (missing pthread_getname_np support in FreeBSD)
 NETBSD_ATF_TESTS_C=	barrier_test
 NETBSD_ATF_TESTS_C+=	cond_test

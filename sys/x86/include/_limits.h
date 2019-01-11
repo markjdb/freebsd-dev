@@ -98,6 +98,10 @@
 #define	__WORD_BIT	32
 
 /* Minimum signal stack size. */
+#ifdef __LP64__
+#define	__MINSIGSTKSZ	(1024 * 4)
+#else
 #define	__MINSIGSTKSZ	(512 * 4)
+#endif
 
 #endif /* !_MACHINE__LIMITS_H_ */
