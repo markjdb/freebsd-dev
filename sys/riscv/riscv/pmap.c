@@ -298,6 +298,9 @@ static int pmap_remove_l3(pmap_t pmap, pt_entry_t *l3, vm_offset_t sva,
 static boolean_t pmap_try_insert_pv_entry(pmap_t pmap, vm_offset_t va,
     vm_page_t m, struct rwlock **lockp);
 
+static void	pmap_invalidate_all_local(pmap_t pmap);
+static void	pmap_invalidate_page_local(pmap_t pmap, vm_offset_t va);
+
 static vm_page_t _pmap_alloc_l3(pmap_t pmap, vm_pindex_t ptepindex,
 		struct rwlock **lockp);
 
@@ -502,12 +505,11 @@ pmap_bootstrap_dmap(vm_offset_t kern_l1, vm_paddr_t min_pa, vm_paddr_t max_pa)
 		entry |= (pn << PTE_PPN0_S);
 		pmap_store(&l1[l1_slot], entry);
 	}
+	pmap_invalidate_all_local(kernel_pmap);
 
 	/* Set the upper limit of the DMAP region */
 	dmap_phys_max = pa;
 	dmap_max_addr = va;
-
-	sfence_vma();
 }
 
 static vm_offset_t
@@ -527,7 +529,8 @@ pmap_bootstrap_l3(vm_offset_t l1pt, vm_offset_t va, vm_offset_t l3_start)
 	l2_slot = pmap_l2_index(va);
 	l3pt = l3_start;
 
-	for (; va < VM_MAX_KERNEL_ADDRESS; l2_slot++, va += L2_SIZE) {
+	for (; va < VM_MAX_KERNEL_ADDRESS; l2_slot++, va += L2_SIZE,
+	    l3pt += PAGE_SIZE) {
 		KASSERT(l2_slot < Ln_ENTRIES, ("Invalid L2 index"));
 
 		pa = pmap_early_vtophys(l1pt, l3pt);
@@ -535,9 +538,8 @@ pmap_bootstrap_l3(vm_offset_t l1pt, vm_offset_t va, vm_offset_t l3_start)
 		entry = (PTE_V);
 		entry |= (pn << PTE_PPN0_S);
 		pmap_store(&l2[l2_slot], entry);
-		l3pt += PAGE_SIZE;
 	}
-
+	pmap_invalidate_all_local(kernel_pmap);
 
 	/* Clean the L2 page table */
 	memset((void *)l3_start, 0, l3pt - l3_start);
@@ -606,8 +608,6 @@ pmap_bootstrap(vm_offset_t l1pt, vm_paddr_t kernstart, vm_size_t kernlen)
 	/* Create the l3 tables for the early devmap */
 	freemempos = pmap_bootstrap_l3(l1pt,
 	    VM_MAX_KERNEL_ADDRESS - L2_SIZE, freemempos);
-
-	sfence_vma();
 
 #define alloc_pages(var, np)						\
 	(var) = freemempos;						\
@@ -719,6 +719,32 @@ pmap_init(void)
 		pagesizes[1] = L2_SIZE;
 }
 
+static void
+pmap_invalidate_page_local(pmap_t pmap __unused, vm_offset_t va)
+{
+
+	sfence_vma_page(va);
+}
+
+static void
+pmap_invalidate_range_local(pmap_t pmap __unused, vm_offset_t sva,
+    vm_offset_t eva)
+{
+
+	/*
+	 * Might consider a loop of sfence_vma_page() for a small
+	 * number of pages in the future.
+	 */
+	sfence_vma();
+}
+
+static void
+pmap_invalidate_all_local(pmap_t pmap __unused)
+{
+
+	sfence_vma();
+}
+
 #ifdef SMP
 /*
  * For SMP, these functions have to use IPIs for coherence.
@@ -791,27 +817,37 @@ static __inline void
 pmap_invalidate_page(pmap_t pmap, vm_offset_t va)
 {
 
-	sfence_vma_page(va);
+	pmap_invalidate_page_local(pmap, va);
 }
 
 static __inline void
 pmap_invalidate_range(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 {
 
-	/*
-	 * Might consider a loop of sfence_vma_page() for a small
-	 * number of pages in the future.
-	 */
-	sfence_vma();
+	pmap_invalidate_range_local(pmap, va);
 }
 
 static __inline void
 pmap_invalidate_all(pmap_t pmap)
 {
 
-	sfence_vma();
+	pmap_invalidate_all_local();
 }
 #endif
+
+/*
+ * The sfence.vma specification states that it is sufficient to specify a single
+ * address within a superpage mapping.  However, since we do not perform
+ * invalidation upon promotion, TLBs may still be caching 4KB mappings within
+ * the large mapping, so the entire range [sva, sva + L2_SIZE) must be
+ * invalidated.
+ */
+static void
+pmap_invalidate_l2_page(pmap_t pmap, vm_offset_t va)
+{
+
+	pmap_invalidate_range(pmap, va, va + L2_SIZE);
+}
 
 /*
  *	Routine:	pmap_extract
@@ -962,9 +998,8 @@ pmap_kremove(vm_offset_t va)
 
 	l3 = pmap_l3(kernel_pmap, va);
 	KASSERT(l3 != NULL, ("pmap_kremove: Invalid address"));
-
 	pmap_clear(l3);
-	sfence_vma();
+	pmap_invalidate_all_local(kernel_pmap);
 }
 
 void
@@ -2015,6 +2050,8 @@ pmap_remove_kernel_l2(pmap_t pmap, pt_entry_t *l2, vm_offset_t va)
 
 /*
  * pmap_remove_l2: Do the things to unmap a level 2 superpage.
+ *
+ * Callers are responsible for invalidating the mapping.
  */
 static int
 pmap_remove_l2(pmap_t pmap, pt_entry_t *l2, vm_offset_t sva,
@@ -2031,14 +2068,6 @@ pmap_remove_l2(pmap_t pmap, pt_entry_t *l2, vm_offset_t sva,
 	KASSERT((oldl2 & PTE_RWX) != 0,
 	    ("pmap_remove_l2: L2e %lx is not a superpage mapping", oldl2));
 
-	/*
-	 * The sfence.vma documentation states that it is sufficient to specify
-	 * a single address within a superpage mapping.  However, since we do
-	 * not perform any invalidation upon promotion, TLBs may still be
-	 * caching 4KB mappings within the superpage, so we must invalidate the
-	 * entire range.
-	 */
-	pmap_invalidate_range(pmap, sva, sva + L2_SIZE);
 	if ((oldl2 & PTE_SW_WIRED) != 0)
 		pmap->pm_stats.wired_count -= L2_SIZE / PAGE_SIZE;
 	pmap_resident_count_dec(pmap, L2_SIZE / PAGE_SIZE);
@@ -2077,6 +2106,8 @@ pmap_remove_l2(pmap_t pmap, pt_entry_t *l2, vm_offset_t sva,
 
 /*
  * pmap_remove_l3: do the things to unmap a page in a process
+ *
+ * Callers are responsible for invalidating the mapping.
  */
 static int
 pmap_remove_l3(pmap_t pmap, pt_entry_t *l3, vm_offset_t va, 
@@ -2088,7 +2119,6 @@ pmap_remove_l3(pmap_t pmap, pt_entry_t *l3, vm_offset_t va,
 
 	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
 	oldl3 = pmap_load_clear(l3);
-	pmap_invalidate_page(pmap, va);
 	if (oldl3 & PTE_SW_WIRED)
 		pmap->pm_stats.wired_count -= 1;
 	pmap_resident_count_dec(pmap, 1);
@@ -2102,7 +2132,6 @@ pmap_remove_l3(pmap_t pmap, pt_entry_t *l3, vm_offset_t va,
 		CHANGE_PV_LIST_LOCK_TO_VM_PAGE(lockp, m);
 		pmap_pvh_free(&m->md, pmap, va);
 	}
-
 	return (pmap_unuse_pt(pmap, va, l2e, free));
 }
 
@@ -2161,6 +2190,7 @@ pmap_remove(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 			if (sva + L2_SIZE == va_next && eva >= va_next) {
 				(void)pmap_remove_l2(pmap, l2, sva,
 				    pmap_load(l1), &free, &lock);
+				pmap_invalidate_l2_page(pmap, sva);
 				continue;
 			} else if (!pmap_demote_l2_locked(pmap, l2, sva,
 			    &lock)) {
@@ -2346,9 +2376,11 @@ retryl2:
 				if (!pv_lists_locked) {
 					pv_lists_locked = true;
 					if (!rw_try_rlock(&pvh_global_lock)) {
-						if (anychanged)
+						if (anychanged) {
+							anychanged = false;
 							pmap_invalidate_all(
 							    pmap);
+						}
 						PMAP_UNLOCK(pmap);
 						rw_rlock(&pvh_global_lock);
 						goto resume;
@@ -2428,7 +2460,7 @@ pmap_fault_fixup(pmap_t pmap, vm_offset_t va, vm_prot_t ftype)
 	 */
 	if ((oldpte & bits) != bits)
 		pmap_store_bits(pte, bits);
-	sfence_vma();
+	pmap_invalidate_page_local(pmap, va);
 	rv = 1;
 done:
 	PMAP_UNLOCK(pmap);
@@ -2475,8 +2507,10 @@ pmap_demote_l2_locked(pmap_t pmap, pd_entry_t *l2, vm_offset_t va,
 		    VM_ALLOC_NORMAL) | VM_ALLOC_NOOBJ | VM_ALLOC_WIRED)) ==
 		    NULL) {
 			SLIST_INIT(&free);
-			(void)pmap_remove_l2(pmap, l2, va & ~L2_OFFSET,
+			va = va & ~L2_OFFSET;
+			(void)pmap_remove_l2(pmap, l2, va,
 			    pmap_load(pmap_l1(pmap, va)), &free, lockp);
+			pmap_invalidate_l2_page(pmap, va);
 			vm_page_free_pages_toq(&free, true);
 			CTR2(KTR_PMAP, "pmap_demote_l2_locked: "
 			    "failure for va %#lx in pmap %p", va, pmap);
@@ -2526,7 +2560,8 @@ pmap_demote_l2_locked(pmap_t pmap, pd_entry_t *l2, vm_offset_t va,
 		reserve_pv_entries(pmap, Ln_ENTRIES - 1, lockp);
 
 	/*
-	 * Demote the mapping.
+	 * Demote the mapping.  The large mapping may remain cached until one of
+	 * the 4KB pages is invalidated.
 	 */
 	pmap_store(l2, newl2);
 
@@ -2876,6 +2911,7 @@ validate:
 			vm_page_dirty(m);
 	} else {
 		pmap_store(l3, newl3);
+		pmap_invalidate_page_local(pmap, va);
 	}
 
 #if VM_NRESERVLEVEL > 0
@@ -2966,17 +3002,22 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t newl2, u_int flags,
 			return (KERN_FAILURE);
 		}
 		SLIST_INIT(&free);
-		if ((oldl2 & PTE_RWX) != 0)
+		if ((oldl2 & PTE_RWX) != 0) {
 			(void)pmap_remove_l2(pmap, l2, va,
 			    pmap_load(pmap_l1(pmap, va)), &free, lockp);
-		else
+			pmap_invalidate_l2_page(pmap, va);
+		} else {
 			for (sva = va; sva < va + L2_SIZE; sva += PAGE_SIZE) {
 				l3 = pmap_l2_to_l3(l2, sva);
 				if ((pmap_load(l3) & PTE_V) != 0 &&
 				    pmap_remove_l3(pmap, l3, sva, oldl2, &free,
-				    lockp) != 0)
+				    lockp) != 0) {
+					sva += PAGE_SIZE;
 					break;
+				}
 			}
+			pmap_invalidate_range(pmap, va, sva);
+		}
 		vm_page_free_pages_toq(&free, true);
 		if (va >= VM_MAXUSER_ADDRESS) {
 			mt = PHYS_TO_VM_PAGE(PTE_TO_PHYS(pmap_load(l2)));
@@ -3042,6 +3083,7 @@ pmap_enter_l2(pmap_t pmap, vm_offset_t va, pd_entry_t newl2, u_int flags,
 	 * Map the superpage.
 	 */
 	pmap_store(l2, newl2);
+	pmap_invalidate_range_local(pmap, va, L2_SIZE);
 
 	atomic_add_long(&pmap_l2_mappings, 1);
 	CTR2(KTR_PMAP, "pmap_enter_l2: success for va %#lx in pmap %p",
@@ -3232,8 +3274,7 @@ pmap_enter_quick_locked(pmap_t pmap, vm_offset_t va, vm_page_t m,
 	}
 
 	pmap_store(l3, newl3);
-
-	pmap_invalidate_page(pmap, va);
+	pmap_invalidate_page_local(pmap, va);
 	return (mpte);
 }
 
