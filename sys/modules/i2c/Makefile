@@ -12,6 +12,7 @@ SUBDIR = \
 	iic \
 	iicbb \
 	iicbus \
+	iichid \
 	iicsmb \
 	isl \
 	isl12xx \
