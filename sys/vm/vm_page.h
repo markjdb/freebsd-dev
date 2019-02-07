@@ -231,8 +231,9 @@ struct vm_page {
  * 	 otherwise should be treated as a normal page.  Pages not
  * 	 under PV management cannot be paged out via the
  * 	 object/vm_page_t because there is no knowledge of their pte
- * 	 mappings, and such pages are also not on any PQ queue.
- *
+ * 	 mappings, and such pages are also not on any PQ queue.  Note
+ * 	 that VPO_UNMANAGED is not set when a managed page is removed
+ * 	 from its object without being freed.
  */
 #define	VPO_KMEM_EXEC	0x01		/* kmem mapping allows execution */
 #define	VPO_SWAPSLEEP	0x02		/* waiting for swap to finish */
