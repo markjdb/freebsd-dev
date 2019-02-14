@@ -3415,14 +3415,14 @@ pmap_extract_and_hold(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 	struct l2_dtable *l2;
 	pd_entry_t l1pd;
 	pt_entry_t *ptep, pte;
-	vm_paddr_t pa, paddr;
-	vm_page_t m = NULL;
+	vm_paddr_t pa;
+	vm_page_t m;
 	u_int l1idx;
 	l1idx = L1_IDX(va);
-	paddr = 0;
+
+	m = NULL;
 
  	PMAP_LOCK(pmap);
-retry:
 	l1pd = pmap->pm_l1->l1_kva[l1idx];
 	if (l1pte_section_p(l1pd)) {
 		/*
@@ -3434,13 +3434,8 @@ retry:
 			pa = (l1pd & L1_SUP_FRAME) | (va & L1_SUP_OFFSET);
 		else
 			pa = (l1pd & L1_S_FRAME) | (va & L1_S_OFFSET);
-		if (vm_page_pa_tryrelock(pmap, pa & PG_FRAME, &paddr))
-			goto retry;
-		if (l1pd & L1_S_PROT_W || (prot & VM_PROT_WRITE) == 0) {
+		if (l1pd & L1_S_PROT_W || (prot & VM_PROT_WRITE) == 0)
 			m = PHYS_TO_VM_PAGE(pa);
-			vm_page_hold(m);
-		}
-
 	} else {
 		/*
 		 * Note that we can't rely on the validity of the L1
@@ -3448,7 +3443,6 @@ retry:
 		 * We have to look it up in the L2 dtable.
 		 */
 		l2 = pmap->pm_l2[L2_IDX(l1idx)];
-
 		if (l2 == NULL ||
 		    (ptep = l2->l2_bucket[L2_BUCKET(l1idx)].l2b_kva) == NULL) {
 		 	PMAP_UNLOCK(pmap);
@@ -3457,7 +3451,6 @@ retry:
 
 		ptep = &ptep[l2pte_index(va)];
 		pte = *ptep;
-
 		if (pte == 0) {
 		 	PMAP_UNLOCK(pmap);
 			return (NULL);
@@ -3467,15 +3460,12 @@ retry:
 				pa = (pte & L2_L_FRAME) | (va & L2_L_OFFSET);
 			else
 				pa = (pte & L2_S_FRAME) | (va & L2_S_OFFSET);
-			if (vm_page_pa_tryrelock(pmap, pa & PG_FRAME, &paddr))
-				goto retry;
 			m = PHYS_TO_VM_PAGE(pa);
-			vm_page_hold(m);
 		}
 	}
-
+	if (m != NULL && !vm_page_try_hold(m))
+		m = NULL;
  	PMAP_UNLOCK(pmap);
-	PA_UNLOCK_COND(paddr);
 	return (m);
 }
 

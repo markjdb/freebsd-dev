@@ -223,7 +223,6 @@ via_lock_all_dma_pages(drm_via_sg_info_t *vsg,  drm_via_dmablit_t *xfer)
 {
 	unsigned long first_pfn = VIA_PFN(xfer->mem_addr);
 	vm_page_t m;
-	int i;
 
 	vsg->num_pages = VIA_PFN(xfer->mem_addr +
 	    (xfer->num_lines * xfer->mem_stride -1)) - first_pfn + 1;
@@ -239,13 +238,6 @@ via_lock_all_dma_pages(drm_via_sg_info_t *vsg,  drm_via_dmablit_t *xfer)
 	    VM_PROT_READ | VM_PROT_WRITE, vsg->pages, vsg->num_pages) < 0)
 		return -EACCES;
 
-	for (i = 0; i < vsg->num_pages; i++) {
-		m = vsg->pages[i];
-		vm_page_lock(m);
-		vm_page_wire(m);
-		vm_page_unhold(m);
-		vm_page_unlock(m);
-	}
 	vsg->state = dr_via_pages_locked;
 
 	DRM_DEBUG("DMA pages locked\n");

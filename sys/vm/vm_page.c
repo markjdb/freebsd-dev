@@ -183,11 +183,12 @@ static void vm_page_insert_radixdone(vm_page_t m, vm_object_t object,
     vm_page_t mpred);
 static int vm_page_reclaim_run(int req_class, int domain, u_long npages,
     vm_page_t m_run, vm_paddr_t high);
+static void vm_page_remove_from_object(vm_object_t object, vm_page_t m);
 static int vm_domain_alloc_fail(struct vm_domain *vmd, vm_object_t object,
     int req);
-static int vm_page_import(void *arg, void **store, int cnt, int domain,
+static int vm_page_zone_import(void *arg, void **store, int cnt, int domain,
     int flags);
-static void vm_page_release(void *arg, void **store, int cnt);
+static void vm_page_zone_release(void *arg, void **store, int cnt);
 
 SYSINIT(vm_page, SI_SUB_VM, SI_ORDER_SECOND, vm_page_init, NULL);
 
@@ -221,7 +222,7 @@ vm_page_init_cache_zones(void *dummy __unused)
 			continue;
 		vmd->vmd_pgcache = uma_zcache_create("vm pgcache",
 		    sizeof(struct vm_page), NULL, NULL, NULL, NULL,
-		    vm_page_import, vm_page_release, vmd,
+		    vm_page_zone_import, vm_page_zone_release, vmd,
 		    UMA_ZONE_MAXBUCKET | UMA_ZONE_VM);
 		(void )uma_zone_set_maxcache(vmd->vmd_pgcache, 0);
 	}
@@ -441,8 +442,7 @@ sysctl_vm_page_blacklist(SYSCTL_HANDLER_ARGS)
 /*
  * Initialize a dummy page for use in scans of the specified paging queue.
  * In principle, this function only needs to set the flag PG_MARKER.
- * Nonetheless, it write busies and initializes the hold count to one as
- * safety precautions.
+ * Nonetheless, it write busies the page as a safety precaution.
  */
 static void
 vm_page_init_marker(vm_page_t marker, int queue, uint8_t aflags)
@@ -453,7 +453,6 @@ vm_page_init_marker(vm_page_t marker, int queue, uint8_t aflags)
 	marker->aflags = aflags;
 	marker->busy_lock = VPB_SINGLE_EXCLUSIVER;
 	marker->queue = queue;
-	marker->hold_count = 1;
 }
 
 static void
@@ -523,7 +522,6 @@ vm_page_init_page(vm_page_t m, vm_paddr_t pa, int segind)
 	m->object = NULL;
 	m->wire_count = 0;
 	m->busy_lock = VPB_UNBUSIED;
-	m->hold_count = 0;
 	m->flags = m->aflags = 0;
 	m->phys_addr = pa;
 	m->queue = PQ_NONE;
@@ -1103,29 +1101,32 @@ vm_page_change_lock(vm_page_t m, struct mtx **mtx)
 	mtx_lock(mtx1);
 }
 
-/*
- * Keep page from being freed by the page daemon
- * much of the same effect as wiring, except much lower
- * overhead and should be used only for *very* temporary
- * holding ("wiring").
- */
 void
-vm_page_hold(vm_page_t mem)
+vm_page_hold(vm_page_t m)
 {
 
-	vm_page_lock_assert(mem, MA_OWNED);
-        mem->hold_count++;
+	vm_page_wire(m);
+}
+
+/* XXX comment */
+bool
+vm_page_try_hold(vm_page_t m)
+{
+	uint32_t old;
+
+	old = m->wire_count;
+	do {
+		if (__predict_false(old == WIRE_COUNT_BLOCKED))
+			return (false);
+	} while (!atomic_fcmpset_32(&m->wire_count, &old, old + 1));
+	return (true);
 }
 
 void
-vm_page_unhold(vm_page_t mem)
+vm_page_unhold(vm_page_t m)
 {
 
-	vm_page_lock_assert(mem, MA_OWNED);
-	KASSERT(mem->hold_count >= 1, ("vm_page_unhold: hold count < 0!!!"));
-	--mem->hold_count;
-	if (mem->hold_count == 0 && (mem->flags & PG_UNHOLDFREE) != 0)
-		vm_page_free_toq(mem);
+	vm_page_unwire(m, PQ_ACTIVE);
 }
 
 /*
@@ -1416,6 +1417,8 @@ vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
 		m->pindex = 0;
 		return (1);
 	}
+	if ((m->wire_count & WIRE_COUNT_OBJREF) == 0)
+		atomic_set_32(&m->wire_count, WIRE_COUNT_OBJREF);
 	vm_page_insert_radixdone(m, object, mpred);
 	return (0);
 }
@@ -1477,19 +1480,33 @@ vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
  *
  *	The object must be locked.  The page must be locked if it is managed.
  */
-void
+bool
 vm_page_remove(vm_page_t m)
 {
 	vm_object_t object;
-	vm_page_t mrem;
 
 	if ((m->oflags & VPO_UNMANAGED) == 0)
 		vm_page_assert_locked(m);
 	if ((object = m->object) == NULL)
-		return;
-	VM_OBJECT_ASSERT_WLOCKED(object);
+		return (false);
 	if (vm_page_xbusied(m))
 		vm_page_xunbusy_maybelocked(m);
+	vm_page_remove_from_object(object, m);
+	return (vm_page_remove_complete(m));
+}
+
+/*
+ * Update object state to reflect removal of the page m from its object.
+ */
+static void
+vm_page_remove_from_object(vm_object_t object, vm_page_t m)
+{
+	vm_page_t mrem;
+
+	KASSERT(m->object == object, ("unexpected object %p for page %p",
+	    object, m));
+	VM_OBJECT_ASSERT_WLOCKED(object);
+
 	mrem = vm_radix_remove(&object->rtree, m->pindex);
 	KASSERT(mrem == m, ("removed page %p, expected page %p", mrem, m));
 
@@ -1508,8 +1525,25 @@ vm_page_remove(vm_page_t m)
 	 */
 	if (object->resident_page_count == 0 && object->type == OBJT_VNODE)
 		vdrop(object->handle);
+}
+
+/*
+ * Update page fields to the reflect removal of the page from its object.
+ * Returns true if the object held the last remaining reference to the page
+ * structure.  In this case the page must be freed by its caller.
+ */
+bool
+vm_page_remove_complete(vm_page_t m)
+{
+	uint32_t old;
+
+	KASSERT((m->wire_count & WIRE_COUNT_OBJREF) != 0 && m->object != NULL,
+	    ("page %p missing object reference", m));
+	VM_OBJECT_ASSERT_WLOCKED(m->object);
 
 	m->object = NULL;
+	old = atomic_fetchadd_32(&m->wire_count, -WIRE_COUNT_OBJREF);
+	return (old == WIRE_COUNT_OBJREF);
 }
 
 /*
@@ -1599,10 +1633,14 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 	vm_page_t mold;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
-	KASSERT(mnew->object == NULL,
-	    ("vm_page_replace: page %p already in object", mnew));
 	KASSERT(mnew->queue == PQ_NONE,
 	    ("vm_page_replace: new page %p is on a paging queue", mnew));
+
+	if (mnew->object != NULL)
+		vm_page_remove_from_object(mnew->object, mnew);
+	else
+		/* XXX ugly */
+		atomic_set_32(&mnew->wire_count, WIRE_COUNT_OBJREF);
 
 	/*
 	 * This function mostly follows vm_page_insert() and
@@ -1620,7 +1658,7 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 	TAILQ_INSERT_AFTER(&object->memq, mold, mnew, listq);
 	TAILQ_REMOVE(&object->memq, mold, listq);
 
-	mold->object = NULL;
+	(void)vm_page_remove_complete(mold);
 	vm_page_xunbusy_maybelocked(mold);
 
 	/*
@@ -1679,13 +1717,11 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 	 * the listq iterator is tainted.
 	 */
 	m->pindex = opidx;
-	vm_page_lock(m);
-	vm_page_remove(m);
+	vm_page_remove_from_object(m->object, m);
 
 	/* Return back to the new pindex to complete vm_page_insert(). */
 	m->pindex = new_pindex;
 	m->object = new_object;
-	vm_page_unlock(m);
 	vm_page_insert_radixdone(m, new_object, mpred);
 	vm_page_dirty(m);
 	return (0);
@@ -1897,13 +1933,11 @@ found:
 		m->busy_lock = VPB_SINGLE_EXCLUSIVER;
 	if ((req & VM_ALLOC_SBUSY) != 0)
 		m->busy_lock = VPB_SHARERS_WORD(1);
-	if (req & VM_ALLOC_WIRED) {
-		/*
-		 * The page lock is not required for wiring a page until that
-		 * page is inserted into the object.
-		 */
+	m->wire_count = (m->oflags & VPO_UNMANAGED) == 0 ?
+	    WIRE_COUNT_OBJREF : 0;
+	if ((req & VM_ALLOC_WIRED) != 0) {
 		vm_wire_add(1);
-		m->wire_count = 1;
+		m->wire_count++;
 	}
 	m->act_count = 0;
 
@@ -2104,8 +2138,10 @@ found:
 		m->aflags = 0;
 		m->flags = (m->flags | PG_NODUMP) & flags;
 		m->busy_lock = busy_lock;
+		m->wire_count = (m->oflags & VPO_UNMANAGED) == 0 ?
+		    WIRE_COUNT_OBJREF : 0;
 		if ((req & VM_ALLOC_WIRED) != 0)
-			m->wire_count = 1;
+			m->wire_count++;
 		m->act_count = 0;
 		m->oflags = oflags;
 		if (object != NULL) {
@@ -2152,7 +2188,7 @@ vm_page_alloc_check(vm_page_t m)
 	KASSERT(m->queue == PQ_NONE && (m->aflags & PGA_QUEUE_STATE_MASK) == 0,
 	    ("page %p has unexpected queue %d, flags %#x",
 	    m, m->queue, (m->aflags & PGA_QUEUE_STATE_MASK)));
-	KASSERT(!vm_page_held(m), ("page %p is held", m));
+	KASSERT(m->wire_count == 0, ("page %p has non-zero wire_count", m));
 	KASSERT(!vm_page_busied(m), ("page %p is busy", m));
 	KASSERT(m->dirty == 0, ("page %p is dirty", m));
 	KASSERT(pmap_page_get_memattr(m) == VM_MEMATTR_DEFAULT,
@@ -2244,7 +2280,7 @@ again:
 }
 
 static int
-vm_page_import(void *arg, void **store, int cnt, int domain, int flags)
+vm_page_zone_import(void *arg, void **store, int cnt, int domain, int flags)
 {
 	struct vm_domain *vmd;
 	int i;
@@ -2265,7 +2301,7 @@ vm_page_import(void *arg, void **store, int cnt, int domain, int flags)
 }
 
 static void
-vm_page_release(void *arg, void **store, int cnt)
+vm_page_zone_release(void *arg, void **store, int cnt)
 {
 	struct vm_domain *vmd;
 	vm_page_t m;
@@ -2388,9 +2424,7 @@ retry:
 					goto unlock;
 				}
 			}
-			KASSERT((m->flags & PG_UNHOLDFREE) == 0,
-			    ("page %p is PG_UNHOLDFREE", m));
-			/* Don't care: PG_NODUMP, PG_ZERO. */
+			/* XXX need to recheck m->object == object */
 			if (object->type != OBJT_DEFAULT &&
 			    object->type != OBJT_SWAP &&
 			    object->type != OBJT_VNODE) {
@@ -2508,6 +2542,7 @@ vm_page_reclaim_run(int req_class, int domain, u_long npages, vm_page_t m_run,
 	vm_paddr_t pa;
 	vm_page_t m, m_end, m_new;
 	int error, order, req;
+	bool lastref;
 
 	KASSERT((req_class & VM_ALLOC_CLASS_MASK) == req_class,
 	    ("req_class is not an allocation class"));
@@ -2547,9 +2582,6 @@ retry:
 					goto unlock;
 				}
 			}
-			KASSERT((m->flags & PG_UNHOLDFREE) == 0,
-			    ("page %p is PG_UNHOLDFREE", m));
-			/* Don't care: PG_NODUMP, PG_ZERO. */
 			if (object->type != OBJT_DEFAULT &&
 			    object->type != OBJT_SWAP &&
 			    object->type != OBJT_VNODE)
@@ -2557,7 +2589,7 @@ retry:
 			else if (object->memattr != VM_MEMATTR_DEFAULT)
 				error = EINVAL;
 			else if (vm_page_queue(m) != PQ_NONE &&
-			    !vm_page_busied(m)) {
+			    !vm_page_busied(m) && !vm_page_held(m)) {
 				KASSERT(pmap_page_get_memattr(m) ==
 				    VM_MEMATTR_DEFAULT,
 				    ("page %p has an unexpected memattr", m));
@@ -2615,8 +2647,11 @@ retry:
 					 * and dequeued.  Finally, change "m"
 					 * as if vm_page_free() was called.
 					 */
-					if (object->ref_count != 0)
-						pmap_remove_all(m);
+					if (object->ref_count != 0 &&
+					    !vm_page_try_remove_all(m)) {
+						vm_page_free(m_new);
+						goto unlock;
+					}
 					m_new->aflags = m->aflags &
 					    ~PGA_QUEUE_STATE_MASK;
 					KASSERT(m_new->oflags == VPO_UNMANAGED,
@@ -2643,7 +2678,9 @@ retry:
 				} else {
 					m->flags &= ~PG_ZERO;
 					vm_page_dequeue(m);
-					vm_page_remove(m);
+					lastref = vm_page_remove(m);
+					KASSERT(lastref,
+					    ("page %p is held", m));
 					if (vm_page_free_prep(m))
 						SLIST_INSERT_HEAD(&free, m,
 						    plinks.s.ss);
@@ -3433,7 +3470,7 @@ vm_page_activate(vm_page_t m)
 
 	vm_page_assert_locked(m);
 
-	if (m->wire_count > 0 || (m->oflags & VPO_UNMANAGED) != 0)
+	if (vm_page_held(m) || (m->oflags & VPO_UNMANAGED) != 0)
 		return;
 	if (vm_page_queue(m) == PQ_ACTIVE) {
 		if (m->act_count < ACT_INIT)
@@ -3445,6 +3482,52 @@ vm_page_activate(vm_page_t m)
 	if (m->act_count < ACT_INIT)
 		m->act_count = ACT_INIT;
 	vm_page_enqueue(m, PQ_ACTIVE);
+}
+
+/*
+ * XXX synchronization rules
+ *     - mututal exclusion on m
+ *     - ensure that nothing wires or unwires the page during this operation
+ */
+static bool
+vm_page_try_blocked_op(vm_page_t m, void (*func)(vm_page_t))
+{
+	uint32_t old;
+
+	vm_page_assert_locked(m);
+	VM_OBJECT_ASSERT_WLOCKED(m->object);
+	KASSERT(!vm_page_busied(m), ("page %p is busy", m));
+
+	old = m->wire_count;
+	do {
+		if ((old & ~WIRE_COUNT_OBJREF) != 0)
+			return (false);
+	} while (!atomic_fcmpset_32(&m->wire_count, &old, WIRE_COUNT_BLOCKED));
+	func(m);
+	KASSERT(m->wire_count == WIRE_COUNT_BLOCKED,
+	    ("page %p has a modified wire_count", m));
+	atomic_store_32(&m->wire_count, old);
+	return (true);
+}
+
+/*
+ * XXX comment
+ */
+bool
+vm_page_try_remove_all(vm_page_t m)
+{
+
+	return (vm_page_try_blocked_op(m, pmap_remove_all));
+}
+
+/*
+ * XXX
+ */
+bool
+vm_page_try_remove_write(vm_page_t m)
+{
+
+	return (vm_page_try_blocked_op(m, pmap_remove_write));
 }
 
 /*
@@ -3483,7 +3566,7 @@ vm_page_free_prep(vm_page_t m)
 	if (vm_page_sbusied(m))
 		panic("vm_page_free_prep: freeing busy page %p", m);
 
-	vm_page_remove(m);
+	(void)vm_page_remove(m);
 
 	/*
 	 * If fictitious remove object association and
@@ -3510,13 +3593,6 @@ vm_page_free_prep(vm_page_t m)
 
 	if (m->wire_count != 0)
 		panic("vm_page_free_prep: freeing wired page %p", m);
-	if (m->hold_count != 0) {
-		m->flags &= ~PG_ZERO;
-		KASSERT((m->flags & PG_UNHOLDFREE) == 0,
-		    ("vm_page_free_prep: freeing PG_UNHOLDFREE page %p", m));
-		m->flags |= PG_UNHOLDFREE;
-		return (false);
-	}
 
 	/*
 	 * Restore the default memory attribute to the page.
@@ -3601,22 +3677,27 @@ vm_page_free_pages_toq(struct spglist *free, bool update_wire_count)
 void
 vm_page_wire(vm_page_t m)
 {
+	uint32_t old;
 
-	vm_page_assert_locked(m);
 	if ((m->flags & PG_FICTITIOUS) != 0) {
 		KASSERT(m->wire_count == 1,
 		    ("vm_page_wire: fictitious page %p's wire count isn't one",
 		    m));
 		return;
 	}
-	if (m->wire_count == 0) {
-		KASSERT((m->oflags & VPO_UNMANAGED) == 0 ||
-		    m->queue == PQ_NONE,
-		    ("vm_page_wire: unmanaged page %p is queued", m));
+	if ((m->oflags & VPO_UNMANAGED) == 0) {
+#ifdef INVARIANTS
+		if (!vm_page_busied(m))
+			VM_OBJECT_ASSERT_LOCKED(m->object);
+#endif
+		old = atomic_fetchadd_32(&m->wire_count, 1) &
+		    ~WIRE_COUNT_OBJREF;
+	} else
+		old = m->wire_count++;
+	if (old == 0)
 		vm_wire_add(1);
-	}
-	m->wire_count++;
-	KASSERT(m->wire_count != 0, ("vm_page_wire: wire_count overflow m=%p", m));
+	KASSERT(old != WIRE_COUNT_BLOCKED,
+	    ("vm_page_wire: page %p has invalid wire count", m));
 }
 
 /*
@@ -3648,7 +3729,7 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 		vm_page_assert_locked(m);
 
 	unwired = vm_page_unwire_noq(m);
-	if (!unwired || (m->oflags & VPO_UNMANAGED) != 0 || m->object == NULL)
+	if (!unwired || (m->oflags & VPO_UNMANAGED) != 0)
 		return (unwired);
 
 	if (vm_page_queue(m) == queue) {
@@ -3668,6 +3749,22 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 	return (unwired);
 }
 
+static bool
+vm_page_unwire_if_not_last(vm_page_t m)
+{
+	uint32_t old;
+
+	for (old = m->wire_count;;) {
+		KASSERT((old & ~WIRE_COUNT_OBJREF) != 0,
+		    ("page %p has wire count zero", m));
+		if (old == WIRE_COUNT_BLOCKED ||
+		    (old & ~WIRE_COUNT_OBJREF) == 1)
+			return (false);
+		if (atomic_fcmpset_32(&m->wire_count, &old, old - 1))
+			return (true);
+	}
+}
+
 /*
  *
  * vm_page_unwire_noq:
@@ -3679,22 +3776,43 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 bool
 vm_page_unwire_noq(vm_page_t m)
 {
+	uint32_t old;
 
-	if ((m->oflags & VPO_UNMANAGED) == 0)
-		vm_page_assert_locked(m);
+#ifdef INVARIANTS
+	if ((m->oflags & VPO_UNMANAGED) == 0 &&
+	    (m->wire_count & WIRE_COUNT_OBJREF) != 0 &&
+	    !vm_page_xbusied(m) && !mtx_owned(vm_page_lockptr(m)))
+		VM_OBJECT_ASSERT_LOCKED(m->object);
+#endif
+
 	if ((m->flags & PG_FICTITIOUS) != 0) {
 		KASSERT(m->wire_count == 1,
 	    ("vm_page_unwire: fictitious page %p's wire count isn't one", m));
 		return (false);
 	}
-	if (m->wire_count == 0)
-		panic("vm_page_unwire: page %p's wire count is zero", m);
-	m->wire_count--;
-	if (m->wire_count == 0) {
+
+	if ((m->oflags & VPO_UNMANAGED) == 0)
+		old = atomic_fetchadd_32(&m->wire_count, -1);
+	else
+		old = m->wire_count--;
+
+	switch (old) {
+	case WIRE_COUNT_OBJREF + 1:
 		vm_wire_sub(1);
 		return (true);
-	} else
+	case 1:
+		vm_wire_sub(1);
+		if ((m->oflags & VPO_UNMANAGED) == 0) {
+			vm_page_free(m);
+			return (false);
+		} else
+			return (true);
+	default:
 		return (false);
+	case WIRE_COUNT_OBJREF:
+	case 0:
+		panic("vm_page_unwire: page %p's wire count is zero", m);
+	}
 }
 
 /*
@@ -3709,7 +3827,7 @@ vm_page_deactivate(vm_page_t m)
 
 	vm_page_assert_locked(m);
 
-	if (m->wire_count > 0 || (m->oflags & VPO_UNMANAGED) != 0)
+	if (vm_page_held(m) || (m->oflags & VPO_UNMANAGED) != 0)
 		return;
 
 	if (!vm_page_inactive(m)) {
@@ -3733,7 +3851,7 @@ vm_page_deactivate_noreuse(vm_page_t m)
 
 	vm_page_assert_locked(m);
 
-	if (m->wire_count > 0 || (m->oflags & VPO_UNMANAGED) != 0)
+	if (vm_page_held(m) || (m->oflags & VPO_UNMANAGED) != 0)
 		return;
 
 	if (!vm_page_inactive(m)) {
@@ -3755,7 +3873,7 @@ vm_page_launder(vm_page_t m)
 {
 
 	vm_page_assert_locked(m);
-	if (m->wire_count > 0 || (m->oflags & VPO_UNMANAGED) != 0)
+	if (vm_page_held(m) || (m->oflags & VPO_UNMANAGED) != 0)
 		return;
 
 	if (vm_page_in_laundry(m))
@@ -3776,7 +3894,7 @@ vm_page_unswappable(vm_page_t m)
 {
 
 	vm_page_assert_locked(m);
-	KASSERT(m->wire_count == 0 && (m->oflags & VPO_UNMANAGED) == 0,
+	KASSERT(!vm_page_held(m) && (m->oflags & VPO_UNMANAGED) == 0,
 	    ("page %p already unswappable", m));
 
 	vm_page_dequeue(m);
@@ -3790,22 +3908,103 @@ vm_page_unswappable(vm_page_t m)
  * The page must be managed.  The page and its containing object must be
  * locked.
  */
-bool
+static bool
 vm_page_try_to_free(vm_page_t m)
 {
 
-	vm_page_assert_locked(m);
 	VM_OBJECT_ASSERT_WLOCKED(m->object);
 	KASSERT((m->oflags & VPO_UNMANAGED) == 0, ("page %p is unmanaged", m));
 	if (m->dirty != 0 || vm_page_held(m) || vm_page_busied(m))
 		return (false);
-	if (m->object->ref_count != 0) {
-		pmap_remove_all(m);
-		if (m->dirty != 0)
-			return (false);
-	}
+	if (m->object->ref_count != 0 &&
+	    (!vm_page_try_remove_all(m) || m->dirty != 0))
+		return (false);
 	vm_page_free(m);
 	return (true);
+}
+
+void
+vm_page_release(vm_page_t m, bool nocache)
+{
+	vm_object_t object;
+
+	if (vm_page_unwire_if_not_last(m))
+		return;
+
+	while (nocache) {
+		object = m->object;
+		if (object == NULL) {
+			(void)vm_page_unwire_noq(m);
+			return;
+		}
+		if (!vm_page_xbusied(m)) {
+			/* Depends on type-stability. */
+			VM_OBJECT_WLOCK(object);
+			if (__predict_false(object != m->object))
+				continue;
+			if (__predict_false(!vm_page_unwire_noq(m))) {
+				VM_OBJECT_WUNLOCK(object);
+				return;
+			}
+			if ((object->ref_count == 0 ||
+			    !pmap_page_is_mapped(m)) &&
+			    vm_page_try_to_free(m)) {
+				VM_OBJECT_WUNLOCK(object);
+				return;
+			}
+			vm_page_lock(m);
+			VM_OBJECT_WUNLOCK(object);
+			goto unwired;
+		}
+	}
+
+	vm_page_lock(m);
+	if (__predict_false(!vm_page_unwire_noq(m))) {
+		vm_page_unlock(m);
+		return;
+	}
+
+unwired:
+	if (m->valid == 0 || nocache)
+		vm_page_deactivate_noreuse(m);
+	else if (vm_page_active(m))
+		vm_page_reference(m);
+	else
+		vm_page_deactivate(m);
+	vm_page_unlock(m);
+}
+
+void
+vm_page_release_locked(vm_page_t m, bool nocache)
+{
+
+	VM_OBJECT_ASSERT_WLOCKED(m->object);
+
+	if (vm_page_unwire_if_not_last(m))
+		return;
+
+	if (nocache) {
+		if (__predict_false(!vm_page_unwire_noq(m)))
+			return;
+		if ((m->object->ref_count == 0 || !pmap_page_is_mapped(m)) &&
+		    vm_page_try_to_free(m))
+			return;
+		vm_page_lock(m);
+	} else {
+		vm_page_lock(m);
+		if (__predict_false(!vm_page_unwire_noq(m))) {
+			vm_page_unlock(m);
+			return;
+		}
+	}
+
+	if (m->valid == 0 || nocache)
+		vm_page_deactivate_noreuse(m);
+	else if (vm_page_active(m))
+		vm_page_reference(m);
+	else
+		vm_page_deactivate(m);
+	vm_page_unlock(m);
 }
 
 /*
@@ -3813,14 +4012,15 @@ vm_page_try_to_free(vm_page_t m)
  *
  * 	Apply the specified advice to the given page.
  *
- *	The object and page must be locked.
+ *	The object must be locked.
  */
 void
 vm_page_advise(vm_page_t m, int advice)
 {
 
-	vm_page_assert_locked(m);
 	VM_OBJECT_ASSERT_WLOCKED(m->object);
+
+	vm_page_lock(m);
 	if (advice == MADV_FREE)
 		/*
 		 * Mark the page clean.  This will allow the page to be freed
@@ -3832,7 +4032,7 @@ vm_page_advise(vm_page_t m, int advice)
 	else if (advice != MADV_DONTNEED) {
 		if (advice == MADV_WILLNEED)
 			vm_page_activate(m);
-		return;
+		goto done;
 	}
 
 	/*
@@ -3854,6 +4054,9 @@ vm_page_advise(vm_page_t m, int advice)
 		vm_page_deactivate_noreuse(m);
 	else if (!vm_page_in_laundry(m))
 		vm_page_launder(m);
+
+done:
+	vm_page_unlock(m);
 }
 
 /*
@@ -3902,11 +4105,8 @@ retrylookup:
 			VM_OBJECT_WLOCK(object);
 			goto retrylookup;
 		} else {
-			if ((allocflags & VM_ALLOC_WIRED) != 0) {
-				vm_page_lock(m);
+			if ((allocflags & VM_ALLOC_WIRED) != 0)
 				vm_page_wire(m);
-				vm_page_unlock(m);
-			}
 			if ((allocflags &
 			    (VM_ALLOC_NOBUSY | VM_ALLOC_SBUSY)) == 0)
 				vm_page_xbusy(m);
@@ -4004,11 +4204,8 @@ retrylookup:
 				VM_OBJECT_WLOCK(object);
 				goto retrylookup;
 			}
-			if ((allocflags & VM_ALLOC_WIRED) != 0) {
-				vm_page_lock(m);
+			if ((allocflags & VM_ALLOC_WIRED) != 0)
 				vm_page_wire(m);
-				vm_page_unlock(m);
-			}
 			if ((allocflags & (VM_ALLOC_NOBUSY |
 			    VM_ALLOC_SBUSY)) == 0)
 				vm_page_xbusy(m);
@@ -4537,10 +4734,10 @@ DB_SHOW_COMMAND(pginfo, vm_page_print_pginfo)
 	else
 		m = (vm_page_t)addr;
 	db_printf(
-    "page %p obj %p pidx 0x%jx phys 0x%jx q %d hold %d wire %d\n"
+    "page %p obj %p pidx 0x%jx phys 0x%jx q %d wire 0x%x\n"
     "  af 0x%x of 0x%x f 0x%x act %d busy %x valid 0x%x dirty 0x%x\n",
 	    m, m->object, (uintmax_t)m->pindex, (uintmax_t)m->phys_addr,
-	    m->queue, m->hold_count, m->wire_count, m->aflags, m->oflags,
+	    m->queue, m->wire_count, m->aflags, m->oflags,
 	    m->flags, m->act_count, m->busy_lock, m->valid, m->dirty);
 }
 #endif /* DDB */

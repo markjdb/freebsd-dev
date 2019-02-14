@@ -326,16 +326,11 @@ vm_pageout_cluster(vm_page_t m)
 	vm_pindex_t pindex;
 	int ib, is, page_base, pageout_count;
 
-	vm_page_assert_locked(m);
 	object = m->object;
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	pindex = m->pindex;
 
 	vm_page_assert_unbusied(m);
-	KASSERT(!vm_page_held(m), ("page %p is held", m));
-
-	pmap_remove_write(m);
-	vm_page_unlock(m);
 
 	mc[vm_pageout_page_count] = pb = ps = m;
 	pageout_count = 1;
@@ -371,12 +366,11 @@ more:
 			break;
 		}
 		vm_page_lock(p);
-		if (vm_page_held(p) || !vm_page_in_laundry(p)) {
+		if (!vm_page_in_laundry(p) || !vm_page_try_remove_write(p)) {
 			vm_page_unlock(p);
 			ib = 0;
 			break;
 		}
-		pmap_remove_write(p);
 		vm_page_unlock(p);
 		mc[--page_base] = pb = p;
 		++pageout_count;
@@ -397,11 +391,10 @@ more:
 		if (p->dirty == 0)
 			break;
 		vm_page_lock(p);
-		if (vm_page_held(p) || !vm_page_in_laundry(p)) {
+		if (!vm_page_in_laundry(p) || !vm_page_try_remove_write(p)) {
 			vm_page_unlock(p);
 			break;
 		}
-		pmap_remove_write(p);
 		vm_page_unlock(p);
 		mc[page_base + pageout_count] = ps = p;
 		++pageout_count;
@@ -646,15 +639,31 @@ vm_pageout_clean(vm_page_t m, int *numpagedout)
 		}
 
 		/*
-		 * The page may have been busied or referenced while the object
-		 * and page locks were released.
+		 * The page may have been busied while the object lock was
+		 * released.
 		 */
-		if (vm_page_busied(m) || vm_page_held(m)) {
+		if (vm_page_busied(m)) {
 			vm_page_unlock(m);
 			error = EBUSY;
 			goto unlock_all;
 		}
 	}
+
+	/*
+	 * Atomically remove write access to the page and check for references
+	 * that were acquired after the queue scan.
+	 */
+	if (!vm_page_try_remove_write(m)) {
+		/*
+		 * The page has a reference, so we might as well remove it from
+		 * the queue while the page lock is already taken.
+		 */
+		vm_page_dequeue_deferred(m);
+		vm_page_unlock(m);
+		error = EBUSY;
+		goto unlock_all;
+	}
+	vm_page_unlock(m);
 
 	/*
 	 * If a page is dirty, then it is either being washed
@@ -746,15 +755,14 @@ recheck:
 		}
 
 		/*
-		 * Held pages are essentially stuck in the queue.
-		 *
 		 * Wired pages may not be freed.  Complete their removal
 		 * from the queue now to avoid needless revisits during
-		 * future scans.
+		 * future scans.  This is a racy check; new references may
+		 * be acquired so long as the page is mapped.
 		 */
-		if (m->hold_count != 0)
-			continue;
-		if (m->wire_count != 0) {
+		if (vm_page_held(m)) {
+			KASSERT(m->wire_count != WIRE_COUNT_BLOCKED,
+			    ("page %p is blocked", m));
 			vm_page_dequeue_deferred(m);
 			continue;
 		}
@@ -780,6 +788,20 @@ recheck:
 
 		if (vm_page_busied(m))
 			continue;
+
+		/*
+		 * Now that the object lock is held and the page is known not to
+		 * be busy, we can atomically check for new references on the
+		 * page structure.  If the page is mapped, new references may
+		 * still be acquired by pmap_extract_and_hold(); this case is
+		 * detected by vm_page_try_remove_all().
+		 */
+		if (__predict_false(vm_page_held(m))) {
+			KASSERT(m->wire_count != WIRE_COUNT_BLOCKED,
+			    ("page %p is blocked", m));
+			vm_page_dequeue_deferred(m);
+			continue;
+		}
 
 		/*
 		 * Invalid pages can be easily freed.  They cannot be
@@ -848,8 +870,10 @@ recheck:
 		 */
 		if (object->ref_count != 0) {
 			vm_page_test_dirty(m);
-			if (m->dirty == 0)
-				pmap_remove_all(m);
+			if (m->dirty == 0 && !vm_page_try_remove_all(m)) {
+				vm_page_dequeue_deferred(m);
+				continue;
+			}
 		}
 
 		/*
@@ -1211,7 +1235,9 @@ act_scan:
 		/*
 		 * Wired pages are dequeued lazily.
 		 */
-		if (m->wire_count != 0) {
+		if (vm_page_held(m)) {
+			KASSERT(m->wire_count != WIRE_COUNT_BLOCKED,
+			    ("page %p is blocked", m));
 			vm_page_dequeue_deferred(m);
 			continue;
 		}
@@ -1428,19 +1454,14 @@ recheck:
 			goto reinsert;
 
 		/*
-		 * Held pages are essentially stuck in the queue.  So,
-		 * they ought to be discounted from the inactive count.
-		 * See the description of addl_page_shortage above.
-		 *
 		 * Wired pages may not be freed.  Complete their removal
 		 * from the queue now to avoid needless revisits during
-		 * future scans.
+		 * future scans.  This is a racy check; new references may
+		 * be acquired so long as the page is mapped.
 		 */
-		if (m->hold_count != 0) {
-			addl_page_shortage++;
-			goto reinsert;
-		}
-		if (m->wire_count != 0) {
+		if (vm_page_held(m)) {
+			KASSERT(m->wire_count != WIRE_COUNT_BLOCKED,
+			    ("page %p is blocked", m));
 			vm_page_dequeue_deferred(m);
 			continue;
 		}
@@ -1475,6 +1496,20 @@ recheck:
 			 */
 			addl_page_shortage++;
 			goto reinsert;
+		}
+
+		/*
+		 * Now that the object lock is held and the page is known not to
+		 * be busy, we can atomically check for new references on the
+		 * page structure.  If the page is mapped, new references may
+		 * still be acquired by pmap_extract_and_hold(); this case is
+		 * detected by vm_page_try_remove_all().
+		 */
+		if (__predict_false(vm_page_held(m))) {
+			KASSERT(m->wire_count != WIRE_COUNT_BLOCKED,
+			    ("page %p is blocked", m));
+			vm_page_dequeue_deferred(m);
+			continue;
 		}
 
 		/*
@@ -1533,8 +1568,10 @@ recheck:
 		 */
 		if (object->ref_count != 0) {
 			vm_page_test_dirty(m);
-			if (m->dirty == 0)
-				pmap_remove_all(m);
+			if (m->dirty == 0 && !vm_page_try_remove_all(m)) {
+				vm_page_dequeue_deferred(m);
+				continue;
+			}
 		}
 
 		/*

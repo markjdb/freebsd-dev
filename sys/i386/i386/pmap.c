@@ -1683,35 +1683,23 @@ __CONCAT(PMTYPE, extract_and_hold)(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 	pd_entry_t pde;
 	pt_entry_t pte;
 	vm_page_t m;
-	vm_paddr_t pa;
 
-	pa = 0;
 	m = NULL;
 	PMAP_LOCK(pmap);
-retry:
 	pde = *pmap_pde(pmap, va);
 	if (pde != 0) {
 		if (pde & PG_PS) {
-			if ((pde & PG_RW) || (prot & VM_PROT_WRITE) == 0) {
-				if (vm_page_pa_tryrelock(pmap, (pde &
-				    PG_PS_FRAME) | (va & PDRMASK), &pa))
-					goto retry;
+			if ((pde & PG_RW) || (prot & VM_PROT_WRITE) == 0)
 				m = PHYS_TO_VM_PAGE(pa);
-			}
 		} else {
 			pte = pmap_pte_ufast(pmap, va, pde);
 			if (pte != 0 &&
-			    ((pte & PG_RW) || (prot & VM_PROT_WRITE) == 0)) {
-				if (vm_page_pa_tryrelock(pmap, pte & PG_FRAME,
-				    &pa))
-					goto retry;
+			    ((pte & PG_RW) || (prot & VM_PROT_WRITE) == 0))
 				m = PHYS_TO_VM_PAGE(pa);
-			}
 		}
-		if (m != NULL)
-			vm_page_hold(m);
+		if (m != NULL && !vm_page_try_hold(m))
+			m = NULL;
 	}
-	PA_UNLOCK_COND(pa);
 	PMAP_UNLOCK(pmap);
 	return (m);
 }
@@ -2455,7 +2443,7 @@ free_pv_chunk(struct pv_chunk *pc)
 	/* entire chunk is free, return it */
 	m = PHYS_TO_VM_PAGE(pmap_kextract((vm_offset_t)pc));
 	pmap_qremove((vm_offset_t)pc, 1);
-	vm_page_unwire(m, PQ_NONE);
+	vm_page_unwire_noq(m);
 	vm_page_free(m);
 	pmap_ptelist_free(&pv_vafree, (vm_offset_t)pc);
 }
@@ -5927,8 +5915,8 @@ pmap_pid_dump(int pid)
 							vm_page_t m;
 							pa = *pte;
 							m = PHYS_TO_VM_PAGE(pa & PG_FRAME);
-							printf("va: 0x%x, pt: 0x%x, h: %d, w: %d, f: 0x%x",
-								va, pa, m->hold_count, m->wire_count, m->flags);
+							printf("va: 0x%x, pt: 0x%x, w: %d, f: 0x%x",
+							    va, pa, m->wire_count, m->flags);
 							npte++;
 							index++;
 							if (index >= 2) {

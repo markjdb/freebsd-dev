@@ -1003,7 +1003,7 @@ agp_bind_pages(device_t dev, vm_page_t *pages, vm_size_t size,
 	mtx_lock(&sc->as_lock);
 	for (i = 0; i < size; i += PAGE_SIZE) {
 		m = pages[OFF_TO_IDX(i)];
-		KASSERT(m->wire_count > 0,
+		KASSERT(vm_page_held(m),
 		    ("agp_bind_pages: page %p hasn't been wired", m));
 
 		/*

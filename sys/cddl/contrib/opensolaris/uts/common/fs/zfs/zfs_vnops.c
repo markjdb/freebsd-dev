@@ -479,12 +479,8 @@ page_hold(vnode_t *vp, int64_t start)
 				zfs_vmobject_wlock(obj);
 				continue;
 			}
-
 			ASSERT3U(pp->valid, ==, VM_PAGE_BITS_ALL);
-			vm_page_lock(pp);
-			vm_page_hold(pp);
-			vm_page_unlock(pp);
-
+			vm_page_wire(pp);
 		} else
 			pp = NULL;
 		break;
@@ -496,9 +492,7 @@ static void
 page_unhold(vm_page_t pp)
 {
 
-	vm_page_lock(pp);
-	vm_page_unhold(pp);
-	vm_page_unlock(pp);
+	vm_page_unwire(pp, PQ_INACTIVE);
 }
 
 /*
@@ -593,7 +587,7 @@ mappedread_sf(vnode_t *vp, int nbytes, uio_t *uio)
 			vm_page_sunbusy(pp);
 			vm_page_lock(pp);
 			if (error) {
-				if (pp->wire_count == 0 && pp->valid == 0 &&
+				if (!vm_page_held(pp) && pp->valid == 0 &&
 				    !vm_page_busied(pp))
 					vm_page_free(pp);
 			} else {

@@ -2897,47 +2897,6 @@ vfs_vmio_iodone(struct buf *bp)
 }
 
 /*
- * Unwire a page held by a buf and either free it or update the page queues to
- * reflect its recent use.
- */
-static void
-vfs_vmio_unwire(struct buf *bp, vm_page_t m)
-{
-	bool freed;
-
-	vm_page_lock(m);
-	if (vm_page_unwire_noq(m)) {
-		if ((bp->b_flags & B_DIRECT) != 0)
-			freed = vm_page_try_to_free(m);
-		else
-			freed = false;
-		if (!freed) {
-			/*
-			 * Use a racy check of the valid bits to determine
-			 * whether we can accelerate reclamation of the page.
-			 * The valid bits will be stable unless the page is
-			 * being mapped or is referenced by multiple buffers,
-			 * and in those cases we expect races to be rare.  At
-			 * worst we will either accelerate reclamation of a
-			 * valid page and violate LRU, or unnecessarily defer
-			 * reclamation of an invalid page.
-			 *
-			 * The B_NOREUSE flag marks data that is not expected to
-			 * be reused, so accelerate reclamation in that case
-			 * too.  Otherwise, maintain LRU.
-			 */
-			if (m->valid == 0 || (bp->b_flags & B_NOREUSE) != 0)
-				vm_page_deactivate_noreuse(m);
-			else if (vm_page_active(m))
-				vm_page_reference(m);
-			else
-				vm_page_deactivate(m);
-		}
-	}
-	vm_page_unlock(m);
-}
-
-/*
  * Perform page invalidation when a buffer is released.  The fully invalid
  * pages will be reclaimed later in vfs_vmio_truncate().
  */
@@ -2947,6 +2906,7 @@ vfs_vmio_invalidate(struct buf *bp)
 	vm_object_t obj;
 	vm_page_t m;
 	int i, resid, poffset, presid;
+	bool nocache;
 
 	if (buf_mapped(bp)) {
 		BUF_CHECK_MAPPED(bp);
@@ -2966,6 +2926,7 @@ vfs_vmio_invalidate(struct buf *bp)
 	 * See man buf(9) for more information
 	 */
 	obj = bp->b_bufobj->bo_object;
+	nocache = (bp->b_flags & B_DIRECT) != 0;
 	resid = bp->b_bufsize;
 	poffset = bp->b_offset & PAGE_MASK;
 	VM_OBJECT_WLOCK(obj);
@@ -2986,7 +2947,7 @@ vfs_vmio_invalidate(struct buf *bp)
 		}
 		if (pmap_page_wired_mappings(m) == 0)
 			vm_page_set_invalid(m, poffset, presid);
-		vfs_vmio_unwire(bp, m);
+		vm_page_release_locked(m, nocache);
 		resid -= presid;
 		poffset = 0;
 	}
@@ -3024,7 +2985,10 @@ vfs_vmio_truncate(struct buf *bp, int desiredpages)
 		m = bp->b_pages[i];
 		KASSERT(m != bogus_page, ("allocbuf: bogus page found"));
 		bp->b_pages[i] = NULL;
-		vfs_vmio_unwire(bp, m);
+		if (obj != NULL)
+			vm_page_release_locked(m, true);
+		else
+			vm_page_release(m, false);
 	}
 	if (obj != NULL)
 		VM_OBJECT_WUNLOCK(obj);

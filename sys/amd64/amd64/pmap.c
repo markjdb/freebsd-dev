@@ -2542,28 +2542,21 @@ pmap_extract_and_hold(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 	PG_RW = pmap_rw_bit(pmap);
 	PG_V = pmap_valid_bit(pmap);
 	PMAP_LOCK(pmap);
-retry:
 	pdep = pmap_pde(pmap, va);
 	if (pdep != NULL && (pde = *pdep)) {
 		if (pde & PG_PS) {
-			if ((pde & PG_RW) || (prot & VM_PROT_WRITE) == 0) {
-				if (vm_page_pa_tryrelock(pmap, (pde &
-				    PG_PS_FRAME) | (va & PDRMASK), &pa))
-					goto retry;
+			if ((pde & PG_RW) || (prot & VM_PROT_WRITE) == 0)
 				m = PHYS_TO_VM_PAGE(pa);
-			}
 		} else {
 			pte = *pmap_pde_to_pte(pdep, va);
 			if ((pte & PG_V) &&
-			    ((pte & PG_RW) || (prot & VM_PROT_WRITE) == 0)) {
-				if (vm_page_pa_tryrelock(pmap, pte & PG_FRAME,
-				    &pa))
-					goto retry;
+			    ((pte & PG_RW) || (prot & VM_PROT_WRITE) == 0))
 				m = PHYS_TO_VM_PAGE(pa);
-			}
 		}
-		if (m != NULL)
-			vm_page_hold(m);
+
+		/* This must succeed if the mapping is not managed. */
+		if (m != NULL && !vm_page_try_hold(m))
+			m = NULL;
 	}
 	PA_UNLOCK_COND(pa);
 	PMAP_UNLOCK(pmap);
@@ -3665,7 +3658,7 @@ free_pv_chunk(struct pv_chunk *pc)
 	/* entire chunk is free, return it */
 	m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)pc));
 	dump_drop_page(m->phys_addr);
-	vm_page_unwire(m, PQ_NONE);
+	vm_page_unwire_noq(m);
 	vm_page_free(m);
 }
 

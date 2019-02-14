@@ -186,7 +186,7 @@ vm_swapout_object_deactivate_pages(pmap_t pmap, vm_object_t first_object,
 	vm_page_t p;
 	int act_delta, remove_mode;
 
-	VM_OBJECT_ASSERT_LOCKED(first_object);
+	VM_OBJECT_ASSERT_WLOCKED(first_object);
 	if ((first_object->flags & OBJ_FICTITIOUS) != 0)
 		return;
 	for (object = first_object;; object = backing_object) {
@@ -211,13 +211,11 @@ vm_swapout_object_deactivate_pages(pmap_t pmap, vm_object_t first_object,
 			if (vm_page_busied(p))
 				continue;
 			VM_CNT_INC(v_pdpages);
-			vm_page_lock(p);
 			if (vm_page_held(p) ||
-			    !pmap_page_exists_quick(pmap, p)) {
-				vm_page_unlock(p);
+			    !pmap_page_exists_quick(pmap, p))
 				continue;
-			}
 			act_delta = pmap_ts_referenced(p);
+			vm_page_lock(p);
 			if ((p->aflags & PGA_REFERENCED) != 0) {
 				if (act_delta == 0)
 					act_delta = 1;
@@ -228,13 +226,15 @@ vm_swapout_object_deactivate_pages(pmap_t pmap, vm_object_t first_object,
 				p->act_count += act_delta;
 			} else if (vm_page_active(p)) {
 				if (act_delta == 0) {
-					p->act_count -= min(p->act_count,
-					    ACT_DECLINE);
-					if (!remove_mode && p->act_count == 0) {
-						pmap_remove_all(p);
-						vm_page_deactivate(p);
-					} else
+					if (!remove_mode &&
+					    p->act_count <= ACT_DECLINE) {
+						if (vm_page_try_remove_all(p))
+							vm_page_deactivate(p);
+					} else {
+						p->act_count -= min(
+						    p->act_count, ACT_DECLINE);
 						vm_page_requeue(p);
+					}
 				} else {
 					vm_page_activate(p);
 					if (p->act_count < ACT_MAX -
@@ -243,18 +243,18 @@ vm_swapout_object_deactivate_pages(pmap_t pmap, vm_object_t first_object,
 					vm_page_requeue(p);
 				}
 			} else if (vm_page_inactive(p))
-				pmap_remove_all(p);
+				(void)vm_page_try_remove_all(p);
 			vm_page_unlock(p);
 		}
 		if ((backing_object = object->backing_object) == NULL)
 			goto unlock_return;
-		VM_OBJECT_RLOCK(backing_object);
+		VM_OBJECT_WLOCK(backing_object);
 		if (object != first_object)
-			VM_OBJECT_RUNLOCK(object);
+			VM_OBJECT_WUNLOCK(object);
 	}
 unlock_return:
 	if (object != first_object)
-		VM_OBJECT_RUNLOCK(object);
+		VM_OBJECT_WUNLOCK(object);
 }
 
 /*
@@ -282,16 +282,16 @@ vm_swapout_map_deactivate_pages(vm_map_t map, long desired)
 	while (tmpe != &map->header) {
 		if ((tmpe->eflags & MAP_ENTRY_IS_SUB_MAP) == 0) {
 			obj = tmpe->object.vm_object;
-			if (obj != NULL && VM_OBJECT_TRYRLOCK(obj)) {
+			if (obj != NULL && VM_OBJECT_TRYWLOCK(obj)) {
 				if (obj->shadow_count <= 1 &&
 				    (bigobj == NULL ||
 				     bigobj->resident_page_count <
 				     obj->resident_page_count)) {
 					if (bigobj != NULL)
-						VM_OBJECT_RUNLOCK(bigobj);
+						VM_OBJECT_WUNLOCK(bigobj);
 					bigobj = obj;
 				} else
-					VM_OBJECT_RUNLOCK(obj);
+					VM_OBJECT_WUNLOCK(obj);
 			}
 		}
 		if (tmpe->wired_count > 0)
@@ -301,8 +301,9 @@ vm_swapout_map_deactivate_pages(vm_map_t map, long desired)
 
 	if (bigobj != NULL) {
 		vm_swapout_object_deactivate_pages(map->pmap, bigobj, desired);
-		VM_OBJECT_RUNLOCK(bigobj);
+		VM_OBJECT_WUNLOCK(bigobj);
 	}
+
 	/*
 	 * Next, hunt around for other pages to deactivate.  We actually
 	 * do this search sort of wrong -- .text first is not the best idea.
@@ -314,10 +315,10 @@ vm_swapout_map_deactivate_pages(vm_map_t map, long desired)
 		if ((tmpe->eflags & MAP_ENTRY_IS_SUB_MAP) == 0) {
 			obj = tmpe->object.vm_object;
 			if (obj != NULL) {
-				VM_OBJECT_RLOCK(obj);
+				VM_OBJECT_WLOCK(obj);
 				vm_swapout_object_deactivate_pages(map->pmap,
 				    obj, desired);
-				VM_OBJECT_RUNLOCK(obj);
+				VM_OBJECT_WUNLOCK(obj);
 			}
 		}
 		tmpe = tmpe->next;

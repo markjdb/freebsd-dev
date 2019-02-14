@@ -741,11 +741,10 @@ vm_object_terminate_pages(vm_object_t object)
 			 * lock for managed pages.
 			 */
 			vm_page_change_lock(p, &mtx);
-		p->object = NULL;
-		if (p->wire_count != 0)
-			continue;
-		VM_CNT_INC(v_pfree);
-		vm_page_free(p);
+		if (vm_page_remove_complete(p)) {
+			VM_CNT_INC(v_pfree);
+			vm_page_free(p);
+		}
 	}
 	if (mtx != NULL)
 		mtx_unlock(mtx);
@@ -1233,11 +1232,6 @@ next_page:
 		 */
 		if (tm->valid != VM_PAGE_BITS_ALL)
 			goto next_pindex;
-		vm_page_lock(tm);
-		if (vm_page_held(tm)) {
-			vm_page_unlock(tm);
-			goto next_pindex;
-		}
 		KASSERT((tm->flags & PG_FICTITIOUS) == 0,
 		    ("vm_object_madvise: page %p is fictitious", tm));
 		KASSERT((tm->oflags & VPO_UNMANAGED) == 0,
@@ -1245,6 +1239,7 @@ next_page:
 		if (vm_page_busied(tm)) {
 			if (object != tobject)
 				VM_OBJECT_WUNLOCK(tobject);
+			vm_page_lock(tm);
 			VM_OBJECT_WUNLOCK(object);
 			if (advice == MADV_WILLNEED) {
 				/*
@@ -1258,7 +1253,6 @@ next_page:
   			goto relookup;
 		}
 		vm_page_advise(tm, advice);
-		vm_page_unlock(tm);
 		vm_object_madvise_freespace(tobject, advice, tm->pindex, 1);
 next_pindex:
 		if (tobject != object)
@@ -1617,10 +1611,8 @@ vm_object_collapse_scan(vm_object_t object, int op)
 			vm_page_lock(p);
 			KASSERT(!pmap_page_is_mapped(p),
 			    ("freeing mapped page %p", p));
-			if (p->wire_count == 0)
+			if (vm_page_remove(p))
 				vm_page_free(p);
-			else
-				vm_page_remove(p);
 			vm_page_unlock(p);
 			continue;
 		}
@@ -1661,10 +1653,8 @@ vm_object_collapse_scan(vm_object_t object, int op)
 			vm_page_lock(p);
 			KASSERT(!pmap_page_is_mapped(p),
 			    ("freeing mapped page %p", p));
-			if (p->wire_count == 0)
+			if (vm_page_remove(p))
 				vm_page_free(p);
-			else
-				vm_page_remove(p);
 			vm_page_unlock(p);
 			continue;
 		}
@@ -1966,7 +1956,8 @@ again:
 			VM_OBJECT_WLOCK(object);
 			goto again;
 		}
-		if (p->wire_count != 0) {
+retry:
+		if (vm_page_held(p)) {
 			if ((options & OBJPR_NOTMAPPED) == 0 &&
 			    object->ref_count != 0)
 				pmap_remove_all(p);
@@ -1991,8 +1982,9 @@ again:
 			if (p->dirty != 0)
 				continue;
 		}
-		if ((options & OBJPR_NOTMAPPED) == 0 && object->ref_count != 0)
-			pmap_remove_all(p);
+		if ((options & OBJPR_NOTMAPPED) == 0 &&
+		    object->ref_count != 0 && !vm_page_try_remove_all(p))
+			goto retry;
 		vm_page_free(p);
 	}
 	if (mtx != NULL)

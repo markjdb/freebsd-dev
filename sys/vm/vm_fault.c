@@ -256,9 +256,7 @@ vm_fault_fill_hold(vm_page_t *m_hold, vm_page_t m)
 
 	if (m_hold != NULL) {
 		*m_hold = m;
-		vm_page_lock(m);
 		vm_page_hold(m);
-		vm_page_unlock(m);
 	}
 }
 
@@ -990,7 +988,7 @@ readrest:
 			 */
 			if (rv == VM_PAGER_ERROR || rv == VM_PAGER_BAD) {
 				vm_page_lock(fs.m);
-				if (fs.m->wire_count == 0)
+				if (!vm_page_held(fs.m))
 					vm_page_free(fs.m);
 				else
 					vm_page_xunbusy_maybelocked(fs.m);
@@ -1013,7 +1011,7 @@ readrest:
 			 */
 			if (fs.object != fs.first_object) {
 				vm_page_lock(fs.m);
-				if (fs.m->wire_count == 0)
+				if (!vm_page_held(fs.m))
 					vm_page_free(fs.m);
 				else
 					vm_page_xunbusy_maybelocked(fs.m);
@@ -1130,7 +1128,7 @@ readrest:
 			    fs.object == fs.first_object->backing_object) {
 				vm_page_lock(fs.m);
 				vm_page_dequeue(fs.m);
-				vm_page_remove(fs.m);
+				vm_page_xunbusy_maybelocked(fs.m);
 				vm_page_unlock(fs.m);
 				vm_page_lock(fs.first_m);
 				vm_page_replace_checked(fs.m, fs.first_object,
@@ -1156,16 +1154,14 @@ readrest:
 				VM_CNT_INC(v_cow_optim);
 			} else {
 				/*
-				 * Oh, well, lets copy it.
+				 * Oh, well, let's copy it.
 				 */
 				pmap_copy_page(fs.m, fs.first_m);
 				fs.first_m->valid = VM_PAGE_BITS_ALL;
 				if (wired && (fault_flags &
 				    VM_FAULT_WIRE) == 0) {
-					vm_page_lock(fs.first_m);
 					vm_page_wire(fs.first_m);
-					vm_page_unlock(fs.first_m);
-					
+
 					vm_page_lock(fs.m);
 					vm_page_unwire(fs.m, PQ_INACTIVE);
 					vm_page_unlock(fs.m);
@@ -1301,22 +1297,16 @@ readrest:
 		    faultcount > 0 ? behind : PFBAK,
 		    faultcount > 0 ? ahead : PFFOR, false);
 	VM_OBJECT_WLOCK(fs.object);
-	vm_page_lock(fs.m);
+	vm_page_xunbusy(fs.m);
 
-	/*
-	 * If the page is not wired down, then put it where the pageout daemon
-	 * can find it.
-	 */
 	if ((fault_flags & VM_FAULT_WIRE) != 0)
 		vm_page_wire(fs.m);
-	else
+	else {
+		vm_page_lock(fs.m);
 		vm_page_activate(fs.m);
-	if (m_hold != NULL) {
-		*m_hold = fs.m;
-		vm_page_hold(fs.m);
+		vm_page_unlock(fs.m);
 	}
-	vm_page_unlock(fs.m);
-	vm_page_xunbusy(fs.m);
+	vm_fault_fill_hold(m_hold, fs.m);
 
 	/*
 	 * Unlock everything, and return
@@ -1778,13 +1768,12 @@ again:
 		if (upgrade) {
 			if (src_m != dst_m) {
 				vm_page_lock(src_m);
+				/* XXX this is an mlock unwiring */
 				vm_page_unwire(src_m, PQ_INACTIVE);
 				vm_page_unlock(src_m);
-				vm_page_lock(dst_m);
 				vm_page_wire(dst_m);
-				vm_page_unlock(dst_m);
 			} else {
-				KASSERT(dst_m->wire_count > 0,
+				KASSERT(vm_page_held(dst_m),
 				    ("dst_m %p is not wired", dst_m));
 			}
 		} else {

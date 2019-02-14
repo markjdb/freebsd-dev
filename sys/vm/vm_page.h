@@ -115,24 +115,7 @@
  *	the implementation of read-modify-write operations on the
  *	field is encapsulated in vm_page_clear_dirty_mask().
  *
- *	The page structure contains two counters which prevent page reuse.
- *	Both counters are protected by the page lock (P).  The hold
- *	counter counts transient references obtained via a pmap lookup, and
- *	is also used to prevent page reclamation in situations where it is
- *	undesirable to block other accesses to the page.  The wire counter
- *	is used to implement mlock(2) and is non-zero for pages containing
- *	kernel memory.  Pages that are wired or held will not be reclaimed
- *	or laundered by the page daemon, but are treated differently during
- *	a page queue scan: held pages remain at their position in the queue,
- *	while wired pages are removed from the queue and must later be
- *	re-enqueued appropriately by the unwiring thread.  It is legal to
- *	call vm_page_free() on a held page; doing so causes it to be removed
- *	from its object and page queue, and the page is released to the
- *	allocator once the last hold reference is dropped.  In contrast,
- *	wired pages may not be freed.
- *
- *	In some pmap implementations, the wire count of a page table page is
- *	used to track the number of populated entries.
+ * XXX
  *
  *	The busy lock is an embedded reader-writer lock which protects the
  *	page's contents and identity (i.e., its <object, pindex> tuple) and
@@ -202,23 +185,28 @@ struct vm_page {
 	vm_pindex_t pindex;		/* offset into object (O,P) */
 	vm_paddr_t phys_addr;		/* physical address of page (C) */
 	struct md_page md;		/* machine dependent stuff */
-	u_int wire_count;		/* wired down maps refs (P) */
+	uint32_t wire_count;		/* wired down maps refs (P) */
 	volatile u_int busy_lock;	/* busy owners lock */
-	uint16_t hold_count;		/* page hold count (P) */
 	uint16_t flags;			/* page PG_* flags (P) */
+	uint8_t	order;			/* index of the buddy queue (F) */
+	uint8_t pool;			/* vm_phys freepool index (F) */
 	uint8_t aflags;			/* access is atomic */
 	uint8_t oflags;			/* page VPO_* flags (O) */
 	uint8_t queue;			/* page queue index (Q) */
 	int8_t psind;			/* pagesizes[] index (O) */
 	int8_t segind;			/* vm_phys segment index (C) */
-	uint8_t	order;			/* index of the buddy queue (F) */
-	uint8_t pool;			/* vm_phys freepool index (F) */
 	u_char	act_count;		/* page usage count (P) */
 	/* NOTE that these must support one bit per DEV_BSIZE in a page */
 	/* so, on normal X86 kernels, they must be at least 8 bits wide */
 	vm_page_bits_t valid;		/* map of valid DEV_BSIZE chunks (O) */
 	vm_page_bits_t dirty;		/* map of dirty DEV_BSIZE chunks (M) */
 };
+
+/*
+ * XXX comment
+ */
+#define	WIRE_COUNT_BLOCKED	0xffffffff
+#define	WIRE_COUNT_OBJREF	0x80000000
 
 /*
  * Page flags stored in oflags:
@@ -384,7 +372,6 @@ extern struct mtx_padalign pa_lock[];
 #define	PG_ZERO		0x0008		/* page is zeroed */
 #define	PG_MARKER	0x0010		/* special queue marker page */
 #define	PG_NODUMP	0x0080		/* don't include this page in a dump */
-#define	PG_UNHOLDFREE	0x0100		/* delayed free of a held page */
 
 /*
  * Misc constants.
@@ -512,8 +499,9 @@ malloc2vm_flags(int malloc_flags)
 void vm_page_busy_downgrade(vm_page_t m);
 void vm_page_busy_sleep(vm_page_t m, const char *msg, bool nonshared);
 void vm_page_flash(vm_page_t m);
-void vm_page_hold(vm_page_t mem);
-void vm_page_unhold(vm_page_t mem);
+void vm_page_hold(vm_page_t m);
+bool vm_page_try_hold(vm_page_t m);
+void vm_page_unhold(vm_page_t m);
 void vm_page_free(vm_page_t m);
 void vm_page_free_zero(vm_page_t m);
 
@@ -562,7 +550,10 @@ bool vm_page_reclaim_contig(int req, u_long npages, vm_paddr_t low,
 bool vm_page_reclaim_contig_domain(int domain, int req, u_long npages,
     vm_paddr_t low, vm_paddr_t high, u_long alignment, vm_paddr_t boundary);
 void vm_page_reference(vm_page_t m);
-void vm_page_remove (vm_page_t);
+void vm_page_release(vm_page_t m, bool nocache);
+void vm_page_release_locked(vm_page_t m, bool nocache);
+bool vm_page_remove(vm_page_t);
+bool vm_page_remove_complete(vm_page_t);
 int vm_page_rename (vm_page_t, vm_object_t, vm_pindex_t);
 vm_page_t vm_page_replace(vm_page_t mnew, vm_object_t object,
     vm_pindex_t pindex);
@@ -574,7 +565,8 @@ void vm_page_set_valid_range(vm_page_t m, int base, int size);
 int vm_page_sleep_if_busy(vm_page_t m, const char *msg);
 vm_offset_t vm_page_startup(vm_offset_t vaddr);
 void vm_page_sunbusy(vm_page_t m);
-bool vm_page_try_to_free(vm_page_t m);
+bool vm_page_try_remove_all(vm_page_t);
+bool vm_page_try_remove_write(vm_page_t);
 int vm_page_trysbusy(vm_page_t m);
 void vm_page_unhold_pages(vm_page_t *ma, int count);
 void vm_page_unswappable(vm_page_t m);
@@ -820,7 +812,7 @@ static inline bool
 vm_page_held(vm_page_t m)
 {
 
-	return (m->hold_count > 0 || m->wire_count > 0);
+	return ((m->wire_count & ~WIRE_COUNT_OBJREF) > 0);
 }
 
 #endif				/* _KERNEL */

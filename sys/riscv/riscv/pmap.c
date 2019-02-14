@@ -796,24 +796,19 @@ pmap_extract_and_hold(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 {
 	pt_entry_t *l3p, l3;
 	vm_paddr_t phys;
-	vm_paddr_t pa;
 	vm_page_t m;
 
-	pa = 0;
 	m = NULL;
 	PMAP_LOCK(pmap);
-retry:
 	l3p = pmap_l3(pmap, va);
 	if (l3p != NULL && (l3 = pmap_load(l3p)) != 0) {
 		if ((l3 & PTE_W) != 0 || (prot & VM_PROT_WRITE) == 0) {
 			phys = PTE_TO_PHYS(l3);
-			if (vm_page_pa_tryrelock(pmap, phys, &pa))
-				goto retry;
 			m = PHYS_TO_VM_PAGE(phys);
-			vm_page_hold(m);
+			if (!vm_page_try_hold(m))
+				m = NULL;
 		}
 	}
-	PA_UNLOCK_COND(pa);
 	PMAP_UNLOCK(pmap);
 	return (m);
 }
@@ -1519,7 +1514,7 @@ free_pv_chunk(struct pv_chunk *pc)
 #if 0 /* TODO: For minidump */
 	dump_drop_page(m->phys_addr);
 #endif
-	vm_page_unwire(m, PQ_NONE);
+	vm_page_unwire_noq(m);
 	vm_page_free(m);
 }
 
