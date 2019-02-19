@@ -2953,7 +2953,7 @@ retry:
 			}
 		}
 		if (m != NULL)
-			vm_page_hold(m);
+			vm_page_wire(m);
 	}
 	PA_UNLOCK_COND(pa);
 	PMAP_UNLOCK(pmap);
