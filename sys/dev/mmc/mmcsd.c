@@ -886,7 +886,8 @@ mmcsd_ioctl_cmd(struct mmcsd_part *part, struct mmc_ioc_cmd *mic, int fflag)
 	struct mmcsd_softc *sc;
 	device_t dev, mmcbus;
 	void *dp;
-	u_long len;
+	uint64_t len64;
+	size_t len;
 	int err, retries;
 	uint32_t status;
 	uint16_t rca;
@@ -917,11 +918,12 @@ mmcsd_ioctl_cmd(struct mmcsd_part *part, struct mmc_ioc_cmd *mic, int fflag)
 
 	err = 0;
 	dp = NULL;
-	len = mic->blksz * mic->blocks;
-	if (len > MMC_IOC_MAX_BYTES) {
+	len64 = (uint64_t)mic->blksz * mic->blocks;
+	if (len64 > MMC_IOC_MAX_BYTES) {
 		err = EOVERFLOW;
 		goto out;
 	}
+	len = (size_t)len64;
 	if (len != 0) {
 		dp = malloc(len, M_TEMP, M_WAITOK);
 		err = copyin((void *)(uintptr_t)mic->data_ptr, dp, len);
