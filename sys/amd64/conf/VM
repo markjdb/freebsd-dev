@@ -10,7 +10,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				    netgraph/iface netgraph/socket             \
 				  opensolaris dtrace ksyms                     \
 				  geom/geom_eli                                \
-				  procfs nullfs fuse unionfs fdescfs tmpfs     \
+				  procfs nullfs fusefs unionfs fdescfs tmpfs   \
 				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
 				  snp hwpmc"
 

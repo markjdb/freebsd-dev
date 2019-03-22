@@ -16,7 +16,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  geom/geom_concat                             \
 				  mac_ntpd                                     \
 				  wlan_acl wlan_xauth                          \
-				  procfs nullfs fuse unionfs fdescfs tmpfs zfs \
+				  procfs nullfs fusefs unionfs fdescfs tmpfs zfs \
 				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
 				  if_bridge bridgestp ipfw_nat libalias pf     \
 				  snp hwpmc                                    \
