@@ -50,10 +50,7 @@ __FBSDID("$FreeBSD$");
 #include <bootstrap.h>
 #include <smbios.h>
 
-#ifdef EFI_ZFS_BOOT
-#include <libzfs.h>
 #include "efizfs.h"
-#endif
 
 #include "loader_efi.h"
 
@@ -763,18 +760,14 @@ main(int argc, CHAR16 *argv[])
 	archsw.arch_copyin = efi_copyin;
 	archsw.arch_copyout = efi_copyout;
 	archsw.arch_readin = efi_readin;
-#ifdef EFI_ZFS_BOOT
-	/* Note this needs to be set before ZFS init. */
 	archsw.arch_zfs_probe = efi_zfs_probe;
-#endif
 
         /* Get our loaded image protocol interface structure. */
 	BS->HandleProtocol(IH, &imgid, (VOID**)&img);
 
-#ifdef EFI_ZFS_BOOT
-	/* Tell ZFS probe code where we booted from */
+	/* Tell ZFS probe code where we booted from, if zfs configured */
 	efizfs_set_preferred(img->DeviceHandle);
-#endif
+
 	/* Init the time source */
 	efi_time_init();
 
@@ -1217,7 +1210,7 @@ command_lsefi(int argc __unused, char *argv[] __unused)
 	EFI_HANDLE handle;
 	UINTN bufsz = 0, i, j;
 	EFI_STATUS status;
-	int ret;
+	int ret = 0;
 
 	status = BS->LocateHandle(AllHandles, NULL, NULL, &bufsz, buffer);
 	if (status != EFI_BUFFER_TOO_SMALL) {
