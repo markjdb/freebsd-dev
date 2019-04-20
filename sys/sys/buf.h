@@ -518,14 +518,11 @@ void	bwillwrite(void);
 int	buf_dirty_count_severe(void);
 void	bremfree(struct buf *);
 void	bremfreef(struct buf *);	/* XXX Force bremfree, only for nfs. */
-#define bread(vp, blkno, size, cred, bpp) \
-	    breadn_flags(vp, blkno, size, NULL, NULL, 0, cred, 0, NULL, bpp)
-#define bread_gb(vp, blkno, size, cred, gbflags, bpp) \
-	    breadn_flags(vp, blkno, size, NULL, NULL, 0, cred, \
-		gbflags, NULL, bpp)
-#define breadn(vp, blkno, size, rablkno, rabsize, cnt, cred, bpp) \
-	    breadn_flags(vp, blkno, size, rablkno, rabsize, cnt, cred, \
-		0, NULL, bpp)
+int	bread(struct vnode *, daddr_t, int, struct ucred *, struct buf **);
+int	bread_gb(struct vnode *, daddr_t, int, struct ucred *, int,
+	    struct buf **);
+int	breadn(struct vnode *, daddr_t, int, daddr_t *, int *, int,
+	    struct ucred *, struct buf **);
 int	breadn_flags(struct vnode *, daddr_t, int, daddr_t *, int *, int,
 	    struct ucred *, int, void (*)(struct buf *), struct buf **);
 void	bdwrite(struct buf *);

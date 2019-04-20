@@ -169,6 +169,9 @@ static int vfs_bio_clcheck(struct vnode *vp, int size,
 		daddr_t lblkno, daddr_t blkno);
 static void breada(struct vnode *, daddr_t *, int *, int, struct ucred *, int,
 		void (*)(struct buf *));
+static int breadn_flags1(struct vnode *vp, daddr_t blkno, int size,
+		daddr_t *rablkno, int *rabsize, int cnt, struct ucred *cred,
+		int flags, void (*ckhashfunc)(struct buf *), struct buf **bpp);
 static int buf_flush(struct vnode *vp, struct bufdomain *, int);
 static int flushbufqueues(struct vnode *, struct bufdomain *, int, int);
 static void buf_daemon(void);
@@ -2112,9 +2115,43 @@ breada(struct vnode * vp, daddr_t * rablkno, int * rabsize, int cnt,
 	}
 }
 
+int
+bread(struct vnode *vp, daddr_t blkno, int size, struct ucred *cred,
+    struct buf **bpp)
+{
+
+	return (breadn_flags1(vp, blkno, size, NULL, NULL, 0, cred, 0, NULL,
+	    bpp));
+}
+
+int
+bread_gb(struct vnode *vp, daddr_t blkno, int size, struct ucred *cred, int gbflags,
+    struct buf **bpp)
+{
+	return (breadn_flags1(vp, blkno, size, NULL, NULL, 0, cred, gbflags,
+	    NULL, bpp));
+}
+
+int
+breadn(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
+    int *rabsize, int cnt, struct ucred *cred, struct buf **bpp)
+{
+
+	return (breadn_flags1(vp, blkno, size, rablkno, rabsize, cnt, cred,
+	    0, NULL, bpp));
+}
+
+int
+breadn_flags(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
+    int *rabsize, int cnt, struct ucred *cred, int gbflags,
+    void (*ckhashfunc)(struct buf *), struct buf **bpp)
+{
+
+	return (breadn_flags1(vp, blkno, size, rablkno, rabsize, cnt, cred,
+	    gbflags, ckhashfunc, bpp));
+}
+
 /*
- * Entry point for bread() and breadn() via #defines in sys/buf.h.
- *
  * Get a buffer with the specified data.  Look in the cache first.  We
  * must clear BIO_ERROR and B_INVAL prior to initiating I/O.  If B_CACHE
  * is set, the buffer is valid and we do not have to do anything, see
@@ -2122,9 +2159,9 @@ breada(struct vnode * vp, daddr_t * rablkno, int * rabsize, int cnt,
  *
  * Always return a NULL buffer pointer (in bpp) when returning an error.
  */
-int
-breadn_flags(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
-    int *rabsize, int cnt, struct ucred *cred, int flags,
+static int __always_inline
+breadn_flags1(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
+    int *rabsize, int cnt, struct ucred *cred, int gbflags,
     void (*ckhashfunc)(struct buf *), struct buf **bpp)
 {
 	struct buf *bp;
@@ -2137,12 +2174,12 @@ breadn_flags(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
 	 * Can only return NULL if GB_LOCK_NOWAIT or GB_SPARSE flags
 	 * are specified.
 	 */
-	error = getblkx(vp, blkno, size, 0, 0, flags, &bp);
+	error = getblkx(vp, blkno, size, 0, 0, gbflags, &bp);
 	if (error != 0) {
 		*bpp = NULL;
 		return (error);
 	}
-	flags &= ~GB_NOSPARSE;
+	gbflags &= ~GB_NOSPARSE;
 	*bpp = bp;
 
 	/*
@@ -2160,7 +2197,7 @@ breadn_flags(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
 		td->td_ru.ru_inblock++;
 		bp->b_iocmd = BIO_READ;
 		bp->b_flags &= ~B_INVAL;
-		if ((flags & GB_CKHASH) != 0) {
+		if ((gbflags & GB_CKHASH) != 0) {
 			bp->b_flags |= B_CKHASH;
 			bp->b_ckhashcalc = ckhashfunc;
 		}
@@ -2176,7 +2213,7 @@ breadn_flags(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
 	/*
 	 * Attempt to initiate asynchronous I/O on read-ahead blocks.
 	 */
-	breada(vp, rablkno, rabsize, cnt, cred, flags, ckhashfunc);
+	breada(vp, rablkno, rabsize, cnt, cred, gbflags, ckhashfunc);
 
 	rv = 0;
 	if (readwait) {
