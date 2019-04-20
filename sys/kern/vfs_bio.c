@@ -169,9 +169,10 @@ static int vfs_bio_clcheck(struct vnode *vp, int size,
 		daddr_t lblkno, daddr_t blkno);
 static void breada(struct vnode *, daddr_t *, int *, int, struct ucred *, int,
 		void (*)(struct buf *));
-static int breadn_flags1(struct vnode *vp, daddr_t blkno, int size,
-		daddr_t *rablkno, int *rabsize, int cnt, struct ucred *cred,
-		int flags, void (*ckhashfunc)(struct buf *), struct buf **bpp);
+static int breadn_flags1(struct vnode *vp, daddr_t lblkno, daddr_t dblkno,
+		int size, daddr_t *rablkno, int *rabsize, int cnt,
+		struct ucred *cred, int flags, void (*ckhashfunc)(struct buf *),
+		struct buf **bpp);
 static int buf_flush(struct vnode *vp, struct bufdomain *, int);
 static int flushbufqueues(struct vnode *, struct bufdomain *, int, int);
 static void buf_daemon(void);
@@ -2120,15 +2121,24 @@ bread(struct vnode *vp, daddr_t blkno, int size, struct ucred *cred,
     struct buf **bpp)
 {
 
-	return (breadn_flags1(vp, blkno, size, NULL, NULL, 0, cred, 0, NULL,
+	return (breadn_flags1(vp, blkno, 0, size, NULL, NULL, 0, cred, 0, NULL,
 	    bpp));
+}
+
+int
+breadb(struct vnode *vp, daddr_t lblkno, daddr_t dblkno, int size,
+    struct ucred *cred, struct buf **bpp)
+{
+
+	return (breadn_flags1(vp, lblkno, dblkno, size, NULL, NULL, 0, cred, 0,
+	    NULL, bpp));
 }
 
 int
 bread_gb(struct vnode *vp, daddr_t blkno, int size, struct ucred *cred, int gbflags,
     struct buf **bpp)
 {
-	return (breadn_flags1(vp, blkno, size, NULL, NULL, 0, cred, gbflags,
+	return (breadn_flags1(vp, blkno, 0, size, NULL, NULL, 0, cred, gbflags,
 	    NULL, bpp));
 }
 
@@ -2137,7 +2147,7 @@ breadn(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
     int *rabsize, int cnt, struct ucred *cred, struct buf **bpp)
 {
 
-	return (breadn_flags1(vp, blkno, size, rablkno, rabsize, cnt, cred,
+	return (breadn_flags1(vp, blkno, 0, size, rablkno, rabsize, cnt, cred,
 	    0, NULL, bpp));
 }
 
@@ -2147,7 +2157,7 @@ breadn_flags(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
     void (*ckhashfunc)(struct buf *), struct buf **bpp)
 {
 
-	return (breadn_flags1(vp, blkno, size, rablkno, rabsize, cnt, cred,
+	return (breadn_flags1(vp, blkno, 0, size, rablkno, rabsize, cnt, cred,
 	    gbflags, ckhashfunc, bpp));
 }
 
@@ -2160,21 +2170,21 @@ breadn_flags(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
  * Always return a NULL buffer pointer (in bpp) when returning an error.
  */
 static int __always_inline
-breadn_flags1(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
-    int *rabsize, int cnt, struct ucred *cred, int gbflags,
+breadn_flags1(struct vnode *vp, daddr_t lblkno, daddr_t dblkno, int size,
+    daddr_t *rablkno, int *rabsize, int cnt, struct ucred *cred, int gbflags,
     void (*ckhashfunc)(struct buf *), struct buf **bpp)
 {
 	struct buf *bp;
 	struct thread *td;
 	int error, readwait, rv;
 
-	CTR3(KTR_BUF, "breadn(%p, %jd, %d)", vp, blkno, size);
+	CTR3(KTR_BUF, "breadn(%p, %jd, %d)", vp, lblkno, size);
 	td = curthread;
 	/*
 	 * Can only return NULL if GB_LOCK_NOWAIT or GB_SPARSE flags
 	 * are specified.
 	 */
-	error = getblkx(vp, blkno, size, 0, 0, gbflags, &bp);
+	error = getblkx(vp, lblkno, size, 0, 0, gbflags, &bp);
 	if (error != 0) {
 		*bpp = NULL;
 		return (error);
@@ -2195,6 +2205,8 @@ breadn_flags1(struct vnode *vp, daddr_t blkno, int size, daddr_t *rablkno,
 		}
 #endif /* RACCT */
 		td->td_ru.ru_inblock++;
+		if (dblkno != 0)
+			bp->b_blkno = dblkno;
 		bp->b_iocmd = BIO_READ;
 		bp->b_flags &= ~B_INVAL;
 		if ((gbflags & GB_CKHASH) != 0) {

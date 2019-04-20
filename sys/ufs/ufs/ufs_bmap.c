@@ -57,7 +57,6 @@ __FBSDID("$FreeBSD$");
 #include <ufs/ufs/ufs_extern.h>
 
 static ufs_lbn_t lbn_count(struct ufsmount *, int);
-static int readindir(struct vnode *, ufs_lbn_t, ufs2_daddr_t, struct buf **);
 
 /*
  * Bmap converts the logical block number of a file to its physical block
@@ -91,51 +90,6 @@ ufs_bmap(ap)
 	    ap->a_runp, ap->a_runb);
 	*ap->a_bnp = blkno;
 	return (error);
-}
-
-static int
-readindir(vp, lbn, daddr, bpp)
-	struct vnode *vp;
-	ufs_lbn_t lbn;
-	ufs2_daddr_t daddr;
-	struct buf **bpp;
-{
-	struct buf *bp;
-	struct mount *mp;
-	struct ufsmount *ump;
-	int error;
-
-	mp = vp->v_mount;
-	ump = VFSTOUFS(mp);
-
-	bp = getblk(vp, lbn, mp->mnt_stat.f_iosize, 0, 0, 0);
-	if ((bp->b_flags & B_CACHE) == 0) {
-		KASSERT(daddr != 0,
-		    ("readindir: indirect block not in cache"));
-
-		bp->b_blkno = blkptrtodb(ump, daddr);
-		bp->b_iocmd = BIO_READ;
-		bp->b_flags &= ~B_INVAL;
-		bp->b_ioflags &= ~BIO_ERROR;
-		vfs_busy_pages(bp, 0);
-		bp->b_iooffset = dbtob(bp->b_blkno);
-		bstrategy(bp);
-#ifdef RACCT
-		if (racct_enable) {
-			PROC_LOCK(curproc);
-			racct_add_buf(curproc, bp, 0);
-			PROC_UNLOCK(curproc);
-		}
-#endif
-		curthread->td_ru.ru_inblock++;
-		error = bufwait(bp);
-		if (error != 0) {
-			brelse(bp);
-			return (error);
-		}
-	}
-	*bpp = bp;
-	return (0);
 }
 
 /*
@@ -263,7 +217,8 @@ ufs_bmaparray(vp, bn, bnp, nbp, runp, runb)
 		 */
 		if (bp)
 			bqrelse(bp);
-		error = readindir(vp, metalbn, daddr, &bp);
+		error = breadb(vp, metalbn, blkptrtodb(ump, daddr),
+		    mp->mnt_stat.f_iosize, NOCRED, &bp);
 		if (error != 0)
 			return (error);
 
@@ -395,7 +350,8 @@ ufs_bmap_seekdata(vp, offp)
 		for (; daddr != 0 && num > 0; ap++, num--) {
 			if (bp != NULL)
 				bqrelse(bp);
-			error = readindir(vp, ap->in_lbn, daddr, &bp);
+			error = breadb(vp, ap->in_lbn, blkptrtodb(ump, daddr),
+			    mp->mnt_stat.f_iosize, NOCRED, &bp);
 			if (error != 0)
 				return (error);
 

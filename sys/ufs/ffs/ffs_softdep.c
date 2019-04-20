@@ -6289,29 +6289,10 @@ setup_trunc_indir(freeblks, ip, lbn, lastlbn, blkno)
 		return (0);
 	mp = freeblks->fb_list.wk_mp;
 	ump = VFSTOUFS(mp);
-	bp = getblk(ITOV(ip), lbn, mp->mnt_stat.f_iosize, 0, 0, 0);
-	if ((bp->b_flags & B_CACHE) == 0) {
-		bp->b_blkno = blkptrtodb(VFSTOUFS(mp), blkno);
-		bp->b_iocmd = BIO_READ;
-		bp->b_flags &= ~B_INVAL;
-		bp->b_ioflags &= ~BIO_ERROR;
-		vfs_busy_pages(bp, 0);
-		bp->b_iooffset = dbtob(bp->b_blkno);
-		bstrategy(bp);
-#ifdef RACCT
-		if (racct_enable) {
-			PROC_LOCK(curproc);
-			racct_add_buf(curproc, bp, 0);
-			PROC_UNLOCK(curproc);
-		}
-#endif /* RACCT */
-		curthread->td_ru.ru_inblock++;
-		error = bufwait(bp);
-		if (error) {
-			brelse(bp);
-			return (error);
-		}
-	}
+	error = breadb(ITOV(ip), lbn, blkptrtodb(VFSTOUFS(mp), blkno),
+	    mp->mnt_stat.f_iosize, NOCRED, &bp);
+	if (error != 0)
+		return (error);
 	level = lbn_level(lbn);
 	lbnadd = lbn_offset(ump->um_fs, level);
 	/*

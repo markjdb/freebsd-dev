@@ -683,29 +683,8 @@ ffs_indirtrunc(ip, lbn, dbn, lastbn, level, countp)
 	 * explicitly instead of letting bread do everything for us.
 	 */
 	vp = ITOV(ip);
-	bp = getblk(vp, lbn, (int)fs->fs_bsize, 0, 0, 0);
-	if ((bp->b_flags & B_CACHE) == 0) {
-#ifdef RACCT
-		if (racct_enable) {
-			PROC_LOCK(curproc);
-			racct_add_buf(curproc, bp, 0);
-			PROC_UNLOCK(curproc);
-		}
-#endif /* RACCT */
-		curthread->td_ru.ru_inblock++;	/* pay for read */
-		bp->b_iocmd = BIO_READ;
-		bp->b_flags &= ~B_INVAL;
-		bp->b_ioflags &= ~BIO_ERROR;
-		if (bp->b_bcount > bp->b_bufsize)
-			panic("ffs_indirtrunc: bad buffer size");
-		bp->b_blkno = dbn;
-		vfs_busy_pages(bp, 0);
-		bp->b_iooffset = dbtob(bp->b_blkno);
-		bstrategy(bp);
-		error = bufwait(bp);
-	}
-	if (error) {
-		brelse(bp);
+	error = breadb(vp, lbn, dbn, (int)fs->fs_bsize, NOCRED, &bp);
+	if (error != 0) {
 		*countp = 0;
 		return (error);
 	}

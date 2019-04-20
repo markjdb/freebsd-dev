@@ -229,33 +229,10 @@ ext2_bmaparray(struct vnode *vp, daddr_t bn, daddr_t *bnp, int *runp, int *runb)
 		if (bp)
 			bqrelse(bp);
 
-		bp = getblk(vp, metalbn, bsize, 0, 0, 0);
-		if ((bp->b_flags & B_CACHE) == 0) {
-#ifdef INVARIANTS
-			if (!daddr)
-				panic("ext2_bmaparray: indirect block not in cache");
-#endif
-			bp->b_blkno = blkptrtodb(ump, daddr);
-			bp->b_iocmd = BIO_READ;
-			bp->b_flags &= ~B_INVAL;
-			bp->b_ioflags &= ~BIO_ERROR;
-			vfs_busy_pages(bp, 0);
-			bp->b_iooffset = dbtob(bp->b_blkno);
-			bstrategy(bp);
-#ifdef RACCT
-			if (racct_enable) {
-				PROC_LOCK(curproc);
-				racct_add_buf(curproc, bp, 0);
-				PROC_UNLOCK(curproc);
-			}
-#endif
-			curthread->td_ru.ru_inblock++;
-			error = bufwait(bp);
-			if (error) {
-				brelse(bp);
-				return (error);
-			}
-		}
+		error = breadb(vp, metalbn, blkptrtodb(ump, daddr), bsize,
+		    NOCRED, &bp);
+		if (error != 0)
+			return (error);
 
 		daddr = ((e2fs_daddr_t *)bp->b_data)[ap->in_off];
 		if (num == 1 && daddr && runp) {

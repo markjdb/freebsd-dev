@@ -519,6 +519,8 @@ int	buf_dirty_count_severe(void);
 void	bremfree(struct buf *);
 void	bremfreef(struct buf *);	/* XXX Force bremfree, only for nfs. */
 int	bread(struct vnode *, daddr_t, int, struct ucred *, struct buf **);
+int	breadb(struct vnode *, daddr_t, daddr_t, int, struct ucred *,
+	    struct buf **);
 int	bread_gb(struct vnode *, daddr_t, int, struct ucred *, int,
 	    struct buf **);
 int	breadn(struct vnode *, daddr_t, int, daddr_t *, int *, int,
