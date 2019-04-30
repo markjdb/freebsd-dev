@@ -138,18 +138,28 @@ authunix_create(struct ucred *cred)
 	uint32_t time;
 	int len;
 
-	if (auth_unix_count > AUTH_UNIX_MAX) {
-		while (auth_unix_count > AUTH_UNIX_MAX) {
-			sx_xlock(&auth_unix_lock);
-			tau = TAILQ_FIRST(&auth_unix_all);
-			th = HASHSTEP(HASHINIT, tau->au_xcred.cr_uid)
-				% AUTH_UNIX_HASH_SIZE;
-			TAILQ_REMOVE(&auth_unix_cache[th], tau, au_link);
-			TAILQ_REMOVE(&auth_unix_all, tau, au_alllink);
-			auth_unix_count--;
-			sx_xunlock(&auth_unix_lock);
-			AUTH_DESTROY(tau->au_auth);
+	while (auth_unix_count > AUTH_UNIX_MAX) {
+		sx_xlock(&auth_unix_lock);
+		tau = TAILQ_FIRST(&auth_unix_all);
+		th = HASHSTEP(HASHINIT, tau->au_xcred.cr_uid) %
+		    AUTH_UNIX_HASH_SIZE;
+#ifdef INVARIANTS
+		TAILQ_FOREACH(au, &auth_unix_cache[th], au_link) {
+			if (au == tau)
+				break;
 		}
+		KASSERT(au != NULL, ("failed to find audata %p 1", tau));
+		TAILQ_FOREACH(au, &auth_unix_all, au_alllink) {
+			if (au == tau)
+				break;
+		}
+		KASSERT(au != NULL, ("failed to find audata %p 2", tau));
+#endif
+		TAILQ_REMOVE(&auth_unix_cache[th], tau, au_link);
+		TAILQ_REMOVE(&auth_unix_all, tau, au_alllink);
+		auth_unix_count--;
+		sx_xunlock(&auth_unix_lock);
+		AUTH_DESTROY(tau->au_auth);
 	}
 
 	/*
