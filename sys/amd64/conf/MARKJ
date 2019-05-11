@@ -29,7 +29,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  cpuctl                                       \
 				  opensolaris dtrace ksyms                     \
 				  ichwd coretemp                               \
-				  linux_common linux linux64 linprocfs         \
+				  linux_common linux linux64 linprocfs linuxkpi\
 				  geom/geom_eli geom/geom_mirror               \
 				  geom/geom_concat                             \
 				  mac_ntpd                                     \
