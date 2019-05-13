@@ -11,7 +11,7 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  opensolaris dtrace ksyms                     \
 				  geom/geom_eli                                \
 				  procfs nullfs fusefs unionfs fdescfs tmpfs   \
-				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
+				  ipfw dummynet ipdivert if_tuntap if_lagg if_vlan\
 				  snp hwpmc"
 
 options 	SCHED_ULE		# ULE scheduler
