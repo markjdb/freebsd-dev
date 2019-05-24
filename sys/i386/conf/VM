@@ -13,8 +13,8 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  opensolaris dtrace ksyms                     \
 				  crypto geom/geom_eli                         \
 				  procfs nullfs fuse unionfs fdescfs           \
-				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
-				  snp hwpmc"
+				  ipfw dummynet ipdivert if_tuntap if_lagg     \
+				  if_vlan snp hwpmc"
 
 options 	SCHED_ULE		# ULE scheduler
 options 	PREEMPTION		# Enable kernel thread preemption
@@ -296,7 +296,6 @@ device		padlock_rng	# VIA Padlock RNG
 device		rdrand_rng	# Intel Bull Mountain RNG
 device		ether		# Ethernet support
 device		vlan		# 802.1Q VLAN support
-device		tun		# Packet tunnel.
 device		md		# Memory "disks"
 device		gif		# IPv6 and IPv4 tunneling
 device		firmware	# firmware assist module

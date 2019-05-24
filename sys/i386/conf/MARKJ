@@ -20,8 +20,8 @@ makeoptions	MODULES_OVERRIDE="netgraph/netgraph netgraph/ether             \
 				  geom/geom_eli                                \
 				  wlan_acl wlan_xauth                          \
 				  procfs nullfs fuse unionfs fdescfs tmpfs     \
-				  ipfw dummynet ipdivert if_tap if_lagg if_vlan\
-				  snp hwpmc                                    \
+				  ipfw dummynet ipdivert if_tuntap if_lagg     \
+				  if_vlan snp hwpmc                            \
 				  usb/usb usb/run usb/umass usb/ucom usb/ums   \
 				    usb/runfw usb/uether usb/axe usb/axge      \
 				    usb/uplcom usb/uslcom"
@@ -314,7 +314,6 @@ device		padlock_rng	# VIA Padlock RNG
 device		rdrand_rng	# Intel Bull Mountain RNG
 device		ether		# Ethernet support
 device		vlan		# 802.1Q VLAN support
-device		tun		# Packet tunnel.
 device		md		# Memory "disks"
 device		gif		# IPv6 and IPv4 tunneling
 device		firmware	# firmware assist module
