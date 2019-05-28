@@ -1611,9 +1611,7 @@ error:
 	for (mp = ma; mp < ma + count; mp++)
 		if (*mp != NULL) {
 			vm_page_lock(*mp);
-			if (vm_page_unwire(*mp, PQ_INACTIVE) &&
-			    (*mp)->object == NULL)
-				vm_page_free(*mp);
+			vm_page_unwire(*mp, PQ_INACTIVE);
 			vm_page_unlock(*mp);
 		}
 	return (-1);

@@ -1117,8 +1117,7 @@ vm_page_unhold_pages(vm_page_t *ma, int count)
 	mtx = NULL;
 	for (; count != 0; count--) {
 		vm_page_change_lock(*ma, &mtx);
-		if (vm_page_unwire(*ma, PQ_ACTIVE) && (*ma)->object == NULL)
-			vm_page_free(*ma);
+		vm_page_unwire(*ma, PQ_ACTIVE);
 		ma++;
 	}
 	if (mtx != NULL)
@@ -3622,46 +3621,48 @@ vm_page_wire(vm_page_t m)
  * paged out.  Returns TRUE if the number of wirings transitions to zero and
  * FALSE otherwise.
  *
+ * XXX
+ *
  * Only managed pages belonging to an object can be paged out.  If the number
  * of wirings transitions to zero and the page is eligible for page out, then
  * the page is added to the specified paging queue (unless PQ_NONE is
  * specified, in which case the page is dequeued if it belongs to a paging
  * queue).
  *
- * If a page is fictitious, then its wire count must always be one.
- *
  * A managed page must be locked.
  */
-bool
+void
 vm_page_unwire(vm_page_t m, uint8_t queue)
 {
 	bool unwired;
 
-	KASSERT(queue < PQ_COUNT || queue == PQ_NONE,
-	    ("vm_page_unwire: invalid queue %u request for page %p",
-	    queue, m));
+	KASSERT(queue < PQ_COUNT,
+	    ("vm_page_unwire: invalid queue %u request for page %p", queue, m));
 	if ((m->oflags & VPO_UNMANAGED) == 0)
 		vm_page_assert_locked(m);
 
 	unwired = vm_page_unwire_noq(m);
-	if (!unwired || (m->oflags & VPO_UNMANAGED) != 0 || m->object == NULL)
-		return (unwired);
+	if (!unwired)
+		return;
+	if (m->ref_count == 0) {
+		vm_page_free(m);
+		return;
+	}
+	if ((m->oflags & VPO_UNMANAGED) != 0)
+		return;
 
 	if (vm_page_queue(m) == queue) {
 		if (queue == PQ_ACTIVE)
 			vm_page_reference(m);
-		else if (queue != PQ_NONE)
+		else
 			vm_page_requeue(m);
 	} else {
 		vm_page_dequeue(m);
-		if (queue != PQ_NONE) {
-			vm_page_enqueue(m, queue);
-			if (queue == PQ_ACTIVE)
-				/* Initialize act_count. */
-				vm_page_activate(m);
-		}
+		vm_page_enqueue(m, queue);
+		if (queue == PQ_ACTIVE)
+			/* Initialize act_count. */
+			vm_page_activate(m);
 	}
-	return (unwired);
 }
 
 /*
