@@ -3570,22 +3570,24 @@ vm_page_free_pages_toq(struct spglist *free, bool update_wire_count)
 static void
 vm_page_ref(vm_page_t m)
 {
+	u_int old;
 
-	KASSERT(m->ref_count != UINT_MAX,
+	old = atomic_fetchadd_int(&m->ref_count, 1);
+	KASSERT(old != UINT_MAX,
 	    ("vm_page_ref: counter overflow for page %p", m));
-	m->ref_count++;
 }
 
 /* XXX */
 static void
 vm_page_unref(vm_page_t m)
 {
+	u_int old;
 
-	KASSERT(m->ref_count != 0,
+	old = atomic_fetchadd_int(&m->ref_count, -1);
+	KASSERT(old != 0,
 	    ("vm_page_unref: counter underflow for page %p", m));
-	KASSERT((m->flags & PG_FICTITIOUS) == 0 || m->ref_count > 1,
+	KASSERT((m->flags & PG_FICTITIOUS) == 0 || old > 1,
 	    ("vm_page_unref: missing ref on fictitious page %p", m));
-	m->ref_count--;
 }
 
 /*
