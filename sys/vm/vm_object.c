@@ -719,7 +719,11 @@ vm_object_terminate_pages(vm_object_t object)
 			 * lock for managed pages.
 			 */
 			vm_page_change_lock(p, &mtx);
+
+		KASSERT(p->object == object && p->ref_count > 0,
+		    ("vm_object_terminate_pages: page %p is inconsistent", p));
 		p->object = NULL;
+		p->ref_count--;
 		if (vm_page_wired(p))
 			continue;
 		VM_CNT_INC(v_pfree);

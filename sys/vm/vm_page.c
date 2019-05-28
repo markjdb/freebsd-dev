@@ -187,7 +187,9 @@ static int vm_domain_alloc_fail(struct vm_domain *vmd, vm_object_t object,
     int req);
 static int vm_page_import(void *arg, void **store, int cnt, int domain,
     int flags);
+static void vm_page_ref(vm_page_t m);
 static void vm_page_release(void *arg, void **store, int cnt);
+static void vm_page_unref(vm_page_t m);
 
 SYSINIT(vm_page, SI_SUB_VM, SI_ORDER_SECOND, vm_page_init, NULL);
 
@@ -519,7 +521,7 @@ vm_page_init_page(vm_page_t m, vm_paddr_t pa, int segind)
 {
 
 	m->object = NULL;
-	m->wire_count = 0;
+	m->ref_count = 0;
 	m->busy_lock = VPB_UNBUSIED;
 	m->flags = m->aflags = 0;
 	m->phys_addr = pa;
@@ -1183,7 +1185,8 @@ vm_page_initfake(vm_page_t m, vm_paddr_t paddr, vm_memattr_t memattr)
 	/* Fictitious pages don't use "order" or "pool". */
 	m->oflags = VPO_UNMANAGED;
 	m->busy_lock = VPB_SINGLE_EXCLUSIVER;
-	m->wire_count = 1;
+	/* Fictitious pages are unevictable. */
+	m->ref_count = 1;
 	pmap_page_init(m);
 memattr:
 	pmap_page_set_memattr(m, memattr);
@@ -1391,6 +1394,7 @@ vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
 		m->pindex = 0;
 		return (1);
 	}
+	vm_page_ref(m);
 	vm_page_insert_radixdone(m, object, mpred);
 	return (0);
 }
@@ -1413,11 +1417,13 @@ vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT(object != NULL && m->object == object,
 	    ("vm_page_insert_radixdone: page %p has inconsistent object", m));
+	KASSERT(m->ref_count > 0,
+	    ("vm_page_insert_radixdone: page %p is missing object ref", m));
 	if (mpred != NULL) {
 		KASSERT(mpred->object == object,
-		    ("vm_page_insert_after: object doesn't contain mpred"));
+		    ("vm_page_insert_radixdone: object doesn't contain mpred"));
 		KASSERT(mpred->pindex < m->pindex,
-		    ("vm_page_insert_after: mpred doesn't precede pindex"));
+		    ("vm_page_insert_radixdone: mpred doesn't precede pindex"));
 	}
 
 	if (mpred != NULL)
@@ -1485,6 +1491,7 @@ vm_page_remove(vm_page_t m)
 		vdrop(object->handle);
 
 	m->object = NULL;
+	vm_page_unref(m);
 }
 
 /*
@@ -1587,6 +1594,7 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 
 	mnew->object = object;
 	mnew->pindex = pindex;
+	vm_page_ref(mnew);
 	mold = vm_radix_replace(&object->rtree, mnew);
 	KASSERT(mold->queue == PQ_NONE,
 	    ("vm_page_replace: old page %p is on a paging queue", mold));
@@ -1596,6 +1604,7 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 	TAILQ_REMOVE(&object->memq, mold, listq);
 
 	mold->object = NULL;
+	vm_page_unref(mold);
 	vm_page_xunbusy_maybelocked(mold);
 
 	/*
@@ -1633,6 +1642,7 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 
 	VM_OBJECT_ASSERT_WLOCKED(new_object);
 
+	KASSERT(m->ref_count > 0, ("vm_page_rename: page %p has no refs", m));
 	mpred = vm_radix_lookup_le(&new_object->rtree, new_pindex);
 	KASSERT(mpred == NULL || mpred->pindex != new_pindex,
 	    ("vm_page_rename: pindex already renamed"));
@@ -1660,6 +1670,9 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 	/* Return back to the new pindex to complete vm_page_insert(). */
 	m->pindex = new_pindex;
 	m->object = new_object;
+	/* vm_page_remove() dropped the reference. */
+	vm_page_ref(m);
+
 	vm_page_unlock(m);
 	vm_page_insert_radixdone(m, new_object, mpred);
 	vm_page_dirty(m);
@@ -1878,7 +1891,7 @@ found:
 		 * page is inserted into the object.
 		 */
 		vm_wire_add(1);
-		m->wire_count = 1;
+		m->ref_count = 1;
 	}
 	m->act_count = 0;
 
@@ -1886,7 +1899,7 @@ found:
 		if (vm_page_insert_after(m, object, pindex, mpred)) {
 			if (req & VM_ALLOC_WIRED) {
 				vm_wire_sub(1);
-				m->wire_count = 0;
+				m->ref_count = 0;
 			}
 			KASSERT(m->object == NULL, ("page %p has object", m));
 			m->oflags = VPO_UNMANAGED;
@@ -2080,7 +2093,7 @@ found:
 		m->flags = (m->flags | PG_NODUMP) & flags;
 		m->busy_lock = busy_lock;
 		if ((req & VM_ALLOC_WIRED) != 0)
-			m->wire_count = 1;
+			m->ref_count = 1;
 		m->act_count = 0;
 		m->oflags = oflags;
 		if (object != NULL) {
@@ -2093,7 +2106,7 @@ found:
 				for (m = m_ret; m < &m_ret[npages]; m++) {
 					if (m <= mpred &&
 					    (req & VM_ALLOC_WIRED) != 0)
-						m->wire_count = 0;
+						m->ref_count = 0;
 					m->oflags = VPO_UNMANAGED;
 					m->busy_lock = VPB_UNBUSIED;
 					/* Don't change PG_ZERO. */
@@ -2127,7 +2140,7 @@ vm_page_alloc_check(vm_page_t m)
 	KASSERT(m->queue == PQ_NONE && (m->aflags & PGA_QUEUE_STATE_MASK) == 0,
 	    ("page %p has unexpected queue %d, flags %#x",
 	    m, m->queue, (m->aflags & PGA_QUEUE_STATE_MASK)));
-	KASSERT(!vm_page_wired(m), ("page %p is wired", m));
+	KASSERT(m->ref_count == 0, ("page %p has references", m));
 	KASSERT(!vm_page_busied(m), ("page %p is busy", m));
 	KASSERT(m->dirty == 0, ("page %p is dirty", m));
 	KASSERT(pmap_page_get_memattr(m) == VM_MEMATTR_DEFAULT,
@@ -2211,7 +2224,7 @@ again:
 		 * not belong to an object.
 		 */
 		vm_wire_add(1);
-		m->wire_count = 1;
+		m->ref_count = 1;
 	}
 	/* Unmanaged pages don't use "act_count". */
 	m->oflags = VPO_UNMANAGED;
@@ -2300,8 +2313,8 @@ vm_page_scan_contig(u_long npages, vm_page_t m_start, vm_page_t m_end,
 	for (m = m_start; m < m_end && run_len < npages; m += m_inc) {
 		KASSERT((m->flags & PG_MARKER) == 0,
 		    ("page %p is PG_MARKER", m));
-		KASSERT((m->flags & PG_FICTITIOUS) == 0 || m->wire_count == 1,
-		    ("fictitious page %p has invalid wire count", m));
+		KASSERT((m->flags & PG_FICTITIOUS) == 0 || m->ref_count >= 1,
+		    ("fictitious page %p has invalid ref count", m));
 
 		/*
 		 * If the current page would be the start of a run, check its
@@ -3461,8 +3474,8 @@ vm_page_free_prep(vm_page_t m)
 	 * return.
 	 */
 	if ((m->flags & PG_FICTITIOUS) != 0) {
-		KASSERT(m->wire_count == 1,
-		    ("fictitious page %p is not wired", m));
+		KASSERT(m->ref_count == 1,
+		    ("fictitious page %p is not referenced", m));
 		KASSERT(m->queue == PQ_NONE,
 		    ("fictitious page %p is queued", m));
 		return (false);
@@ -3479,8 +3492,8 @@ vm_page_free_prep(vm_page_t m)
 	m->valid = 0;
 	vm_page_undirty(m);
 
-	if (vm_page_wired(m))
-		panic("vm_page_free_prep: freeing wired page %p", m);
+	if (m->ref_count != 0)
+		panic("vm_page_free_prep: page %p has references", m);
 
 	/*
 	 * Restore the default memory attribute to the page.
@@ -3554,6 +3567,28 @@ vm_page_free_pages_toq(struct spglist *free, bool update_wire_count)
 		vm_wire_sub(count);
 }
 
+/* XXX */
+static void
+vm_page_ref(vm_page_t m)
+{
+
+	KASSERT(m->ref_count != UINT_MAX,
+	    ("vm_page_ref: counter overflow for page %p", m));
+	m->ref_count++;
+}
+
+/* XXX */
+static void
+vm_page_unref(vm_page_t m)
+{
+
+	KASSERT(m->ref_count != 0,
+	    ("vm_page_unref: counter underflow for page %p", m));
+	KASSERT((m->flags & PG_FICTITIOUS) == 0 || m->ref_count > 1,
+	    ("vm_page_unref: missing ref on fictitious page %p", m));
+	m->ref_count--;
+}
+
 /*
  *	vm_page_wire:
  *
@@ -3567,20 +3602,17 @@ vm_page_wire(vm_page_t m)
 {
 
 	vm_page_assert_locked(m);
-	if ((m->flags & PG_FICTITIOUS) != 0) {
-		KASSERT(m->wire_count == 1,
-		    ("vm_page_wire: fictitious page %p's wire count isn't one",
-		    m));
-		return;
-	}
+	if ((m->flags & PG_FICTITIOUS) != 0)
+		KASSERT(m->ref_count >= 1,
+		    ("vm_page_wire: fictitious page %p has zero refs", m));
+
 	if (!vm_page_wired(m)) {
 		KASSERT((m->oflags & VPO_UNMANAGED) == 0 ||
 		    m->queue == PQ_NONE,
 		    ("vm_page_wire: unmanaged page %p is queued", m));
 		vm_wire_add(1);
 	}
-	m->wire_count++;
-	KASSERT(m->wire_count != 0, ("vm_page_wire: wire_count overflow m=%p", m));
+	vm_page_ref(m);
 }
 
 /*
@@ -3646,19 +3678,14 @@ vm_page_unwire_noq(vm_page_t m)
 
 	if ((m->oflags & VPO_UNMANAGED) == 0)
 		vm_page_assert_locked(m);
-	if ((m->flags & PG_FICTITIOUS) != 0) {
-		KASSERT(m->wire_count == 1,
-	    ("vm_page_unwire: fictitious page %p's wire count isn't one", m));
+	KASSERT(vm_page_wired(m),
+	    ("vm_page_unwire_noq: page %p isn't wired", m));
+
+	vm_page_unref(m);
+	if (vm_page_wired(m))
 		return (false);
-	}
-	if (!vm_page_wired(m))
-		panic("vm_page_unwire: page %p's wire count is zero", m);
-	m->wire_count--;
-	if (m->wire_count == 0) {
-		vm_wire_sub(1);
-		return (true);
-	} else
-		return (false);
+	vm_wire_sub(1);
+	return (true);
 }
 
 /*
@@ -4501,10 +4528,10 @@ DB_SHOW_COMMAND(pginfo, vm_page_print_pginfo)
 	else
 		m = (vm_page_t)addr;
 	db_printf(
-    "page %p obj %p pidx 0x%jx phys 0x%jx q %d wire %d\n"
+    "page %p obj %p pidx 0x%jx phys 0x%jx q %d ref %u\n"
     "  af 0x%x of 0x%x f 0x%x act %d busy %x valid 0x%x dirty 0x%x\n",
 	    m, m->object, (uintmax_t)m->pindex, (uintmax_t)m->phys_addr,
-	    m->queue, m->wire_count, m->aflags, m->oflags,
+	    m->queue, m->ref_count, m->aflags, m->oflags,
 	    m->flags, m->act_count, m->busy_lock, m->valid, m->dirty);
 }
 #endif /* DDB */

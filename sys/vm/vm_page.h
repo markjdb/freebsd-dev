@@ -115,24 +115,11 @@
  *	the implementation of read-modify-write operations on the
  *	field is encapsulated in vm_page_clear_dirty_mask().
  *
- *	The page structure contains two counters which prevent page reuse.
- *	Both counters are protected by the page lock (P).  The hold
- *	counter counts transient references obtained via a pmap lookup, and
- *	is also used to prevent page reclamation in situations where it is
- *	undesirable to block other accesses to the page.  The wire counter
- *	is used to implement mlock(2) and is non-zero for pages containing
- *	kernel memory.  Pages that are wired or held will not be reclaimed
- *	or laundered by the page daemon, but are treated differently during
- *	a page queue scan: held pages remain at their position in the queue,
- *	while wired pages are removed from the queue and must later be
- *	re-enqueued appropriately by the unwiring thread.  It is legal to
- *	call vm_page_free() on a held page; doing so causes it to be removed
- *	from its object and page queue, and the page is released to the
- *	allocator once the last hold reference is dropped.  In contrast,
- *	wired pages may not be freed.
- *
- *	In some pmap implementations, the wire count of a page table page is
- *	used to track the number of populated entries.
+ *	The ref_count field counts references to the page.  The containing
+ *	object, if any, carries a reference to the page.  If a page has at
+ *	least one additional reference, it is said to be wired and is
+ *	unevictable.  For example, page locked by mlock(2) and mlockall(2)
+ *	are wired.  Fictitious pages are permanently wired.
  *
  *	The busy lock is an embedded reader-writer lock which protects the
  *	page's contents and identity (i.e., its <object, pindex> tuple) and
@@ -202,7 +189,10 @@ struct vm_page {
 	vm_pindex_t pindex;		/* offset into object (O,P) */
 	vm_paddr_t phys_addr;		/* physical address of page (C) */
 	struct md_page md;		/* machine dependent stuff */
-	u_int wire_count;		/* wired down maps refs (P) */
+	union {
+		u_int wire_count;	/* wired down maps refs (P) */
+		u_int ref_count;	/* XXX */
+	};
 	volatile u_int busy_lock;	/* busy owners lock */
 	uint16_t flags;			/* page PG_* flags (P) */
 	uint8_t	order;			/* index of the buddy queue (F) */
@@ -815,7 +805,12 @@ static inline bool
 vm_page_wired(vm_page_t m)
 {
 
-	return (m->wire_count > 0);
+	if (m->object != NULL) {
+		KASSERT(m->ref_count > 0,
+		    ("vm_page_wired: page %p has no refs", m));
+		return (m->ref_count > 1);
+	}
+	return (m->ref_count > 0);
 }
 
 #endif				/* _KERNEL */
