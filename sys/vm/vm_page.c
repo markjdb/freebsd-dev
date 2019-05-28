@@ -3602,7 +3602,11 @@ void
 vm_page_wire(vm_page_t m)
 {
 
-	vm_page_assert_locked(m);
+	KASSERT(m->object != NULL,
+	    ("vm_page_wire: page %p does not belong to an object", m));
+	if (!mtx_owned(vm_page_lockptr(m)) && !vm_page_busied(m))
+		VM_OBJECT_ASSERT_LOCKED(m->object);
+
 	if ((m->flags & PG_FICTITIOUS) != 0)
 		KASSERT(m->ref_count >= 1,
 		    ("vm_page_wire: fictitious page %p has zero refs", m));
@@ -3896,11 +3900,8 @@ retrylookup:
 			VM_OBJECT_WLOCK(object);
 			goto retrylookup;
 		} else {
-			if ((allocflags & VM_ALLOC_WIRED) != 0) {
-				vm_page_lock(m);
+			if ((allocflags & VM_ALLOC_WIRED) != 0)
 				vm_page_wire(m);
-				vm_page_unlock(m);
-			}
 			if ((allocflags &
 			    (VM_ALLOC_NOBUSY | VM_ALLOC_SBUSY)) == 0)
 				vm_page_xbusy(m);
@@ -3998,11 +3999,8 @@ retrylookup:
 				VM_OBJECT_WLOCK(object);
 				goto retrylookup;
 			}
-			if ((allocflags & VM_ALLOC_WIRED) != 0) {
-				vm_page_lock(m);
+			if ((allocflags & VM_ALLOC_WIRED) != 0)
 				vm_page_wire(m);
-				vm_page_unlock(m);
-			}
 			if ((allocflags & (VM_ALLOC_NOBUSY |
 			    VM_ALLOC_SBUSY)) == 0)
 				vm_page_xbusy(m);

@@ -206,9 +206,7 @@ uiomove_object_page(vm_object_t obj, size_t len, struct uio *uio)
 			vm_page_zero_invalid(m, TRUE);
 		vm_page_xunbusy(m);
 	}
-	vm_page_lock(m);
 	vm_page_wire(m);
-	vm_page_unlock(m);
 	VM_OBJECT_WUNLOCK(obj);
 	error = uiomove_fromphys(&m, offset, tlen, uio);
 	if (uio->uio_rw == UIO_WRITE && error == 0) {

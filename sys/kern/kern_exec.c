@@ -1014,9 +1014,7 @@ exec_map_first_page(struct image_params *imgp)
 		for (i = 1; i < initial_pagein; i++)
 			vm_page_readahead_finish(ma[i]);
 	}
-	vm_page_lock(ma[0]);
 	vm_page_wire(ma[0]);
-	vm_page_unlock(ma[0]);
 	VM_OBJECT_WUNLOCK(object);
 
 	imgp->firstpage = sf_buf_alloc(ma[0], 0);

@@ -227,9 +227,7 @@ mark_page_accessed(struct vm_page *page)
 static inline void
 get_page(struct vm_page *page)
 {
-	vm_page_lock(page);
 	vm_page_wire(page);
-	vm_page_unlock(page);
 }
 
 extern long

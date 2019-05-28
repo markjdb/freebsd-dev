@@ -481,9 +481,7 @@ page_wire(vnode_t *vp, int64_t start)
 			}
 
 			ASSERT3U(pp->valid, ==, VM_PAGE_BITS_ALL);
-			vm_page_lock(pp);
 			vm_page_wire(pp);
-			vm_page_unlock(pp);
 		} else
 			pp = NULL;
 		break;
