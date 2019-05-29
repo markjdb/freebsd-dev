@@ -762,10 +762,15 @@ recheck:
 			continue;
 		}
 
-		if (object != m->object) {
+		if (object != m->object || object == NULL) {
 			if (object != NULL)
 				VM_OBJECT_WUNLOCK(object);
 			object = m->object;
+			if (__predict_false(object == NULL))
+				/*
+				 * Another thread may have freed the page.
+				 */
+				continue;
 			if (!VM_OBJECT_TRYWLOCK(object)) {
 				mtx_unlock(mtx);
 				/* Depends on type-stability. */
@@ -1145,6 +1150,7 @@ vm_pageout_scan_active(struct vm_domain *vmd, int page_shortage)
 {
 	struct scan_state ss;
 	struct mtx *mtx;
+	vm_object_t object;
 	vm_page_t m, marker;
 	struct vm_pagequeue *pq;
 	long min_scan;
@@ -1237,7 +1243,9 @@ act_scan:
 		 *    This race delays the detection of a new reference.  At
 		 *    worst, we will deactivate and reactivate the page.
 		 */
-		if (m->object->ref_count != 0)
+		if (__predict_false((object = m->object) == NULL))
+			continue;
+		if (object->ref_count != 0)
 			act_delta = pmap_ts_referenced(m);
 		else
 			act_delta = 0;
@@ -1438,10 +1446,15 @@ recheck:
 			continue;
 		}
 
-		if (object != m->object) {
+		if (object != m->object || object == NULL) {
 			if (object != NULL)
 				VM_OBJECT_WUNLOCK(object);
 			object = m->object;
+			if (__predict_false(object == NULL))
+				/*
+				 * Another thread may have freed the page.
+				 */
+				continue;
 			if (!VM_OBJECT_TRYWLOCK(object)) {
 				mtx_unlock(mtx);
 				/* Depends on type-stability. */

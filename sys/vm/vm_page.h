@@ -549,8 +549,10 @@ bool vm_page_reclaim_contig(int req, u_long npages, vm_paddr_t low,
 bool vm_page_reclaim_contig_domain(int domain, int req, u_long npages,
     vm_paddr_t low, vm_paddr_t high, u_long alignment, vm_paddr_t boundary);
 void vm_page_reference(vm_page_t m);
-void vm_page_remove (vm_page_t);
-int vm_page_rename (vm_page_t, vm_object_t, vm_pindex_t);
+void vm_page_release(vm_page_t m, bool nocache);
+void vm_page_release_locked(vm_page_t m, bool nocache);
+void vm_page_remove(vm_page_t);
+int vm_page_rename(vm_page_t, vm_object_t, vm_pindex_t);
 vm_page_t vm_page_replace(vm_page_t mnew, vm_object_t object,
     vm_pindex_t pindex);
 void vm_page_requeue(vm_page_t m);
@@ -563,7 +565,6 @@ vm_offset_t vm_page_startup(vm_offset_t vaddr);
 void vm_page_sunbusy(vm_page_t m);
 bool vm_page_try_remove_all(vm_page_t m);
 bool vm_page_try_remove_write(vm_page_t m);
-bool vm_page_try_to_free(vm_page_t m);
 int vm_page_trysbusy(vm_page_t m);
 bool vm_page_try_wire(vm_page_t m);
 void vm_page_unhold_pages(vm_page_t *ma, int count);
@@ -801,6 +802,19 @@ vm_page_in_laundry(vm_page_t m)
 	return (queue == PQ_LAUNDRY || queue == PQ_UNSWAPPABLE);
 }
 
+/* XXX */
+static inline u_int
+vm_page_wire_count(vm_page_t m)
+{
+
+	if (m->object != NULL) {
+		KASSERT(m->ref_count > 0,
+		    ("vm_page_wired: page %p has no refs", m));
+		return (m->ref_count - 1);
+	}
+	return (m->ref_count);
+}
+
 /*
  *	vm_page_wired:
  *
@@ -810,12 +824,7 @@ static inline bool
 vm_page_wired(vm_page_t m)
 {
 
-	if (m->object != NULL) {
-		KASSERT(m->ref_count > 0,
-		    ("vm_page_wired: page %p has no refs", m));
-		return (m->ref_count > 1);
-	}
-	return (m->ref_count > 0);
+	return (vm_page_wire_count(m) > 0);
 }
 
 #endif				/* _KERNEL */

@@ -185,11 +185,11 @@ static int vm_page_reclaim_run(int req_class, int domain, u_long npages,
     vm_page_t m_run, vm_paddr_t high);
 static int vm_domain_alloc_fail(struct vm_domain *vmd, vm_object_t object,
     int req);
-static int vm_page_import(void *arg, void **store, int cnt, int domain,
-    int flags);
 static void vm_page_ref(vm_page_t m);
-static void vm_page_release(void *arg, void **store, int cnt);
 static void vm_page_unref(vm_page_t m);
+static int vm_page_zone_import(void *arg, void **store, int cnt, int domain,
+    int flags);
+static void vm_page_zone_release(void *arg, void **store, int cnt);
 
 SYSINIT(vm_page, SI_SUB_VM, SI_ORDER_SECOND, vm_page_init, NULL);
 
@@ -223,7 +223,7 @@ vm_page_init_cache_zones(void *dummy __unused)
 			continue;
 		vmd->vmd_pgcache = uma_zcache_create("vm pgcache",
 		    sizeof(struct vm_page), NULL, NULL, NULL, NULL,
-		    vm_page_import, vm_page_release, vmd,
+		    vm_page_zone_import, vm_page_zone_release, vmd,
 		    UMA_ZONE_MAXBUCKET | UMA_ZONE_VM);
 		(void )uma_zone_set_maxcache(vmd->vmd_pgcache, 0);
 	}
@@ -1463,8 +1463,10 @@ vm_page_remove(vm_page_t m)
 	vm_object_t object;
 	vm_page_t mrem;
 
+#if 0
 	if ((m->oflags & VPO_UNMANAGED) == 0)
 		vm_page_assert_locked(m);
+#endif
 	if ((object = m->object) == NULL)
 		return;
 	VM_OBJECT_ASSERT_WLOCKED(object);
@@ -2231,7 +2233,7 @@ again:
 }
 
 static int
-vm_page_import(void *arg, void **store, int cnt, int domain, int flags)
+vm_page_zone_import(void *arg, void **store, int cnt, int domain, int flags)
 {
 	struct vm_domain *vmd;
 	int i;
@@ -2252,7 +2254,7 @@ vm_page_import(void *arg, void **store, int cnt, int domain, int flags)
 }
 
 static void
-vm_page_release(void *arg, void **store, int cnt)
+vm_page_zone_release(void *arg, void **store, int cnt)
 {
 	struct vm_domain *vmd;
 	vm_page_t m;
@@ -3409,9 +3411,11 @@ void
 vm_page_activate(vm_page_t m)
 {
 
+	KASSERT(m->object != NULL,
+	    ("vm_page_activate: page %p has no object", m));
 	vm_page_assert_locked(m);
 
-	if (vm_page_wired(m) || (m->oflags & VPO_UNMANAGED) != 0)
+	if ((m->oflags & VPO_UNMANAGED) != 0)
 		return;
 	if (vm_page_queue(m) == PQ_ACTIVE) {
 		if (m->act_count < ACT_INIT)
@@ -3449,11 +3453,10 @@ vm_page_free_prep(vm_page_t m)
 			    m, i, (uintmax_t)*p));
 	}
 #endif
-	if ((m->oflags & VPO_UNMANAGED) == 0) {
-		vm_page_lock_assert(m, MA_OWNED);
+	if ((m->oflags & VPO_UNMANAGED) == 0)
 		KASSERT(!pmap_page_is_mapped(m),
 		    ("vm_page_free_prep: freeing mapped page %p", m));
-	} else
+	else
 		KASSERT(m->queue == PQ_NONE,
 		    ("vm_page_free_prep: unmanaged page %p is queued", m));
 	VM_CNT_INC(v_tfree);
@@ -3656,35 +3659,33 @@ vm_page_try_wire(vm_page_t m)
 void
 vm_page_unwire(vm_page_t m, uint8_t queue)
 {
-	bool unwired;
 
 	KASSERT(queue < PQ_COUNT,
 	    ("vm_page_unwire: invalid queue %u request for page %p", queue, m));
 	if ((m->oflags & VPO_UNMANAGED) == 0)
 		vm_page_assert_locked(m);
 
-	unwired = vm_page_unwire_noq(m);
-	if (!unwired)
-		return;
-	if (m->ref_count == 0) {
-		vm_page_free(m);
-		return;
+	/* XXX check for object == NULL? */
+	/* XXX explain race */
+	if ((m->oflags & VPO_UNMANAGED) == 0 && vm_page_wire_count(m) == 1) {
+		if (vm_page_queue(m) == queue) {
+			if (queue == PQ_ACTIVE)
+				vm_page_reference(m);
+			else
+				vm_page_requeue(m);
+		} else {
+			vm_page_dequeue(m);
+			vm_page_enqueue(m, queue);
+			if (queue == PQ_ACTIVE)
+				/* Initialize act_count. */
+				vm_page_activate(m);
+		}
 	}
-	if ((m->oflags & VPO_UNMANAGED) != 0)
-		return;
 
-	if (vm_page_queue(m) == queue) {
-		if (queue == PQ_ACTIVE)
-			vm_page_reference(m);
-		else
-			vm_page_requeue(m);
-	} else {
-		vm_page_dequeue(m);
-		vm_page_enqueue(m, queue);
-		if (queue == PQ_ACTIVE)
-			/* Initialize act_count. */
-			vm_page_activate(m);
-	}
+	if (!vm_page_unwire_noq(m))
+		return;
+	if (m->ref_count == 0)
+		vm_page_free(m);
 }
 
 /*
@@ -3719,11 +3720,12 @@ void
 vm_page_deactivate(vm_page_t m)
 {
 
+	KASSERT(m->object != NULL,
+	    ("vm_page_deactivate: page %p has no object", m));
 	vm_page_assert_locked(m);
 
-	if (vm_page_wired(m) || (m->oflags & VPO_UNMANAGED) != 0)
+	if ((m->oflags & VPO_UNMANAGED) != 0)
 		return;
-
 	if (!vm_page_inactive(m)) {
 		vm_page_dequeue(m);
 		vm_page_enqueue(m, PQ_INACTIVE);
@@ -3743,11 +3745,12 @@ void
 vm_page_deactivate_noreuse(vm_page_t m)
 {
 
+	KASSERT(m->object != NULL,
+	    ("vm_page_deactivate_noreuse: page %p has no object", m));
 	vm_page_assert_locked(m);
 
-	if (vm_page_wired(m) || (m->oflags & VPO_UNMANAGED) != 0)
+	if ((m->oflags & VPO_UNMANAGED) != 0)
 		return;
-
 	if (!vm_page_inactive(m)) {
 		vm_page_dequeue(m);
 		m->queue = PQ_INACTIVE;
@@ -3766,10 +3769,12 @@ void
 vm_page_launder(vm_page_t m)
 {
 
+	KASSERT(m->object != NULL,
+	    ("vm_page_launder: page %p has no object", m));
 	vm_page_assert_locked(m);
-	if (vm_page_wired(m) || (m->oflags & VPO_UNMANAGED) != 0)
-		return;
 
+	if ((m->oflags & VPO_UNMANAGED) != 0)
+		return;
 	if (vm_page_in_laundry(m))
 		vm_page_requeue(m);
 	else {
@@ -3802,13 +3807,13 @@ vm_page_unswappable(vm_page_t m)
  * The page must be managed.  The page and its containing object must be
  * locked.
  */
-bool
+static bool
 vm_page_try_to_free(vm_page_t m)
 {
 
-	vm_page_assert_locked(m);
 	VM_OBJECT_ASSERT_WLOCKED(m->object);
 	KASSERT((m->oflags & VPO_UNMANAGED) == 0, ("page %p is unmanaged", m));
+
 	if (m->dirty != 0 || vm_page_wired(m) || vm_page_busied(m))
 		return (false);
 	if (m->object->ref_count != 0) {
@@ -3819,6 +3824,74 @@ vm_page_try_to_free(vm_page_t m)
 	}
 	vm_page_free(m);
 	return (true);
+}
+
+void
+vm_page_release_locked(vm_page_t m, bool nocache)
+{
+	vm_object_t object;
+
+	object = m->object;
+	VM_OBJECT_ASSERT_WLOCKED(object);
+	KASSERT((m->oflags & VPO_UNMANAGED) == 0,
+	    ("vm_page_release_locked: page %p is unmanaged", m));
+
+	if (!vm_page_unwire_noq(m))
+		return;
+	if (m->valid == 0 || nocache) {
+		if (!vm_page_xbusied(m) && (object->ref_count == 0 ||
+		    !pmap_page_is_mapped(m)) && vm_page_try_to_free(m))
+			return;
+		vm_page_lock(m);
+		vm_page_deactivate_noreuse(m);
+		vm_page_unlock(m);
+	} else {
+		vm_page_lock(m);
+		if (vm_page_active(m))
+			vm_page_reference(m);
+		else
+			vm_page_deactivate(m);
+		vm_page_unlock(m);
+	}
+}
+
+void
+vm_page_release(vm_page_t m, bool nocache)
+{
+	vm_object_t object;
+
+	KASSERT((m->oflags & VPO_UNMANAGED) == 0,
+	    ("vm_page_release: page %p is unmanaged", m));
+
+	if (nocache) {
+		while ((object = m->object) != NULL) {
+			if (!VM_OBJECT_TRYWLOCK(object)) {
+				object = NULL;
+				break;
+			}
+			if (m->object == object)
+				break;
+			VM_OBJECT_WUNLOCK(object);
+		}
+		if (object != NULL) {
+			vm_page_release_locked(m, nocache);
+			VM_OBJECT_WUNLOCK(object);
+			return;
+		}
+	}
+
+	if (m->object != NULL && vm_page_wire_count(m) == 1) {
+		vm_page_lock(m);
+		if (m->valid == 0 || nocache)
+			vm_page_deactivate_noreuse(m);
+		else if (vm_page_active(m))
+			vm_page_reference(m);
+		else
+			vm_page_deactivate(m);
+		vm_page_unlock(m);
+	}
+	if (vm_page_unwire_noq(m) && m->ref_count == 0)
+		vm_page_free(m);
 }
 
 /* XXX */
