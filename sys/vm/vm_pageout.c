@@ -373,16 +373,12 @@ more:
 			break;
 		}
 		vm_page_lock(p);
-		if (!vm_page_in_laundry(p)) {
+		if (!vm_page_in_laundry(p) || !vm_page_try_remove_write(p)) {
 			vm_page_unlock(p);
 			ib = 0;
 			break;
 		}
 		vm_page_unlock(p);
-		if (!vm_page_try_remove_write(p)) {
-			ib = 0;
-			break;
-		}
 		mc[--page_base] = pb = p;
 		++pageout_count;
 		++ib;
@@ -403,13 +399,11 @@ more:
 		if (p->dirty == 0)
 			break;
 		vm_page_lock(p);
-		if (!vm_page_in_laundry(p)) {
+		if (!vm_page_in_laundry(p) || !vm_page_try_remove_write(p)) {
 			vm_page_unlock(p);
 			break;
 		}
 		vm_page_unlock(p);
-		if (!vm_page_try_remove_write(p))
-			break;
 		mc[page_base + pageout_count] = ps = p;
 		++pageout_count;
 		++is;
@@ -700,6 +694,7 @@ vm_pageout_launder(struct vm_domain *vmd, int launder, bool in_shortfall)
 	struct mtx *mtx;
 	vm_object_t object;
 	vm_page_t m, marker;
+	u_int ref_count;
 	int act_delta, error, numpagedout, queue, starting_target;
 	int vnodes_skipped;
 	bool pageout_ok;
@@ -728,11 +723,19 @@ scan:
 	pq = &vmd->vmd_pagequeues[queue];
 	vm_pagequeue_lock(pq);
 	vm_pageout_init_scan(&ss, pq, marker, NULL, pq->pq_cnt);
+next:
 	while (launder > 0 && (m = vm_pageout_next(&ss, false)) != NULL) {
 		if (__predict_false((m->flags & PG_MARKER) != 0))
 			continue;
 
 		vm_page_change_lock(m, &mtx);
+
+		ref_count = m->ref_count;
+		do {
+			if (ref_count == 0)
+				goto next;
+		} while (!atomic_fcmpset_int(&m->ref_count, &ref_count,
+		    ref_count | VPRC_PDREF));
 
 recheck:
 		/*
@@ -740,7 +743,7 @@ recheck:
 		 * while locks were dropped.
 		 */
 		if (vm_page_queue(m) != queue)
-			continue;
+			goto drop;
 
 		/*
 		 * A requeue was requested, so this page gets a second
@@ -748,7 +751,7 @@ recheck:
 		 */
 		if ((m->aflags & PGA_REQUEUE) != 0) {
 			vm_page_requeue(m);
-			continue;
+			goto drop;
 		}
 
 		/*
@@ -759,7 +762,7 @@ recheck:
 		 */
 		if (vm_page_wired(m)) {
 			vm_page_dequeue_deferred(m);
-			continue;
+			goto drop;
 		}
 
 		if (object != m->object || object == NULL) {
@@ -770,7 +773,7 @@ recheck:
 				/*
 				 * Another thread may have freed the page.
 				 */
-				continue;
+				goto drop;
 			if (!VM_OBJECT_TRYWLOCK(object)) {
 				mtx_unlock(mtx);
 				/* Depends on type-stability. */
@@ -779,6 +782,11 @@ recheck:
 				goto recheck;
 			}
 		}
+
+		/* XXX */
+		KASSERT((m->ref_count & ~VPRC_PDREF) != 0,
+		    ("%s: page %p has no references", __func__, m));
+		atomic_clear_int(&m->ref_count, VPRC_PDREF);
 
 		if (vm_page_busied(m))
 			continue;
@@ -908,6 +916,12 @@ free_page:
 			mtx = NULL;
 			object = NULL;
 		}
+
+		continue;
+drop:
+		if (atomic_fetchadd_int(&m->ref_count, -VPRC_PDREF) ==
+		    VPRC_PDREF)
+			goto free_page;
 	}
 	if (mtx != NULL) {
 		mtx_unlock(mtx);
@@ -1154,6 +1168,7 @@ vm_pageout_scan_active(struct vm_domain *vmd, int page_shortage)
 	vm_page_t m, marker;
 	struct vm_pagequeue *pq;
 	long min_scan;
+	u_int ref_count;
 	int act_delta, max_scan, scan_tick;
 
 	marker = &vmd->vmd_markers[PQ_ACTIVE];
@@ -1191,6 +1206,7 @@ vm_pageout_scan_active(struct vm_domain *vmd, int page_shortage)
 	mtx = NULL;
 act_scan:
 	vm_pageout_init_scan(&ss, pq, marker, &vmd->vmd_clock[0], max_scan);
+next:
 	while ((m = vm_pageout_next(&ss, false)) != NULL) {
 		if (__predict_false(m == &vmd->vmd_clock[1])) {
 			vm_pagequeue_lock(pq);
@@ -1209,19 +1225,26 @@ act_scan:
 
 		vm_page_change_lock(m, &mtx);
 
+		ref_count = m->ref_count;
+		do {
+			if (ref_count == 0)
+				goto next;
+		} while (!atomic_fcmpset_int(&m->ref_count, &ref_count,
+		    ref_count | VPRC_PDREF));
+
 		/*
 		 * The page may have been disassociated from the queue
 		 * while locks were dropped.
 		 */
 		if (vm_page_queue(m) != PQ_ACTIVE)
-			continue;
+			goto drop;
 
 		/*
 		 * Wired pages are dequeued lazily.
 		 */
 		if (vm_page_wired(m)) {
 			vm_page_dequeue_deferred(m);
-			continue;
+			goto drop;
 		}
 
 		/*
@@ -1244,7 +1267,7 @@ act_scan:
 		 *    worst, we will deactivate and reactivate the page.
 		 */
 		if (__predict_false((object = m->object) == NULL))
-			continue;
+			goto drop;
 		if (object->ref_count != 0)
 			act_delta = pmap_ts_referenced(m);
 		else
@@ -1300,6 +1323,10 @@ act_scan:
 				}
 			}
 		}
+drop:
+		if (atomic_fetchadd_int(&m->ref_count, -VPRC_PDREF) ==
+		    VPRC_PDREF)
+			vm_page_free(m);
 	}
 	if (mtx != NULL) {
 		mtx_unlock(mtx);
@@ -1376,6 +1403,7 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int shortage,
 	vm_page_t m, marker;
 	struct vm_pagequeue *pq;
 	vm_object_t object;
+	u_int ref_count;
 	int act_delta, addl_page_shortage, deficit, page_shortage;
 	int starting_page_shortage;
 
@@ -1410,11 +1438,19 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int shortage,
 	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 	vm_pagequeue_lock(pq);
 	vm_pageout_init_scan(&ss, pq, marker, NULL, pq->pq_cnt);
+next:
 	while (page_shortage > 0 && (m = vm_pageout_next(&ss, true)) != NULL) {
 		KASSERT((m->flags & PG_MARKER) == 0,
 		    ("marker page %p was dequeued", m));
 
 		vm_page_change_lock(m, &mtx);
+
+		ref_count = m->ref_count;
+		do {
+			if (ref_count == 0)
+				goto next;
+		} while (!atomic_fcmpset_int(&m->ref_count, &ref_count,
+		    ref_count | VPRC_PDREF));
 
 recheck:
 		/*
@@ -1423,7 +1459,7 @@ recheck:
 		 */
 		if (vm_page_queue(m) != PQ_INACTIVE) {
 			addl_page_shortage++;
-			continue;
+			goto drop;
 		}
 
 		/*
@@ -1432,8 +1468,10 @@ recheck:
 		 * chance.
 		 */
 		if ((m->aflags & (PGA_ENQUEUED | PGA_REQUEUE |
-		    PGA_REQUEUE_HEAD)) != 0)
-			goto reinsert;
+		    PGA_REQUEUE_HEAD)) != 0) {
+			vm_pageout_reinsert_inactive(&ss, &rq, m);
+			goto drop;
+		}
 
 		/*
 		 * Wired pages may not be freed.  Complete their removal
@@ -1443,7 +1481,7 @@ recheck:
 		 */
 		if (vm_page_wired(m)) {
 			vm_page_dequeue_deferred(m);
-			continue;
+			goto drop;
 		}
 
 		if (object != m->object || object == NULL) {
@@ -1454,7 +1492,7 @@ recheck:
 				/*
 				 * Another thread may have freed the page.
 				 */
-				continue;
+				goto drop;
 			if (!VM_OBJECT_TRYWLOCK(object)) {
 				mtx_unlock(mtx);
 				/* Depends on type-stability. */
@@ -1463,6 +1501,10 @@ recheck:
 				goto recheck;
 			}
 		}
+
+		KASSERT((m->ref_count & ~VPRC_PDREF) != 0,
+		    ("%s: page %p has no references", __func__, m));
+		atomic_clear_int(&m->ref_count, VPRC_PDREF);
 
 		if (vm_page_busied(m)) {
 			/*
@@ -1474,7 +1516,8 @@ recheck:
 			 * inactive count.
 			 */
 			addl_page_shortage++;
-			goto reinsert;
+			vm_pageout_reinsert_inactive(&ss, &rq, m);
+			continue;
 		}
 
 		if (__predict_false(vm_page_wired(m))) {
@@ -1525,7 +1568,8 @@ recheck:
 				continue;
 			} else if ((object->flags & OBJ_DEAD) == 0) {
 				vm_page_aflag_set(m, PGA_REQUEUE);
-				goto reinsert;
+				vm_pageout_reinsert_inactive(&ss, &rq, m);
+				continue;
 			}
 		}
 
@@ -1567,8 +1611,11 @@ free_page:
 		} else if ((object->flags & OBJ_DEAD) == 0)
 			vm_page_launder(m);
 		continue;
-reinsert:
-		vm_pageout_reinsert_inactive(&ss, &rq, m);
+
+drop:
+		if (atomic_fetchadd_int(&m->ref_count, -VPRC_PDREF) ==
+		    VPRC_PDREF)
+			goto free_page;
 	}
 	if (mtx != NULL)
 		mtx_unlock(mtx);

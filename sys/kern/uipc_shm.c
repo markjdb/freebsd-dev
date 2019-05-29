@@ -196,9 +196,7 @@ uiomove_object_page(vm_object_t obj, size_t len, struct uio *uio)
 				printf(
 	    "uiomove_object: vm_obj %p idx %jd valid %x pager error %d\n",
 				    obj, idx, m->valid, rv);
-				vm_page_lock(m);
 				vm_page_free(m);
-				vm_page_unlock(m);
 				VM_OBJECT_WUNLOCK(obj);
 				return (EIO);
 			}

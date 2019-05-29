@@ -699,11 +699,8 @@ static void
 vm_object_terminate_pages(vm_object_t object)
 {
 	vm_page_t p, p_next;
-	struct mtx *mtx;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
-
-	mtx = NULL;
 
 	/*
 	 * Free any remaining pageable pages.  This also removes them from the
@@ -713,24 +710,15 @@ vm_object_terminate_pages(vm_object_t object)
 	 */
 	TAILQ_FOREACH_SAFE(p, &object->memq, listq, p_next) {
 		vm_page_assert_unbusied(p);
-		if ((object->flags & OBJ_UNMANAGED) == 0)
-			/*
-			 * vm_page_free_prep() only needs the page
-			 * lock for managed pages.
-			 */
-			vm_page_change_lock(p, &mtx);
-
 		KASSERT(p->object == object && p->ref_count > 0,
 		    ("vm_object_terminate_pages: page %p is inconsistent", p));
+
 		p->object = NULL;
-		p->ref_count--;
-		if (vm_page_wired(p))
+		if (atomic_fetchadd_int(&p->ref_count, -1) > 1)
 			continue;
 		VM_CNT_INC(v_pfree);
 		vm_page_free(p);
 	}
-	if (mtx != NULL)
-		mtx_unlock(mtx);
 
 	/*
 	 * If the object contained any pages, then reset it to an empty state.
@@ -1969,8 +1957,9 @@ wired:
 		    ("vm_object_page_remove: page %p is fictitious", p));
 		if ((options & OBJPR_CLEANONLY) != 0 && p->valid != 0) {
 			if ((options & OBJPR_NOTMAPPED) == 0 &&
-			    object->ref_count != 0)
-				pmap_remove_write(p);
+			    object->ref_count != 0 &&
+			    !vm_page_try_remove_write(p))
+				goto wired;
 			if (p->dirty != 0)
 				continue;
 		}

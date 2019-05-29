@@ -3157,8 +3157,7 @@ vm_pqbatch_submit_page(vm_page_t m, uint8_t queue)
 
 	KASSERT((m->oflags & VPO_UNMANAGED) == 0,
 	    ("page %p is unmanaged", m));
-	KASSERT(mtx_owned(vm_page_lockptr(m)) ||
-	    (m->object == NULL && (m->aflags & PGA_DEQUEUE) != 0),
+	KASSERT(mtx_owned(vm_page_lockptr(m)) || m->object == NULL,
 	    ("missing synchronization for page %p", m));
 	KASSERT(queue < PQ_COUNT, ("invalid queue %d", queue));
 
@@ -3602,7 +3601,7 @@ vm_page_wire(vm_page_t m)
 
 	KASSERT(m->object != NULL,
 	    ("vm_page_wire: page %p does not belong to an object", m));
-	if (!mtx_owned(vm_page_lockptr(m)) && !vm_page_busied(m))
+	if (!vm_page_busied(m))
 		VM_OBJECT_ASSERT_LOCKED(m->object);
 
 	if ((m->flags & PG_FICTITIOUS) != 0)
@@ -3662,6 +3661,8 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 
 	KASSERT(queue < PQ_COUNT,
 	    ("vm_page_unwire: invalid queue %u request for page %p", queue, m));
+	KASSERT(vm_page_wire_count(m) >= 1,
+	    ("vm_page_unwire: page %p is not wired", m));
 	if ((m->oflags & VPO_UNMANAGED) == 0)
 		vm_page_assert_locked(m);
 
@@ -3816,12 +3817,6 @@ vm_page_try_to_free(vm_page_t m)
 
 	if (m->dirty != 0 || vm_page_wired(m) || vm_page_busied(m))
 		return (false);
-	if (m->object->ref_count != 0) {
-		if (!vm_page_try_remove_all(m))
-			return (false);
-		if (m->dirty != 0)
-			return (false);
-	}
 	vm_page_free(m);
 	return (true);
 }
@@ -3839,7 +3834,7 @@ vm_page_release_locked(vm_page_t m, bool nocache)
 	if (!vm_page_unwire_noq(m))
 		return;
 	if (m->valid == 0 || nocache) {
-		if (!vm_page_xbusied(m) && (object->ref_count == 0 ||
+		if ((object->ref_count == 0 ||
 		    !pmap_page_is_mapped(m)) && vm_page_try_to_free(m))
 			return;
 		vm_page_lock(m);
@@ -3900,14 +3895,17 @@ vm_page_try_blocked_op(vm_page_t m, void (*op)(vm_page_t))
 {
 	u_int old;
 
+	vm_page_assert_locked(m);
 	KASSERT(m->object != NULL,
-	    ("vm_page_try_remove_all: page %p has no object", m));
+	    ("vm_page_try_blocked_op: page %p has no object", m));
 	VM_OBJECT_ASSERT_LOCKED(m->object);
+	KASSERT(!vm_page_busied(m),
+	    ("vm_page_try_blocked_op: page %p is busy", m));
 
 	old = m->ref_count;
 	do {
 		KASSERT(old != 0,
-		    ("vm_page_try_remove_all: page %p has no references", m));
+		    ("vm_page_try_blocked_op: page %p has no references", m));
 		if (old > 1)
 			return (false);
 	} while (!atomic_fcmpset_int(&m->ref_count, &old, VPRC_BLOCKED));

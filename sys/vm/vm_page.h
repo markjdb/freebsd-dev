@@ -209,6 +209,7 @@ struct vm_page {
 	vm_page_bits_t dirty;		/* map of dirty DEV_BSIZE chunks (M) */
 };
 
+#define	VPRC_PDREF	0x80000000u
 #define	VPRC_BLOCKED	0xffffffffu
 
 /*
@@ -806,13 +807,15 @@ vm_page_in_laundry(vm_page_t m)
 static inline u_int
 vm_page_wire_count(vm_page_t m)
 {
+	u_int count;
 
+	count = m->ref_count & ~VPRC_PDREF;
 	if (m->object != NULL) {
-		KASSERT(m->ref_count > 0,
+		KASSERT(count > 0,
 		    ("vm_page_wired: page %p has no refs", m));
-		return (m->ref_count - 1);
+		return (count - 1);
 	}
-	return (m->ref_count);
+	return (count);
 }
 
 /*
