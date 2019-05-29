@@ -2901,37 +2901,40 @@ vfs_vmio_iodone(struct buf *bp)
 static void
 vfs_vmio_unwire(struct buf *bp, vm_page_t m)
 {
-	bool freed;
 
-	vm_page_lock(m);
-	if (vm_page_unwire_noq(m)) {
-		if ((bp->b_flags & B_DIRECT) != 0)
-			freed = vm_page_try_to_free(m);
-		else
-			freed = false;
-		if (!freed) {
-			/*
-			 * Use a racy check of the valid bits to determine
-			 * whether we can accelerate reclamation of the page.
-			 * The valid bits will be stable unless the page is
-			 * being mapped or is referenced by multiple buffers,
-			 * and in those cases we expect races to be rare.  At
-			 * worst we will either accelerate reclamation of a
-			 * valid page and violate LRU, or unnecessarily defer
-			 * reclamation of an invalid page.
-			 *
-			 * The B_NOREUSE flag marks data that is not expected to
-			 * be reused, so accelerate reclamation in that case
-			 * too.  Otherwise, maintain LRU.
-			 */
-			if (m->valid == 0 || (bp->b_flags & B_NOREUSE) != 0)
-				vm_page_deactivate_noreuse(m);
-			else if (vm_page_active(m))
-				vm_page_reference(m);
-			else
-				vm_page_deactivate(m);
+	if ((bp->b_flags & B_DIRECT) != 0) {
+		VM_OBJECT_ASSERT_WLOCKED(m->object);
+		if (!vm_page_unwire_noq(m) || vm_page_try_to_free(m))
+			return;
+		vm_page_lock(m);
+	} else {
+		vm_page_lock(m);
+		if (!vm_page_unwire_noq(m)) {
+			vm_page_unlock(m);
+			return;
 		}
 	}
+
+	/*
+	 * Use a racy check of the valid bits to determine
+	 * whether we can accelerate reclamation of the page.
+	 * The valid bits will be stable unless the page is
+	 * being mapped or is referenced by multiple buffers,
+	 * and in those cases we expect races to be rare.  At
+	 * worst we will either accelerate reclamation of a
+	 * valid page and violate LRU, or unnecessarily defer
+	 * reclamation of an invalid page.
+	 *
+	 * The B_NOREUSE flag marks data that is not expected to
+	 * be reused, so accelerate reclamation in that case
+	 * too.  Otherwise, maintain LRU.
+	 */
+	if (m->valid == 0 || (bp->b_flags & B_NOREUSE) != 0)
+		vm_page_deactivate_noreuse(m);
+	else if (vm_page_active(m))
+		vm_page_reference(m);
+	else
+		vm_page_deactivate(m);
 	vm_page_unlock(m);
 }
 

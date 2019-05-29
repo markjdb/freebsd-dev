@@ -362,7 +362,8 @@ more:
 			ib = 0;
 			break;
 		}
-		if ((p = vm_page_prev(pb)) == NULL || vm_page_busied(p)) {
+		if ((p = vm_page_prev(pb)) == NULL || vm_page_busied(p) ||
+		    vm_page_wired(p)) {
 			ib = 0;
 			break;
 		}
@@ -372,13 +373,16 @@ more:
 			break;
 		}
 		vm_page_lock(p);
-		if (vm_page_wired(p) || !vm_page_in_laundry(p)) {
+		if (!vm_page_in_laundry(p)) {
 			vm_page_unlock(p);
 			ib = 0;
 			break;
 		}
-		pmap_remove_write(p);
 		vm_page_unlock(p);
+		if (!vm_page_try_remove_write(p)) {
+			ib = 0;
+			break;
+		}
 		mc[--page_base] = pb = p;
 		++pageout_count;
 		++ib;
@@ -392,18 +396,20 @@ more:
 	}
 	while (pageout_count < vm_pageout_page_count && 
 	    pindex + is < object->size) {
-		if ((p = vm_page_next(ps)) == NULL || vm_page_busied(p))
+		if ((p = vm_page_next(ps)) == NULL || vm_page_busied(p) ||
+		    vm_page_wired(p))
 			break;
 		vm_page_test_dirty(p);
 		if (p->dirty == 0)
 			break;
 		vm_page_lock(p);
-		if (vm_page_wired(p) || !vm_page_in_laundry(p)) {
+		if (!vm_page_in_laundry(p)) {
 			vm_page_unlock(p);
 			break;
 		}
-		pmap_remove_write(p);
 		vm_page_unlock(p);
+		if (!vm_page_try_remove_write(p))
+			break;
 		mc[page_base + pageout_count] = ps = p;
 		++pageout_count;
 		++is;
@@ -748,7 +754,8 @@ recheck:
 		/*
 		 * Wired pages may not be freed.  Complete their removal
 		 * from the queue now to avoid needless revisits during
-		 * future scans.
+		 * future scans.  This check is racy and must be reverified once
+		 * we hold the object lock.
 		 */
 		if (vm_page_wired(m)) {
 			vm_page_dequeue_deferred(m);
@@ -770,6 +777,11 @@ recheck:
 
 		if (vm_page_busied(m))
 			continue;
+
+		if (__predict_false(vm_page_wired(m))) {
+			vm_page_dequeue_deferred(m);
+			continue;
+		}
 
 		/*
 		 * Invalid pages can be easily freed.  They cannot be
@@ -838,8 +850,10 @@ recheck:
 		 */
 		if (object->ref_count != 0) {
 			vm_page_test_dirty(m);
-			if (m->dirty == 0)
-				pmap_remove_all(m);
+			if (m->dirty == 0 && !vm_page_try_remove_all(m)) {
+				vm_page_requeue(m);
+				continue;
+			}
 		}
 
 		/*
@@ -1416,7 +1430,8 @@ recheck:
 		/*
 		 * Wired pages may not be freed.  Complete their removal
 		 * from the queue now to avoid needless revisits during
-		 * future scans.
+		 * future scans.  This check is racy and must be reverified once
+		 * we hold the object lock.
 		 */
 		if (vm_page_wired(m)) {
 			vm_page_dequeue_deferred(m);
@@ -1447,6 +1462,11 @@ recheck:
 			 */
 			addl_page_shortage++;
 			goto reinsert;
+		}
+
+		if (__predict_false(vm_page_wired(m))) {
+			vm_page_dequeue_deferred(m);
+			continue;
 		}
 
 		/*
@@ -1505,8 +1525,10 @@ recheck:
 		 */
 		if (object->ref_count != 0) {
 			vm_page_test_dirty(m);
-			if (m->dirty == 0)
-				pmap_remove_all(m);
+			if (m->dirty == 0 && !vm_page_try_remove_all(m)) {
+				vm_page_dequeue_deferred(m);
+				continue;
+			}
 		}
 
 		/*

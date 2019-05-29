@@ -209,6 +209,8 @@ struct vm_page {
 	vm_page_bits_t dirty;		/* map of dirty DEV_BSIZE chunks (M) */
 };
 
+#define	VPRC_BLOCKED	0xffffffffu
+
 /*
  * Page flags stored in oflags:
  *
@@ -559,8 +561,11 @@ void vm_page_set_valid_range(vm_page_t m, int base, int size);
 int vm_page_sleep_if_busy(vm_page_t m, const char *msg);
 vm_offset_t vm_page_startup(vm_offset_t vaddr);
 void vm_page_sunbusy(vm_page_t m);
+bool vm_page_try_remove_all(vm_page_t m);
+bool vm_page_try_remove_write(vm_page_t m);
 bool vm_page_try_to_free(vm_page_t m);
 int vm_page_trysbusy(vm_page_t m);
+bool vm_page_try_wire(vm_page_t m);
 void vm_page_unhold_pages(vm_page_t *ma, int count);
 void vm_page_unswappable(vm_page_t m);
 void vm_page_unwire(vm_page_t m, uint8_t queue);

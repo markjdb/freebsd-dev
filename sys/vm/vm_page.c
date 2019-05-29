@@ -2370,9 +2370,6 @@ retry:
 					 */
 					VM_OBJECT_RUNLOCK(object);
 					goto retry;
-				} else if (vm_page_wired(m)) {
-					run_ext = 0;
-					goto unlock;
 				}
 			}
 			/* Don't care: PG_NODUMP, PG_ZERO. */
@@ -2390,7 +2387,8 @@ retry:
 				    vm_reserv_size(level)) - pa);
 #endif
 			} else if (object->memattr == VM_MEMATTR_DEFAULT &&
-			    vm_page_queue(m) != PQ_NONE && !vm_page_busied(m)) {
+			    vm_page_queue(m) != PQ_NONE && !vm_page_busied(m) &&
+			    !vm_page_wired(m)) {
 				/*
 				 * The page is allocated but eligible for
 				 * relocation.  Extend the current run by one
@@ -2406,7 +2404,6 @@ retry:
 				run_ext = 1;
 			} else
 				run_ext = 0;
-unlock:
 			VM_OBJECT_RUNLOCK(object);
 #if VM_NRESERVLEVEL > 0
 		} else if (level >= 0) {
@@ -2527,9 +2524,6 @@ retry:
 					 */
 					VM_OBJECT_WUNLOCK(object);
 					goto retry;
-				} else if (vm_page_wired(m)) {
-					error = EBUSY;
-					goto unlock;
 				}
 			}
 			/* Don't care: PG_NODUMP, PG_ZERO. */
@@ -2540,7 +2534,7 @@ retry:
 			else if (object->memattr != VM_MEMATTR_DEFAULT)
 				error = EINVAL;
 			else if (vm_page_queue(m) != PQ_NONE &&
-			    !vm_page_busied(m)) {
+			    !vm_page_busied(m) && !vm_page_wired(m)) {
 				KASSERT(pmap_page_get_memattr(m) ==
 				    VM_MEMATTR_DEFAULT,
 				    ("page %p has an unexpected memattr", m));
@@ -2589,8 +2583,6 @@ retry:
 						error = ENOMEM;
 						goto unlock;
 					}
-					KASSERT(!vm_page_wired(m_new),
-					    ("page %p is wired", m_new));
 
 					/*
 					 * Replace "m" with the new page.  For
@@ -2598,8 +2590,11 @@ retry:
 					 * and dequeued.  Finally, change "m"
 					 * as if vm_page_free() was called.
 					 */
-					if (object->ref_count != 0)
-						pmap_remove_all(m);
+					if (object->ref_count != 0 &&
+					    !vm_page_try_remove_all(m)) {
+						error = EBUSY;
+						goto unlock;
+					}
 					m_new->aflags = m->aflags &
 					    ~PGA_QUEUE_STATE_MASK;
 					KASSERT(m_new->oflags == VPO_UNMANAGED,
@@ -3620,6 +3615,27 @@ vm_page_wire(vm_page_t m)
 	vm_page_ref(m);
 }
 
+/* XXX */
+bool
+vm_page_try_wire(vm_page_t m)
+{
+	u_int old;
+
+	KASSERT(m->object != NULL,
+	    ("vm_page_try_wire: page %p does not belong to an object", m));
+
+	old = m->ref_count;
+	do {
+		KASSERT(old > 0,
+		    ("vm_page_try_wire: wiring unreferenced page %p", m));
+		if (old == VPRC_BLOCKED)
+			return (false);
+	} while (!atomic_fcmpset_int(&m->ref_count, &old, old + 1));
+	if (old == 1)
+		vm_wire_add(1);
+	return (true);
+}
+
 /*
  * vm_page_unwire:
  *
@@ -3683,8 +3699,6 @@ bool
 vm_page_unwire_noq(vm_page_t m)
 {
 
-	if ((m->oflags & VPO_UNMANAGED) == 0)
-		vm_page_assert_locked(m);
 	KASSERT(vm_page_wired(m),
 	    ("vm_page_unwire_noq: page %p isn't wired", m));
 
@@ -3798,12 +3812,51 @@ vm_page_try_to_free(vm_page_t m)
 	if (m->dirty != 0 || vm_page_wired(m) || vm_page_busied(m))
 		return (false);
 	if (m->object->ref_count != 0) {
-		pmap_remove_all(m);
+		if (!vm_page_try_remove_all(m))
+			return (false);
 		if (m->dirty != 0)
 			return (false);
 	}
 	vm_page_free(m);
 	return (true);
+}
+
+/* XXX */
+static bool
+vm_page_try_blocked_op(vm_page_t m, void (*op)(vm_page_t))
+{
+	u_int old;
+
+	KASSERT(m->object != NULL,
+	    ("vm_page_try_remove_all: page %p has no object", m));
+	VM_OBJECT_ASSERT_LOCKED(m->object);
+
+	old = m->ref_count;
+	do {
+		KASSERT(old != 0,
+		    ("vm_page_try_remove_all: page %p has no references", m));
+		if (old > 1)
+			return (false);
+	} while (!atomic_fcmpset_int(&m->ref_count, &old, VPRC_BLOCKED));
+
+	(op)(m);
+
+	m->ref_count = old;
+	return (true);
+}
+
+bool
+vm_page_try_remove_all(vm_page_t m)
+{
+
+	return (vm_page_try_blocked_op(m, pmap_remove_all));
+}
+
+bool
+vm_page_try_remove_write(vm_page_t m)
+{
+
+	return (vm_page_try_blocked_op(m, pmap_remove_write));
 }
 
 /*

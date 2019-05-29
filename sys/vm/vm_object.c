@@ -1948,6 +1948,7 @@ again:
 			VM_OBJECT_WLOCK(object);
 			goto again;
 		}
+wired:
 		if (vm_page_wired(p)) {
 			if ((options & OBJPR_NOTMAPPED) == 0 &&
 			    object->ref_count != 0)
@@ -1973,8 +1974,9 @@ again:
 			if (p->dirty != 0)
 				continue;
 		}
-		if ((options & OBJPR_NOTMAPPED) == 0 && object->ref_count != 0)
-			pmap_remove_all(p);
+		if ((options & OBJPR_NOTMAPPED) == 0 &&
+		    object->ref_count != 0 && !vm_page_try_remove_all(p))
+			goto wired;
 		vm_page_free(p);
 	}
 	if (mtx != NULL)

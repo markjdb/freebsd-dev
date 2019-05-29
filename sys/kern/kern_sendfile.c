@@ -124,53 +124,67 @@ SYSCTL_PROC(_kern_ipc, OID_AUTO, sfstat, CTLTYPE_OPAQUE | CTLFLAG_RW,
  * by mbuf(9) code when last reference to a page is freed.
  */
 static void
-sendfile_free_page(vm_page_t pg, bool nocache)
+sendfile_free_page(vm_page_t m, bool nocache)
 {
-	bool freed;
+	vm_object_t object;
 
-	vm_page_lock(pg);
-	/*
-	 * In either case check for the object going away on us.  This can
-	 * happen since we don't hold a reference to it.  If so, we're
-	 * responsible for freeing the page.  In 'noncache' case try to free
-	 * the page, but only if it is cheap to.
-	 */
-	if (vm_page_unwire_noq(pg)) {
-		vm_object_t obj;
-
-		if ((obj = pg->object) == NULL)
-			vm_page_free(pg);
-		else {
-			freed = false;
-			if (nocache && !vm_page_xbusied(pg) &&
-			    VM_OBJECT_TRYWLOCK(obj)) {
-				/* Only free unmapped pages. */
-				if (obj->ref_count == 0 ||
-				    !pmap_page_is_mapped(pg))
-					/*
-					 * The busy test before the object is
-					 * locked cannot be relied upon.
-					 */
-					freed = vm_page_try_to_free(pg);
-				VM_OBJECT_WUNLOCK(obj);
-			}
-			if (!freed) {
-				/*
-				 * If we were asked to not cache the page, place
-				 * it near the head of the inactive queue so
-				 * that it is reclaimed sooner.  Otherwise,
-				 * maintain LRU.
-				 */
-				if (nocache)
-					vm_page_deactivate_noreuse(pg);
-				else if (vm_page_active(pg))
-					vm_page_reference(pg);
-				else
-					vm_page_deactivate(pg);
-			}
-		}
+	object = m->object;
+	if (object == NULL) {
+		if (vm_page_unwire_noq(m))
+			vm_page_free(m);
+		return;
 	}
-	vm_page_unlock(pg);
+
+	if (nocache) {
+		/* Depends on type-stability. */
+		if (!vm_page_xbusied(m) && m->ref_count == 2 /* XXX */&&
+		    VM_OBJECT_TRYWLOCK(object)) {
+			while (__predict_false(m->object != object)) {
+				VM_OBJECT_WUNLOCK(object);
+				object = m->object;
+				if (object == NULL) {
+					if (vm_page_unwire_noq(m))
+						vm_page_free(m);
+					return;
+				}
+				VM_OBJECT_WLOCK(object);
+			}
+
+			if (__predict_false(!vm_page_unwire_noq(m))) {
+				VM_OBJECT_WUNLOCK(object);
+				return;
+			}
+
+			/* Only free unmapped pages. */
+			if ((object->ref_count == 0 ||
+			    !pmap_page_is_mapped(m)) &&
+			    vm_page_try_to_free(m)) {
+				VM_OBJECT_WUNLOCK(object);
+				return;
+			}
+
+			/* This has to come before the object unlock. */
+			vm_page_lock(m);
+			vm_page_deactivate_noreuse(m);
+			vm_page_unlock(m);
+			VM_OBJECT_WUNLOCK(object);
+		} else {
+			vm_page_lock(m);
+			if (vm_page_unwire_noq(m))
+				vm_page_deactivate_noreuse(m);
+			vm_page_unlock(m);
+		}
+	} else {
+		vm_page_lock(m);
+		if (vm_page_unwire_noq(m)) {
+			if (vm_page_active(m))
+				vm_page_reference(m);
+			else
+				vm_page_deactivate(m);
+		}
+		vm_page_unlock(m);
+	}
+
 }
 
 static void
