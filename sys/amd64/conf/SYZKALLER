@@ -1,0 +1,6 @@
+include "./GENERIC"
+
+ident		SYZKALLER
+options 	ALT_BREAK_TO_DEBUGGER
+options 	COVERAGE
+options 	KCOV
