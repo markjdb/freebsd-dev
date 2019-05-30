@@ -185,8 +185,6 @@ static int vm_page_reclaim_run(int req_class, int domain, u_long npages,
     vm_page_t m_run, vm_paddr_t high);
 static int vm_domain_alloc_fail(struct vm_domain *vmd, vm_object_t object,
     int req);
-static void vm_page_ref(vm_page_t m);
-static void vm_page_unref(vm_page_t m);
 static int vm_page_zone_import(void *arg, void **store, int cnt, int domain,
     int flags);
 static void vm_page_zone_release(void *arg, void **store, int cnt);
@@ -1384,6 +1382,7 @@ vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
 	 */
 	m->object = object;
 	m->pindex = pindex;
+	atomic_set_int(&m->ref_count, VPRC_OBJREF);
 
 	/*
 	 * Now link into the object's ordered list of backed pages.
@@ -1391,9 +1390,9 @@ vm_page_insert_after(vm_page_t m, vm_object_t object, vm_pindex_t pindex,
 	if (vm_radix_insert(&object->rtree, m)) {
 		m->object = NULL;
 		m->pindex = 0;
+		atomic_clear_int(&m->ref_count, VPRC_OBJREF);
 		return (1);
 	}
-	vm_page_ref(m);
 	vm_page_insert_radixdone(m, object, mpred);
 	return (0);
 }
@@ -1416,7 +1415,7 @@ vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT(object != NULL && m->object == object,
 	    ("vm_page_insert_radixdone: page %p has inconsistent object", m));
-	KASSERT(m->ref_count > 0,
+	KASSERT((m->ref_count & VPRC_OBJREF) != 0,
 	    ("vm_page_insert_radixdone: page %p is missing object ref", m));
 	if (mpred != NULL) {
 		KASSERT(mpred->object == object,
@@ -1457,18 +1456,14 @@ vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
  *
  *	The object must be locked.  The page must be locked if it is managed.
  */
-void
+bool
 vm_page_remove(vm_page_t m)
 {
 	vm_object_t object;
 	vm_page_t mrem;
+	u_int old;
 
-#if 0
-	if ((m->oflags & VPO_UNMANAGED) == 0)
-		vm_page_assert_locked(m);
-#endif
-	if ((object = m->object) == NULL)
-		return;
+	object = m->object;
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	if (vm_page_xbusied(m))
 		vm_page_xunbusy_maybelocked(m);
@@ -1492,7 +1487,8 @@ vm_page_remove(vm_page_t m)
 		vdrop(object->handle);
 
 	m->object = NULL;
-	vm_page_unref(m);
+	old = atomic_fetchadd_int(&m->ref_count, -VPRC_OBJREF);
+	return (old == VPRC_OBJREF);
 }
 
 /*
@@ -1573,8 +1569,6 @@ vm_page_prev(vm_page_t m)
 /*
  * Uses the page mnew as a replacement for an existing page at index
  * pindex which must be already present in the object.
- *
- * The existing page must not be on a paging queue.
  */
 vm_page_t
 vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
@@ -1584,8 +1578,6 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT(mnew->object == NULL,
 	    ("vm_page_replace: page %p already in object", mnew));
-	KASSERT(mnew->queue == PQ_NONE || vm_page_wired(mnew),
-	    ("vm_page_replace: new page %p is on a paging queue", mnew));
 
 	/*
 	 * This function mostly follows vm_page_insert() and
@@ -1595,7 +1587,7 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 
 	mnew->object = object;
 	mnew->pindex = pindex;
-	vm_page_ref(mnew);
+	atomic_set_int(&mnew->ref_count, VPRC_OBJREF);
 	mold = vm_radix_replace(&object->rtree, mnew);
 	KASSERT(mold->queue == PQ_NONE,
 	    ("vm_page_replace: old page %p is on a paging queue", mold));
@@ -1605,7 +1597,7 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex)
 	TAILQ_REMOVE(&object->memq, mold, listq);
 
 	mold->object = NULL;
-	vm_page_unref(mold);
+	atomic_clear_int(&mold->ref_count, VPRC_OBJREF);
 	vm_page_xunbusy_maybelocked(mold);
 
 	/*
@@ -1666,13 +1658,12 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 	 */
 	m->pindex = opidx;
 	vm_page_lock(m);
-	vm_page_remove(m);
+	(void)vm_page_remove(m);
 
 	/* Return back to the new pindex to complete vm_page_insert(). */
 	m->pindex = new_pindex;
 	m->object = new_object;
-	/* vm_page_remove() dropped the reference. */
-	vm_page_ref(m);
+	atomic_set_int(&m->ref_count, VPRC_OBJREF);
 
 	vm_page_unlock(m);
 	vm_page_insert_radixdone(m, new_object, mpred);
@@ -2623,7 +2614,6 @@ retry:
 				} else {
 					m->flags &= ~PG_ZERO;
 					vm_page_dequeue(m);
-					vm_page_remove(m);
 					if (vm_page_free_prep(m))
 						SLIST_INSERT_HEAD(&free, m,
 						    plinks.s.ss);
@@ -3463,7 +3453,8 @@ vm_page_free_prep(vm_page_t m)
 	if (vm_page_sbusied(m))
 		panic("vm_page_free_prep: freeing busy page %p", m);
 
-	vm_page_remove(m);
+	if (m->object != NULL)
+		(void)vm_page_remove(m);
 
 	/*
 	 * If fictitious remove object association and
@@ -3563,30 +3554,6 @@ vm_page_free_pages_toq(struct spglist *free, bool update_wire_count)
 		vm_wire_sub(count);
 }
 
-/* XXX */
-static void
-vm_page_ref(vm_page_t m)
-{
-	u_int old;
-
-	old = atomic_fetchadd_int(&m->ref_count, 1);
-	KASSERT(old != UINT_MAX,
-	    ("vm_page_ref: counter overflow for page %p", m));
-}
-
-/* XXX */
-static void
-vm_page_unref(vm_page_t m)
-{
-	u_int old;
-
-	old = atomic_fetchadd_int(&m->ref_count, -1);
-	KASSERT(old != 0,
-	    ("vm_page_unref: counter underflow for page %p", m));
-	KASSERT((m->flags & PG_FICTITIOUS) == 0 || old > 1,
-	    ("vm_page_unref: missing ref on fictitious page %p", m));
-}
-
 /*
  *	vm_page_wire:
  *
@@ -3598,6 +3565,7 @@ vm_page_unref(vm_page_t m)
 void
 vm_page_wire(vm_page_t m)
 {
+	u_int old;
 
 	KASSERT(m->object != NULL,
 	    ("vm_page_wire: page %p does not belong to an object", m));
@@ -3614,7 +3582,10 @@ vm_page_wire(vm_page_t m)
 		    ("vm_page_wire: unmanaged page %p is queued", m));
 		vm_wire_add(1);
 	}
-	vm_page_ref(m);
+
+	old = atomic_fetchadd_int(&m->ref_count, 1);
+	KASSERT(old != ~VPRC_REFMASK,
+	    ("vm_page_wire: counter overflow for page %p", m));
 }
 
 /* XXX */
@@ -3630,10 +3601,10 @@ vm_page_try_wire(vm_page_t m)
 	do {
 		KASSERT(old > 0,
 		    ("vm_page_try_wire: wiring unreferenced page %p", m));
-		if (old == VPRC_BLOCKED)
+		if ((old & VPRC_BLOCKED) != 0)
 			return (false);
 	} while (!atomic_fcmpset_int(&m->ref_count, &old, old + 1));
-	if (old == 1)
+	if ((old & ~VPRC_REFMASK) == 1)
 		vm_wire_add(1);
 	return (true);
 }
@@ -3700,12 +3671,15 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 bool
 vm_page_unwire_noq(vm_page_t m)
 {
+	u_int old;
 
-	KASSERT(vm_page_wired(m),
-	    ("vm_page_unwire_noq: page %p isn't wired", m));
+	old = atomic_fetchadd_int(&m->ref_count, -1);
+	KASSERT((old & ~VPRC_REFMASK) != 0,
+	    ("vm_page_unref: counter underflow for page %p", m));
+	KASSERT((m->flags & PG_FICTITIOUS) == 0 || (old & ~VPRC_REFMASK) > 1,
+	    ("vm_page_unref: missing ref on fictitious page %p", m));
 
-	vm_page_unref(m);
-	if (vm_page_wired(m))
+	if ((old & ~VPRC_REFMASK) != 1)
 		return (false);
 	vm_wire_sub(1);
 	return (true);
@@ -3896,23 +3870,23 @@ vm_page_try_blocked_op(vm_page_t m, void (*op)(vm_page_t))
 	u_int old;
 
 	vm_page_assert_locked(m);
-	KASSERT(m->object != NULL,
+	KASSERT(m->object != NULL && (m->oflags & VPO_UNMANAGED) == 0,
 	    ("vm_page_try_blocked_op: page %p has no object", m));
-	VM_OBJECT_ASSERT_LOCKED(m->object);
 	KASSERT(!vm_page_busied(m),
 	    ("vm_page_try_blocked_op: page %p is busy", m));
+	VM_OBJECT_ASSERT_LOCKED(m->object);
 
 	old = m->ref_count;
 	do {
 		KASSERT(old != 0,
 		    ("vm_page_try_blocked_op: page %p has no references", m));
-		if (old > 1)
+		if ((old & ~VPRC_REFMASK) != 0)
 			return (false);
-	} while (!atomic_fcmpset_int(&m->ref_count, &old, VPRC_BLOCKED));
+	} while (!atomic_fcmpset_int(&m->ref_count, &old, old | VPRC_BLOCKED));
 
 	(op)(m);
 
-	m->ref_count = old;
+	atomic_clear_int(&m->ref_count, VPRC_BLOCKED);
 	return (true);
 }
 

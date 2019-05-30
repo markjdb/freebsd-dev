@@ -1147,7 +1147,7 @@ readrest:
 
 				mtx = NULL;
 				vm_page_change_lock(fs.m, &mtx);
-				vm_page_remove(fs.m);
+				(void)vm_page_remove(fs.m);
 				vm_page_change_lock(fs.first_m, &mtx);
 				vm_page_replace_checked(fs.m, fs.first_object,
 				    fs.first_pindex, fs.first_m);

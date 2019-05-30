@@ -714,10 +714,11 @@ vm_object_terminate_pages(vm_object_t object)
 		    ("vm_object_terminate_pages: page %p is inconsistent", p));
 
 		p->object = NULL;
-		if (atomic_fetchadd_int(&p->ref_count, -1) > 1)
-			continue;
-		VM_CNT_INC(v_pfree);
-		vm_page_free(p);
+		if (atomic_fetchadd_int(&p->ref_count, -VPRC_OBJREF) ==
+		    VPRC_OBJREF) {
+			VM_CNT_INC(v_pfree);
+			vm_page_free(p);
+		}
 	}
 
 	/*
@@ -1580,18 +1581,10 @@ vm_object_collapse_scan(vm_object_t object, int op)
 				swap_pager_freespace(backing_object, p->pindex,
 				    1);
 
-			/*
-			 * Page is out of the parent object's range, we can
-			 * simply destroy it.
-			 */
-			vm_page_lock(p);
 			KASSERT(!pmap_page_is_mapped(p),
 			    ("freeing mapped page %p", p));
-			if (!vm_page_wired(p))
+			if (vm_page_remove(p))
 				vm_page_free(p);
-			else
-				vm_page_remove(p);
-			vm_page_unlock(p);
 			continue;
 		}
 
@@ -1628,14 +1621,10 @@ vm_object_collapse_scan(vm_object_t object, int op)
 			if (backing_object->type == OBJT_SWAP)
 				swap_pager_freespace(backing_object, p->pindex,
 				    1);
-			vm_page_lock(p);
 			KASSERT(!pmap_page_is_mapped(p),
 			    ("freeing mapped page %p", p));
-			if (!vm_page_wired(p))
+			if (vm_page_remove(p))
 				vm_page_free(p);
-			else
-				vm_page_remove(p);
-			vm_page_unlock(p);
 			continue;
 		}
 
@@ -1966,7 +1955,8 @@ wired:
 		if ((options & OBJPR_NOTMAPPED) == 0 &&
 		    object->ref_count != 0 && !vm_page_try_remove_all(p))
 			goto wired;
-		vm_page_free(p);
+		if (vm_page_remove(p))
+			vm_page_free(p);
 	}
 	if (mtx != NULL)
 		mtx_unlock(mtx);

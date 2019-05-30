@@ -185,12 +185,12 @@ struct vm_page {
 		} memguard;
 	} plinks;
 	TAILQ_ENTRY(vm_page) listq;	/* pages in same object (O) */
-	vm_object_t object;		/* which object am I in (O,P) */
+	vm_object_t object;		/* which object am I in (O) */
 	vm_pindex_t pindex;		/* offset into object (O,P) */
 	vm_paddr_t phys_addr;		/* physical address of page (C) */
 	struct md_page md;		/* machine dependent stuff */
 	union {
-		u_int wire_count;	/* wired down maps refs (P) */
+		u_int wire_count;
 		u_int ref_count;	/* XXX */
 	};
 	volatile u_int busy_lock;	/* busy owners lock */
@@ -209,8 +209,10 @@ struct vm_page {
 	vm_page_bits_t dirty;		/* map of dirty DEV_BSIZE chunks (M) */
 };
 
+#define	VPRC_BLOCKED	0x20000000u
+#define	VPRC_OBJREF	0x40000000u
 #define	VPRC_PDREF	0x80000000u
-#define	VPRC_BLOCKED	0xffffffffu
+#define	VPRC_REFMASK	(VPRC_BLOCKED | VPRC_OBJREF | VPRC_PDREF)
 
 /*
  * Page flags stored in oflags:
@@ -552,7 +554,7 @@ bool vm_page_reclaim_contig_domain(int domain, int req, u_long npages,
 void vm_page_reference(vm_page_t m);
 void vm_page_release(vm_page_t m, bool nocache);
 void vm_page_release_locked(vm_page_t m, bool nocache);
-void vm_page_remove(vm_page_t);
+bool vm_page_remove(vm_page_t);
 int vm_page_rename(vm_page_t, vm_object_t, vm_pindex_t);
 vm_page_t vm_page_replace(vm_page_t mnew, vm_object_t object,
     vm_pindex_t pindex);
@@ -807,15 +809,8 @@ vm_page_in_laundry(vm_page_t m)
 static inline u_int
 vm_page_wire_count(vm_page_t m)
 {
-	u_int count;
 
-	count = m->ref_count & ~VPRC_PDREF;
-	if (m->object != NULL) {
-		KASSERT(count > 0,
-		    ("vm_page_wired: page %p has no refs", m));
-		return (count - 1);
-	}
-	return (count);
+	return (m->ref_count & ~VPRC_REFMASK);
 }
 
 /*
