@@ -365,9 +365,11 @@ vm_fault_populate_cleanup(vm_object_t object, vm_pindex_t first,
 	for (pidx = first, m = vm_page_lookup(object, pidx);
 	    pidx <= last; pidx++, m = vm_page_next(m)) {
 		vm_fault_populate_check_page(m);
-		vm_page_lock(m);
-		vm_page_deactivate(m);
-		vm_page_unlock(m);
+		if (!vm_page_wired(m)) {
+			vm_page_lock(m);
+			vm_page_deactivate(m);
+			vm_page_unlock(m);
+		}
 		vm_page_xunbusy(m);
 	}
 }
@@ -492,7 +494,7 @@ vm_fault_populate(struct faultstate *fs, vm_prot_t prot, int fault_type,
 		for (i = 0; i < npages; i++) {
 			if ((fault_flags & VM_FAULT_WIRE) != 0) {
 				vm_page_wire(&m[i]);
-			} else {
+			} else if (!vm_page_wired(&m[i])) {
 				vm_page_change_lock(&m[i], &m_mtx);
 				vm_page_activate(&m[i]);
 			}
@@ -1324,7 +1326,7 @@ readrest:
 	 */
 	if ((fault_flags & VM_FAULT_WIRE) != 0) {
 		vm_page_wire(fs.m);
-	} else {
+	} else if (!vm_page_wired(fs.m)) {
 		vm_page_lock(fs.m);
 		vm_page_activate(fs.m);
 		vm_page_unlock(fs.m);
