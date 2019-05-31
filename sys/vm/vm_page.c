@@ -62,27 +62,6 @@
  * rights to redistribute these changes.
  */
 
-/*
- *			GENERAL RULES ON VM_PAGE MANIPULATION
- *
- *	- A page queue lock is required when adding or removing a page from a
- *	  page queue regardless of other locks or the busy state of a page.
- *
- *		* In general, no thread besides the page daemon can acquire or
- *		  hold more than one page queue lock at a time.
- *
- *		* The page daemon can acquire and hold any pair of page queue
- *		  locks in any order.
- *
- *	- The object lock is required when inserting or removing
- *	  pages from an object (vm_page_insert() or vm_page_remove()).
- *
- */
-
-/*
- *	Resident memory management module.
- */
-
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
@@ -3555,12 +3534,8 @@ vm_page_free_pages_toq(struct spglist *free, bool update_wire_count)
 }
 
 /*
- *	vm_page_wire:
- *
- * Mark this page as wired down.  If the page is fictitious, then
- * its wire count must remain one.
- *
- * The page must be locked.
+ * Mark this page as wired down, preventing reclamation by the page daemon
+ * or when the containing object is destroyed.
  */
 void
 vm_page_wire(vm_page_t m)
@@ -3576,21 +3551,20 @@ vm_page_wire(vm_page_t m)
 		KASSERT(m->ref_count >= 1,
 		    ("vm_page_wire: fictitious page %p has zero refs", m));
 
-	if (!vm_page_wired(m)) {
-		KASSERT((m->oflags & VPO_UNMANAGED) == 0 ||
-		    m->queue == PQ_NONE,
-		    ("vm_page_wire: unmanaged page %p is queued", m));
+	if (!vm_page_wired(m))
 		vm_wire_add(1);
-	}
 
 	old = atomic_fetchadd_int(&m->ref_count, 1);
 	KASSERT(old != ~VPRC_REFMASK,
 	    ("vm_page_wire: counter overflow for page %p", m));
 }
 
-/* XXX */
+/*
+ * Attempt to wire a mapped page following a pmap lookup of that page.
+ * This may fail if a thread is concurrently tearing down mappings of the page.
+ */
 bool
-vm_page_try_wire(vm_page_t m)
+vm_page_wire_mapped(vm_page_t m)
 {
 	u_int old;
 
@@ -3610,19 +3584,12 @@ vm_page_try_wire(vm_page_t m)
 }
 
 /*
- * vm_page_unwire:
- *
  * Release one wiring of the specified page, potentially allowing it to be
- * paged out.  Returns TRUE if the number of wirings transitions to zero and
- * FALSE otherwise.
- *
- * XXX
+ * paged out.
  *
  * Only managed pages belonging to an object can be paged out.  If the number
  * of wirings transitions to zero and the page is eligible for page out, then
- * the page is added to the specified paging queue (unless PQ_NONE is
- * specified, in which case the page is dequeued if it belongs to a paging
- * queue).
+ * the page is added to the specified paging queue.
  *
  * A managed page must be locked.
  */
@@ -3637,8 +3604,10 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 	if ((m->oflags & VPO_UNMANAGED) == 0)
 		vm_page_assert_locked(m);
 
-	/* XXX check for object == NULL? */
-	/* XXX explain race */
+	/*
+	 * Racily test the wire count to avoid polluting the page queues with
+	 * unreclaimable pages.
+	 */
 	if ((m->oflags & VPO_UNMANAGED) == 0 && vm_page_wire_count(m) == 1) {
 		if (vm_page_queue(m) == queue) {
 			if (queue == PQ_ACTIVE)
@@ -3654,19 +3623,17 @@ vm_page_unwire(vm_page_t m, uint8_t queue)
 		}
 	}
 
-	if (!vm_page_unwire_noq(m))
-		return;
-	if (m->ref_count == 0)
+	if (vm_page_unwire_noq(m) && m->ref_count == 0)
 		vm_page_free(m);
 }
 
 /*
- *
  * vm_page_unwire_noq:
  *
  * Unwire a page without (re-)inserting it into a page queue.  It is up
  * to the caller to enqueue, requeue, or free the page as appropriate.
- * In most cases, vm_page_unwire() should be used instead.
+ * In most cases involving managed pages, vm_page_unwire() should be used
+ * instead.
  */
 bool
 vm_page_unwire_noq(vm_page_t m)
@@ -3776,25 +3743,9 @@ vm_page_unswappable(vm_page_t m)
 }
 
 /*
- * Attempt to free the page.  If it cannot be freed, do nothing.  Returns true
- * if the page is freed and false otherwise.
- *
- * The page must be managed.  The page and its containing object must be
- * locked.
+ * Release a wired page to the page cache, and optionally attempt to free it.
+ * The page's object must be locked.  See the comment above vm_page_release().
  */
-static bool
-vm_page_try_to_free(vm_page_t m)
-{
-
-	VM_OBJECT_ASSERT_WLOCKED(m->object);
-	KASSERT((m->oflags & VPO_UNMANAGED) == 0, ("page %p is unmanaged", m));
-
-	if (m->dirty != 0 || vm_page_wired(m) || vm_page_busied(m))
-		return (false);
-	vm_page_free(m);
-	return (true);
-}
-
 void
 vm_page_release_locked(vm_page_t m, bool nocache)
 {
@@ -3808,12 +3759,14 @@ vm_page_release_locked(vm_page_t m, bool nocache)
 	if (!vm_page_unwire_noq(m))
 		return;
 	if (m->valid == 0 || nocache) {
-		if ((object->ref_count == 0 ||
-		    !pmap_page_is_mapped(m)) && vm_page_try_to_free(m))
-			return;
-		vm_page_lock(m);
-		vm_page_deactivate_noreuse(m);
-		vm_page_unlock(m);
+		if ((object->ref_count == 0 || !pmap_page_is_mapped(m)) &&
+		    m->dirty == 0 && !vm_page_busied(m) && !vm_page_wired(m)) {
+			vm_page_free(m);
+		} else {
+			vm_page_lock(m);
+			vm_page_deactivate_noreuse(m);
+			vm_page_unlock(m);
+		}
 	} else {
 		vm_page_lock(m);
 		if (vm_page_active(m))
@@ -3824,6 +3777,12 @@ vm_page_release_locked(vm_page_t m, bool nocache)
 	}
 }
 
+/*
+ * Release a wired page to the page cache, and optionally attempt to free it.
+ * If the caller wishes to attempt to free the page, and the page is mapped,
+ * dirty, busy or wired, we do not free it but instead place it near the head of
+ * the inactive queue to accelerate reclamation.
+ */
 void
 vm_page_release(vm_page_t m, bool nocache)
 {
@@ -3833,6 +3792,11 @@ vm_page_release(vm_page_t m, bool nocache)
 	    ("vm_page_release: page %p is unmanaged", m));
 
 	if (nocache) {
+		/*
+		 * Attempt to free the page.  The page may be renamed between
+		 * objects so we must verify the page's object pointer after
+		 * acquiring the lock and retry if they do not match.
+		 */
 		while ((object = m->object) != NULL) {
 			if (!VM_OBJECT_TRYWLOCK(object)) {
 				object = NULL;
@@ -3849,7 +3813,7 @@ vm_page_release(vm_page_t m, bool nocache)
 		}
 	}
 
-	if (m->object != NULL && vm_page_wire_count(m) == 1) {
+	if (vm_page_wire_count(m) == 1) {
 		vm_page_lock(m);
 		if (m->valid == 0 || nocache)
 			vm_page_deactivate_noreuse(m);
@@ -3863,7 +3827,10 @@ vm_page_release(vm_page_t m, bool nocache)
 		vm_page_free(m);
 }
 
-/* XXX */
+/*
+ * Attempt to invoke the requested operation while blocking new wirings of the
+ * page.
+ */
 static bool
 vm_page_try_blocked_op(vm_page_t m, void (*op)(vm_page_t))
 {

@@ -2945,7 +2945,7 @@ pmap_extract_and_hold(pmap_t pmap, vm_offset_t va, vm_prot_t prot)
 			    ((pte & PG_RW) != 0 || (prot & VM_PROT_WRITE) == 0))
 				m = PHYS_TO_VM_PAGE(pte & PG_FRAME);
 		}
-		if (m != NULL && !vm_page_try_wire(m))
+		if (m != NULL && !vm_page_wire_mapped(m))
 			m = NULL;
 	}
 	PMAP_UNLOCK(pmap);

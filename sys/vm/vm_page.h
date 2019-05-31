@@ -115,11 +115,19 @@
  *	the implementation of read-modify-write operations on the
  *	field is encapsulated in vm_page_clear_dirty_mask().
  *
- *	The ref_count field counts references to the page.  The containing
- *	object, if any, carries a reference to the page.  If a page has at
- *	least one additional reference, it is said to be wired and is
- *	unevictable.  For example, page locked by mlock(2) and mlockall(2)
- *	are wired.  Fictitious pages are permanently wired.
+ *	The ref_count field tracks references to the page.  References that
+ *	prevent the page from being reclaimable are called wirings and are
+ *	counted in the low bits of ref_count.  Upper bits are reserved for
+ *	special references that do not prevent reclamation of the page.
+ *	Specifically, the containing object, if any, holds such a reference,
+ *	and the page daemon takes a transient reference when it is scanning
+ *	a page.  Updates to ref_count are atomic unless the page is
+ *	unallocated.  To wire a page after it has been allocated, the object
+ *	lock must be held, or the page must be busy, or the wiring thread
+ *	must atomically take a reference and verify that the VPRC_BLOCKED
+ *	bit is not set.  No locks are required to unwire a page, but care
+ *	must be taken to free the page if that wiring represented the last
+ *	reference to the page.
  *
  *	The busy lock is an embedded reader-writer lock which protects the
  *	page's contents and identity (i.e., its <object, pindex> tuple) and
@@ -191,7 +199,7 @@ struct vm_page {
 	struct md_page md;		/* machine dependent stuff */
 	union {
 		u_int wire_count;
-		u_int ref_count;	/* XXX */
+		u_int ref_count;	/* page references */
 	};
 	volatile u_int busy_lock;	/* busy owners lock */
 	uint16_t flags;			/* page PG_* flags (P) */
@@ -209,9 +217,30 @@ struct vm_page {
 	vm_page_bits_t dirty;		/* map of dirty DEV_BSIZE chunks (M) */
 };
 
-#define	VPRC_BLOCKED	0x20000000u
-#define	VPRC_OBJREF	0x40000000u
-#define	VPRC_PDREF	0x80000000u
+/*
+ * Special bits used in the ref_count field.
+ *
+ * ref_count is normally used to count wirings that prevent the page from being
+ * reclaimed, but also supports several special types of references that do not
+ * prevent reclamation.  Accesses to the ref_count field must be atomic unless
+ * the page is unallocated.
+ *
+ * VPRC_PDREF is a transient reference acquired by the page daemon when
+ * scanning.  Pages may be dequeued without the page lock held when they are
+ * being freed, and this reference ensures that the page daemon is not
+ * simultaneously manipulating the queue state of the page.  The page lock must
+ * be held to set or clear this bit.
+ *
+ * VPRC_OBJREF is the reference held by the containing object.  It can set or
+ * cleared only when the corresponding object's write lock is held.
+ *
+ * VPRC_BLOCKED is used to atomically block wirings via pmap lookups while
+ * attempting to tear down all mappings of a given page.  The page lock and
+ * object write lock must both be held in order to set or clear this bit.
+ */
+#define	VPRC_BLOCKED	0x20000000u	/* mappings are being removed */
+#define	VPRC_OBJREF	0x40000000u	/* object reference, cleared with (O) */
+#define	VPRC_PDREF	0x80000000u	/* page daemon reference for scanning */
 #define	VPRC_REFMASK	(VPRC_BLOCKED | VPRC_OBJREF | VPRC_PDREF)
 
 /*
@@ -569,13 +598,13 @@ void vm_page_sunbusy(vm_page_t m);
 bool vm_page_try_remove_all(vm_page_t m);
 bool vm_page_try_remove_write(vm_page_t m);
 int vm_page_trysbusy(vm_page_t m);
-bool vm_page_try_wire(vm_page_t m);
 void vm_page_unhold_pages(vm_page_t *ma, int count);
 void vm_page_unswappable(vm_page_t m);
 void vm_page_unwire(vm_page_t m, uint8_t queue);
 bool vm_page_unwire_noq(vm_page_t m);
 void vm_page_updatefake(vm_page_t m, vm_paddr_t paddr, vm_memattr_t memattr);
-void vm_page_wire (vm_page_t);
+void vm_page_wire(vm_page_t);
+bool vm_page_wire_mapped(vm_page_t m);
 void vm_page_xunbusy_hard(vm_page_t m);
 void vm_page_xunbusy_maybelocked(vm_page_t m);
 void vm_page_set_validclean (vm_page_t, int, int);
@@ -805,7 +834,12 @@ vm_page_in_laundry(vm_page_t m)
 	return (queue == PQ_LAUNDRY || queue == PQ_UNSWAPPABLE);
 }
 
-/* XXX */
+/*
+ *
+ *	vm_page_wire_count:
+ *
+ *	Return the number of wiring references of the page.
+ */
 static inline u_int
 vm_page_wire_count(vm_page_t m)
 {

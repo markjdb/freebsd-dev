@@ -314,6 +314,10 @@ vm_pageout_next(struct scan_state *ss, const bool dequeue)
 	return (vm_batchqueue_pop(&ss->bq));
 }
 
+/*
+ * Lock a page and set a reference bit to ensure that it does not get freed out
+ * from under us.
+ */
 static bool
 vm_pageout_lock_and_hold_page(vm_page_t m, struct mtx **mtx)
 {
@@ -330,6 +334,10 @@ vm_pageout_lock_and_hold_page(vm_page_t m, struct mtx **mtx)
 	return (true);
 }
 
+/*
+ * Drop the page daemon's transient page reference and determine whether we need
+ * to free the page.
+ */
 static bool
 vm_pageout_drop_page(vm_page_t m)
 {
@@ -339,6 +347,10 @@ vm_pageout_drop_page(vm_page_t m)
 	return (atomic_fetchadd_int(&m->ref_count, -VPRC_PDREF) == VPRC_PDREF);
 }
 
+/*
+ * Drop the page daemon's transient reference once we know that the page's
+ * identity is stable.
+ */
 static void
 vm_pageout_drop_page_quick(vm_page_t m)
 {
@@ -362,16 +374,11 @@ vm_pageout_cluster(vm_page_t m)
 	vm_pindex_t pindex;
 	int ib, is, page_base, pageout_count;
 
-	vm_page_assert_locked(m);
 	object = m->object;
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	pindex = m->pindex;
 
 	vm_page_assert_unbusied(m);
-	KASSERT(!vm_page_wired(m), ("page %p is wired", m));
-
-	pmap_remove_write(m);
-	vm_page_unlock(m);
 
 	mc[vm_pageout_page_count] = pb = ps = m;
 	pageout_count = 1;
@@ -692,6 +699,13 @@ vm_pageout_clean(vm_page_t m, int *numpagedout)
 		}
 	}
 
+	if (!vm_page_try_remove_write(m)) {
+		vm_page_unlock(m);
+		error = EBUSY;
+		goto unlock_all;
+	}
+	vm_page_unlock(m);
+
 	/*
 	 * If a page is dirty, then it is either being washed
 	 * (but not yet cleaned) or it is still in the
@@ -785,22 +799,18 @@ recheck:
 		 * Wired pages may not be freed.  Complete their removal
 		 * from the queue now to avoid needless revisits during
 		 * future scans.  This check is racy and must be reverified once
-		 * we hold the object lock.
+		 * we hold the object lock and have verified that the page
+		 * is not busy.
 		 */
 		if (vm_page_wired(m)) {
 			vm_page_dequeue_deferred(m);
 			goto drop;
 		}
 
-		if (object != m->object || object == NULL) {
+		if (object != m->object) {
 			if (object != NULL)
 				VM_OBJECT_WUNLOCK(object);
 			object = m->object;
-			if (__predict_false(object == NULL))
-				/*
-				 * Another thread may have freed the page.
-				 */
-				goto drop;
 			if (!VM_OBJECT_TRYWLOCK(object)) {
 				mtx_unlock(mtx);
 				/* Depends on type-stability. */
@@ -809,12 +819,28 @@ recheck:
 				goto recheck;
 			}
 		}
+		if (__predict_false(object == NULL))
+			/*
+			 * The page has been removed from its object.
+			 * Drop our reference and move on.
+			 */
+			goto drop;
 
+		/*
+		 * We can drop our transient reference now that we hold
+		 * the object lock.
+		 */
 		vm_pageout_drop_page_quick(m);
 
 		if (vm_page_busied(m))
 			continue;
 
+		/*
+		 * Re-check for wirings now that we hold the object lock.  If
+		 * the page is mapped, it may still be wired by pmap lookups.
+		 * The call to vm_page_try_remove_all() below atomically checks
+		 * for such wirings and removes mappings.
+		 */
 		if (__predict_false(vm_page_wired(m))) {
 			vm_page_dequeue_deferred(m);
 			continue;
@@ -1262,6 +1288,13 @@ act_scan:
 			goto drop;
 		}
 
+		if (__predict_false((object = m->object) == NULL))
+			/*
+			 * The page has been removed from its object.
+			 * Drop our reference and move on.
+			 */
+			goto drop;
+
 		/*
 		 * Check to see "how much" the page has been used.
 		 *
@@ -1281,8 +1314,6 @@ act_scan:
 		 *    This race delays the detection of a new reference.  At
 		 *    worst, we will deactivate and reactivate the page.
 		 */
-		if (__predict_false((object = m->object) == NULL))
-			goto drop;
 		if (object->ref_count != 0)
 			act_delta = pmap_ts_referenced(m);
 		else
@@ -1483,23 +1514,19 @@ recheck:
 		 * Wired pages may not be freed.  Complete their removal
 		 * from the queue now to avoid needless revisits during
 		 * future scans.  This check is racy and must be reverified once
-		 * we hold the object lock.
+		 * we hold the object lock and have verified that the page
+		 * is not busy.
 		 */
 		if (vm_page_wired(m)) {
 			vm_page_dequeue_deferred(m);
 			goto drop;
 		}
 
-		if (object != m->object || object == NULL) {
+		if (object != m->object) {
 			if (object != NULL)
 				VM_OBJECT_WUNLOCK(object);
 			object = m->object;
-			if (__predict_false(object == NULL))
-				/*
-				 * Another thread may have freed the page.
-				 */
-				goto drop;
-			if (!VM_OBJECT_TRYWLOCK(object)) {
+			if (object != NULL && !VM_OBJECT_TRYWLOCK(object)) {
 				mtx_unlock(mtx);
 				/* Depends on type-stability. */
 				VM_OBJECT_WLOCK(object);
@@ -1507,7 +1534,17 @@ recheck:
 				goto recheck;
 			}
 		}
+		if (__predict_false(object == NULL))
+			/*
+			 * The page has been removed from its object.
+			 * Drop our reference and move on.
+			 */
+			goto drop;
 
+		/*
+		 * We can drop our transient reference now that we hold
+		 * the object lock.
+		 */
 		vm_pageout_drop_page_quick(m);
 
 		if (vm_page_busied(m)) {
@@ -1524,6 +1561,12 @@ recheck:
 			continue;
 		}
 
+		/*
+		 * Re-check for wirings now that we hold the object lock.  If
+		 * the page is mapped, it may still be wired by pmap lookups.
+		 * The call to vm_page_try_remove_all() below atomically checks
+		 * for such wirings and removes mappings.
+		 */
 		if (__predict_false(vm_page_wired(m))) {
 			vm_page_dequeue_deferred(m);
 			continue;
@@ -1617,6 +1660,9 @@ free_page:
 		continue;
 
 drop:
+		/*
+		 * Drop our transient reference.
+		 */
 		if (vm_pageout_drop_page(m))
 			goto free_page;
 	}
