@@ -91,9 +91,10 @@ linux_alloc_pages(gfp_t flags, unsigned int order)
 
 	if (PMAP_HAS_DMAP) {
 		unsigned long npages = 1UL << order;
-		int req = (flags & M_ZERO) ? (VM_ALLOC_ZERO | VM_ALLOC_NOOBJ |
-		    VM_ALLOC_NORMAL) : (VM_ALLOC_NOOBJ | VM_ALLOC_NORMAL);
+		int req = VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ | VM_ALLOC_WIRED;
 
+		if ((flags & M_ZERO) != 0)
+			req |= VM_ALLOC_ZERO;
 		if (order == 0 && (flags & GFP_DMA32) == 0) {
 			page = vm_page_alloc(NULL, 0, req);
 			if (page == NULL)
@@ -153,9 +154,8 @@ linux_free_pages(vm_page_t page, unsigned int order)
 		for (x = 0; x != npages; x++) {
 			vm_page_t pgo = page + x;
 
-			vm_page_lock(pgo);
-			vm_page_free(pgo);
-			vm_page_unlock(pgo);
+			if (vm_page_unwire_noq(pgo))
+				vm_page_free(pgo);
 		}
 	} else {
 		vm_offset_t vaddr;
