@@ -699,11 +699,8 @@ static void
 vm_object_terminate_pages(vm_object_t object)
 {
 	vm_page_t p, p_next;
-	struct mtx *mtx;
 
 	VM_OBJECT_ASSERT_WLOCKED(object);
-
-	mtx = NULL;
 
 	/*
 	 * Free any remaining pageable pages.  This also removes them from the
@@ -713,20 +710,15 @@ vm_object_terminate_pages(vm_object_t object)
 	 */
 	TAILQ_FOREACH_SAFE(p, &object->memq, listq, p_next) {
 		vm_page_assert_unbusied(p);
-		if ((object->flags & OBJ_UNMANAGED) == 0)
-			/*
-			 * vm_page_free_prep() only needs the page
-			 * lock for managed pages.
-			 */
-			vm_page_change_lock(p, &mtx);
+		KASSERT(p->object == object && p->ref_count > 0,
+		    ("vm_object_terminate_pages: page %p is inconsistent", p));
+
 		p->object = NULL;
-		if (vm_page_wired(p))
-			continue;
-		VM_CNT_INC(v_pfree);
-		vm_page_free(p);
+		if (vm_page_drop(p, -VPRC_OBJREF) == VPRC_OBJREF) {
+			VM_CNT_INC(v_pfree);
+			vm_page_free(p);
+		}
 	}
-	if (mtx != NULL)
-		mtx_unlock(mtx);
 
 	/*
 	 * If the object contained any pages, then reset it to an empty state.
@@ -1588,16 +1580,10 @@ vm_object_collapse_scan(vm_object_t object, int op)
 				swap_pager_freespace(backing_object, p->pindex,
 				    1);
 
-			/*
-			 * Page is out of the parent object's range, we can
-			 * simply destroy it.
-			 */
-			vm_page_lock(p);
 			KASSERT(!pmap_page_is_mapped(p),
 			    ("freeing mapped page %p", p));
 			if (vm_page_remove(p))
 				vm_page_free(p);
-			vm_page_unlock(p);
 			continue;
 		}
 
@@ -1634,12 +1620,10 @@ vm_object_collapse_scan(vm_object_t object, int op)
 			if (backing_object->type == OBJT_SWAP)
 				swap_pager_freespace(backing_object, p->pindex,
 				    1);
-			vm_page_lock(p);
 			KASSERT(!pmap_page_is_mapped(p),
 			    ("freeing mapped page %p", p));
 			if (vm_page_remove(p))
 				vm_page_free(p);
-			vm_page_unlock(p);
 			continue;
 		}
 
@@ -1940,6 +1924,7 @@ again:
 			VM_OBJECT_WLOCK(object);
 			goto again;
 		}
+wired:
 		if (vm_page_wired(p)) {
 			if ((options & OBJPR_NOTMAPPED) == 0 &&
 			    object->ref_count != 0)
@@ -1960,14 +1945,17 @@ again:
 		    ("vm_object_page_remove: page %p is fictitious", p));
 		if ((options & OBJPR_CLEANONLY) != 0 && p->valid != 0) {
 			if ((options & OBJPR_NOTMAPPED) == 0 &&
-			    object->ref_count != 0)
-				pmap_remove_write(p);
+			    object->ref_count != 0 &&
+			    !vm_page_try_remove_write(p))
+				goto wired;
 			if (p->dirty != 0)
 				continue;
 		}
-		if ((options & OBJPR_NOTMAPPED) == 0 && object->ref_count != 0)
-			pmap_remove_all(p);
-		vm_page_free(p);
+		if ((options & OBJPR_NOTMAPPED) == 0 &&
+		    object->ref_count != 0 && !vm_page_try_remove_all(p))
+			goto wired;
+		if (vm_page_remove(p))
+			vm_page_free(p);
 	}
 	if (mtx != NULL)
 		mtx_unlock(mtx);

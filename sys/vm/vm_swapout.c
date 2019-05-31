@@ -208,12 +208,12 @@ vm_swapout_object_deactivate_pages(pmap_t pmap, vm_object_t first_object,
 				goto unlock_return;
 			if (should_yield())
 				goto unlock_return;
-			if (vm_page_busied(p))
+
+			if (vm_page_busied(p) || vm_page_wired(p))
 				continue;
 			VM_CNT_INC(v_pdpages);
 			vm_page_lock(p);
-			if (vm_page_wired(p) ||
-			    !pmap_page_exists_quick(pmap, p)) {
+			if (!pmap_page_exists_quick(pmap, p)) {
 				vm_page_unlock(p);
 				continue;
 			}
@@ -231,8 +231,8 @@ vm_swapout_object_deactivate_pages(pmap_t pmap, vm_object_t first_object,
 					p->act_count -= min(p->act_count,
 					    ACT_DECLINE);
 					if (!remove_mode && p->act_count == 0) {
-						pmap_remove_all(p);
-						vm_page_deactivate(p);
+						if (vm_page_try_remove_all(p))
+							vm_page_deactivate(p);
 					} else
 						vm_page_requeue(p);
 				} else {
@@ -243,7 +243,7 @@ vm_swapout_object_deactivate_pages(pmap_t pmap, vm_object_t first_object,
 					vm_page_requeue(p);
 				}
 			} else if (vm_page_inactive(p))
-				pmap_remove_all(p);
+				(void)vm_page_try_remove_all(p);
 			vm_page_unlock(p);
 		}
 		if ((backing_object = object->backing_object) == NULL)

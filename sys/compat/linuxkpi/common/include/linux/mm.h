@@ -227,9 +227,7 @@ mark_page_accessed(struct vm_page *page)
 static inline void
 get_page(struct vm_page *page)
 {
-	vm_page_lock(page);
 	vm_page_wire(page);
-	vm_page_unlock(page);
 }
 
 extern long
@@ -251,8 +249,7 @@ static inline void
 put_page(struct vm_page *page)
 {
 	vm_page_lock(page);
-	if (vm_page_unwire(page, PQ_ACTIVE) && page->object == NULL)
-		vm_page_free(page);
+	vm_page_unwire(page, PQ_ACTIVE);
 	vm_page_unlock(page);
 }
 

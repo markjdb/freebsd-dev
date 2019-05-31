@@ -115,24 +115,19 @@
  *	the implementation of read-modify-write operations on the
  *	field is encapsulated in vm_page_clear_dirty_mask().
  *
- *	The page structure contains two counters which prevent page reuse.
- *	Both counters are protected by the page lock (P).  The hold
- *	counter counts transient references obtained via a pmap lookup, and
- *	is also used to prevent page reclamation in situations where it is
- *	undesirable to block other accesses to the page.  The wire counter
- *	is used to implement mlock(2) and is non-zero for pages containing
- *	kernel memory.  Pages that are wired or held will not be reclaimed
- *	or laundered by the page daemon, but are treated differently during
- *	a page queue scan: held pages remain at their position in the queue,
- *	while wired pages are removed from the queue and must later be
- *	re-enqueued appropriately by the unwiring thread.  It is legal to
- *	call vm_page_free() on a held page; doing so causes it to be removed
- *	from its object and page queue, and the page is released to the
- *	allocator once the last hold reference is dropped.  In contrast,
- *	wired pages may not be freed.
- *
- *	In some pmap implementations, the wire count of a page table page is
- *	used to track the number of populated entries.
+ *	The ref_count field tracks references to the page.  References that
+ *	prevent the page from being reclaimable are called wirings and are
+ *	counted in the low bits of ref_count.  Upper bits are reserved for
+ *	special references that do not prevent reclamation of the page.
+ *	Specifically, the containing object, if any, holds such a reference,
+ *	and the page daemon takes a transient reference when it is scanning
+ *	a page.  Updates to ref_count are atomic unless the page is
+ *	unallocated.  To wire a page after it has been allocated, the object
+ *	lock must be held, or the page must be busy, or the wiring thread
+ *	must atomically take a reference and verify that the VPRC_BLOCKED
+ *	bit is not set.  No locks are required to unwire a page, but care
+ *	must be taken to free the page if that wiring represented the last
+ *	reference to the page.
  *
  *	The busy lock is an embedded reader-writer lock which protects the
  *	page's contents and identity (i.e., its <object, pindex> tuple) and
@@ -155,7 +150,11 @@
  *	be held.  It is invalid for a page's queue field to transition
  *	between two distinct page queue indices.  That is, when updating
  *	the queue field, either the new value or the old value must be
- *	PQ_NONE.
+ *	PQ_NONE.  There is one exception to this rule: the page daemon may
+ *	transition the queue field from PQ_INACTIVE to PQ_NONE immediately
+ *	prior to freeing a page during an inactive queue scan.  At that
+ *	point the page will have already been physically dequeued, and it
+ *	is known that no other references to that vm_page structure exist.
  *
  *	To avoid contention on page queue locks, page queue operations
  *	(enqueue, dequeue, requeue) are batched using per-CPU queues.
@@ -168,7 +167,9 @@
  *	may be freed before its pending batch queue entries have been
  *	processed.  The page lock (P) must be held to schedule a batched
  *	queue operation, and the page queue lock must be held in order to
- *	process batch queue entries for the page queue.
+ *	process batch queue entries for the page queue.  When the page is
+ *	being freed, the thread freeing the page is permitted to schedule
+ *	a dequeue of the page without the page lock held.
  */
 
 #if PAGE_SIZE == 4096
@@ -198,11 +199,14 @@ struct vm_page {
 		} memguard;
 	} plinks;
 	TAILQ_ENTRY(vm_page) listq;	/* pages in same object (O) */
-	vm_object_t object;		/* which object am I in (O,P) */
+	vm_object_t object;		/* which object am I in (O) */
 	vm_pindex_t pindex;		/* offset into object (O,P) */
 	vm_paddr_t phys_addr;		/* physical address of page (C) */
 	struct md_page md;		/* machine dependent stuff */
-	u_int wire_count;		/* wired down maps refs (P) */
+	union {
+		u_int wire_count;
+		u_int ref_count;	/* page references */
+	};
 	volatile u_int busy_lock;	/* busy owners lock */
 	uint16_t flags;			/* page PG_* flags (P) */
 	uint8_t	order;			/* index of the buddy queue (F) */
@@ -218,6 +222,34 @@ struct vm_page {
 	vm_page_bits_t valid;		/* map of valid DEV_BSIZE chunks (O) */
 	vm_page_bits_t dirty;		/* map of dirty DEV_BSIZE chunks (M) */
 };
+
+/*
+ * Special bits used in the ref_count field.
+ *
+ * ref_count is normally used to count wirings that prevent the page from being
+ * reclaimed, but also supports several special types of references that do not
+ * prevent reclamation.  Accesses to the ref_count field must be atomic unless
+ * the page is unallocated.
+ *
+ * VPRC_PDREF is a transient reference acquired by the page daemon when
+ * scanning.  Pages may be dequeued without the page lock held when they are
+ * being freed, and this reference ensures that the page daemon is not
+ * simultaneously manipulating the queue state of the page.  The page lock must
+ * be held to set or clear this bit.
+ *
+ * VPRC_OBJREF is the reference held by the containing object.  It can set or
+ * cleared only when the corresponding object's write lock is held.
+ *
+ * VPRC_BLOCKED is used to atomically block wirings via pmap lookups while
+ * attempting to tear down all mappings of a given page.  The page lock and
+ * object write lock must both be held in order to set or clear this bit.
+ */
+#define	VPRC_BLOCKED	0x20000000u	/* mappings are being removed */
+#define	VPRC_OBJREF	0x40000000u	/* object reference, cleared with (O) */
+#define	VPRC_PDREF	0x80000000u	/* page daemon reference for scanning */
+#define	_VPRC_REFMASK	(VPRC_BLOCKED | VPRC_OBJREF | VPRC_PDREF)
+#define	VPRC_WIRE_COUNT(c)	((c) & ~_VPRC_REFMASK)
+#define	VPRC_WIRE_COUNT_MAX	(~_VPRC_REFMASK)
 
 /*
  * Page flags stored in oflags:
@@ -562,8 +594,10 @@ bool vm_page_reclaim_contig(int req, u_long npages, vm_paddr_t low,
 bool vm_page_reclaim_contig_domain(int domain, int req, u_long npages,
     vm_paddr_t low, vm_paddr_t high, u_long alignment, vm_paddr_t boundary);
 void vm_page_reference(vm_page_t m);
+void vm_page_release(vm_page_t m, bool nocache);
+void vm_page_release_locked(vm_page_t m, bool nocache);
 bool vm_page_remove(vm_page_t);
-int vm_page_rename (vm_page_t, vm_object_t, vm_pindex_t);
+int vm_page_rename(vm_page_t, vm_object_t, vm_pindex_t);
 vm_page_t vm_page_replace(vm_page_t mnew, vm_object_t object,
     vm_pindex_t pindex);
 void vm_page_requeue(vm_page_t m);
@@ -574,14 +608,16 @@ void vm_page_set_valid_range(vm_page_t m, int base, int size);
 int vm_page_sleep_if_busy(vm_page_t m, const char *msg);
 vm_offset_t vm_page_startup(vm_offset_t vaddr);
 void vm_page_sunbusy(vm_page_t m);
-bool vm_page_try_to_free(vm_page_t m);
+bool vm_page_try_remove_all(vm_page_t m);
+bool vm_page_try_remove_write(vm_page_t m);
 int vm_page_trysbusy(vm_page_t m);
 void vm_page_unhold_pages(vm_page_t *ma, int count);
 void vm_page_unswappable(vm_page_t m);
-bool vm_page_unwire(vm_page_t m, uint8_t queue);
+void vm_page_unwire(vm_page_t m, uint8_t queue);
 bool vm_page_unwire_noq(vm_page_t m);
 void vm_page_updatefake(vm_page_t m, vm_paddr_t paddr, vm_memattr_t memattr);
-void vm_page_wire (vm_page_t);
+void vm_page_wire(vm_page_t);
+bool vm_page_wire_mapped(vm_page_t m);
 void vm_page_xunbusy_hard(vm_page_t m);
 void vm_page_xunbusy_maybelocked(vm_page_t m);
 void vm_page_set_validclean (vm_page_t, int, int);
@@ -812,6 +848,23 @@ vm_page_in_laundry(vm_page_t m)
 }
 
 /*
+ *	vm_page_drop:
+ *
+ *	Release a reference to a page and return the old reference count.
+ */
+static inline u_int
+vm_page_drop(vm_page_t m, u_int val)
+{
+
+	/*
+	 * Synchronize with vm_page_free_prep(): ensure that all updates to the
+	 * page structure are visible before it is freed.
+	 */
+	atomic_thread_fence_rel();
+	return (atomic_fetchadd_int(&m->ref_count, val));
+}
+
+/*
  *	vm_page_wired:
  *
  *	Return true if a reference prevents the page from being reclaimable.
@@ -820,7 +873,7 @@ static inline bool
 vm_page_wired(vm_page_t m)
 {
 
-	return (m->wire_count > 0);
+	return (VPRC_WIRE_COUNT(m->ref_count) > 0);
 }
 
 #endif				/* _KERNEL */

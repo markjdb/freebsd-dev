@@ -196,9 +196,7 @@ uiomove_object_page(vm_object_t obj, size_t len, struct uio *uio)
 				printf(
 	    "uiomove_object: vm_obj %p idx %jd valid %x pager error %d\n",
 				    obj, idx, m->valid, rv);
-				vm_page_lock(m);
 				vm_page_free(m);
-				vm_page_unlock(m);
 				VM_OBJECT_WUNLOCK(obj);
 				return (EIO);
 			}
@@ -206,9 +204,7 @@ uiomove_object_page(vm_object_t obj, size_t len, struct uio *uio)
 			vm_page_zero_invalid(m, TRUE);
 		vm_page_xunbusy(m);
 	}
-	vm_page_lock(m);
 	vm_page_wire(m);
-	vm_page_unlock(m);
 	VM_OBJECT_WUNLOCK(obj);
 	error = uiomove_fromphys(&m, offset, tlen, uio);
 	if (uio->uio_rw == UIO_WRITE && error == 0) {
