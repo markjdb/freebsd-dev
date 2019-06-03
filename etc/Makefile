@@ -6,6 +6,7 @@
 FILESGROUPS=	FILES
 NLS_ALIASES=	POSIX C \
 		en_US.US_ASCII C
+PWD_MKDB_CMD?=	pwd_mkdb
 
 # No need as it is empty and just causes rebuilds since this file does so much.
 UPDATE_DEPENDFILE=	no
@@ -91,8 +92,6 @@ distribution:
 	    ${DESTDIR}/boot/device.hints
 .endif
 .endif
-
-MTREE_CMD?=	mtree
 
 MTREES=		mtree/BSD.root.dist		/		\
 		mtree/BSD.var.dist		/var		\
