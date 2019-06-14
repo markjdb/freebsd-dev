@@ -1448,17 +1448,8 @@ vm_page_insert_radixdone(vm_page_t m, vm_object_t object, vm_page_t mpred)
 		vm_object_set_writeable_dirty(object);
 }
 
-/*
- *	vm_page_remove:
- *
- *	Removes the specified page from its containing object, but does not
- *	invalidate any backing storage.  Return true if the page may be safely
- *	freed and false otherwise.
- *
- *	The object must be locked.
- */
-bool
-vm_page_remove(vm_page_t m)
+static void
+_vm_page_remove(vm_page_t m)
 {
 	vm_object_t object;
 	vm_page_t mrem;
@@ -1488,6 +1479,22 @@ vm_page_remove(vm_page_t m)
 	 */
 	if (object->resident_page_count == 0 && object->type == OBJT_VNODE)
 		vdrop(object->handle);
+}
+
+/*
+ *	vm_page_remove:
+ *
+ *	Removes the specified page from its containing object, but does not
+ *	invalidate any backing storage.  Returns true if the object's reference
+ *	was the last reference to the page, and false otherwise.
+ *
+ *	The object must be locked.
+ */
+bool
+vm_page_remove(vm_page_t m)
+{
+
+	_vm_page_remove(m);
 
 	/*
 	 * Release the object reference.  The caller may free the page
@@ -3804,24 +3811,38 @@ void
 vm_page_release_locked(vm_page_t m, bool nocache)
 {
 	vm_object_t object;
+	bool free;
 
 	object = m->object;
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	KASSERT((m->oflags & VPO_UNMANAGED) == 0,
 	    ("vm_page_release_locked: page %p is unmanaged", m));
 
-	if (!vm_page_unwire_noq(m))
-		return;
 	if (m->valid == 0 || nocache) {
 		if ((object->ref_count == 0 || !pmap_page_is_mapped(m)) &&
-		    m->dirty == 0 && !vm_page_busied(m) && !vm_page_wired(m)) {
-			vm_page_free(m);
+		    m->dirty == 0 && !vm_page_busied(m) &&
+		    VPRC_WIRE_COUNT(m->ref_count) == 1) {
+			/*
+			 * Release the object and wiring references in one
+			 * atomic operation.
+			 */
+			_vm_page_remove(m);
+			m->object = NULL;
+			free = vm_page_drop(m, -(VPRC_OBJREF + 1)) ==
+			    VPRC_OBJREF + 1;
+			vm_wire_sub(1);
+			if (free)
+				vm_page_free(m);
 		} else {
+			if (!vm_page_unwire_noq(m))
+				return;
 			vm_page_lock(m);
 			vm_page_deactivate_noreuse(m);
 			vm_page_unlock(m);
 		}
 	} else {
+		if (!vm_page_unwire_noq(m))
+			return;
 		vm_page_lock(m);
 		if (vm_page_active(m))
 			vm_page_reference(m);
