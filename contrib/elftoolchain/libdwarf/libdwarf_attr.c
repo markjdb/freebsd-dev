@@ -52,10 +52,18 @@ _dwarf_attr_add(Dwarf_Die die, Dwarf_Attribute atref, Dwarf_Attribute *atp,
     Dwarf_Error *error)
 {
 	Dwarf_Attribute at;
+#if 0
 	int ret;
 
 	if ((ret = _dwarf_attr_alloc(die, &at, error)) != DW_DLE_NONE)
 		return (ret);
+#else
+	at = malloc(sizeof(*at));
+	if (at == NULL) {
+		DWARF_SET_ERROR(die->die_dbg, error, DW_DLE_MEMORY);
+		return (DW_DLE_MEMORY);
+	}
+#endif
 
 	memcpy(at, atref, sizeof(struct _Dwarf_Attribute));
 
@@ -100,7 +108,9 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
     uint64_t form, int indirect, Dwarf_Error *error)
 {
 	struct _Dwarf_Attribute atref;
+#if 0
 	Dwarf_Section *str;
+#endif
 	int ret;
 
 	ret = DW_DLE_NONE;
@@ -183,9 +193,13 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		break;
 	case DW_FORM_strp:
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, dwarf_size);
+#if 0
 		str = _dwarf_find_section(dbg, ".debug_str");
 		assert(str != NULL);
 		atref.u[1].s = (char *) str->ds_data + atref.u[0].u64;
+#else
+		atref.u[1].s = _dwarf_strtab_get_table(dbg) + atref.u[0].u64;
+#endif
 		break;
 	case DW_FORM_ref_sig8:
 		atref.u[0].u64 = 8;
