@@ -1313,6 +1313,18 @@ vtopde(vm_offset_t va)
 	return (PDmap + ((va >> PDRSHIFT) & mask));
 }
 
+static inline vm_page_t
+pmap_page_alloc(vm_pindex_t pindex, int req)
+{
+	vm_page_t m;
+
+	m = vm_page_alloc(NULL, pindex, req | VM_ALLOC_NOOBJ);
+	if (m != NULL && (req & VM_ALLOC_ZERO) != 0 &&
+	    (m->flags & PG_ZERO) == 0)
+		pmap_zero_page(m);
+	return (m);
+}
+
 static u_int64_t
 allocpages(vm_paddr_t *firstaddr, int n)
 {
@@ -3406,8 +3418,8 @@ pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags)
 	/*
 	 * allocate the page directory page
 	 */
-	pml4pg = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ |
-	    VM_ALLOC_WIRED | VM_ALLOC_ZERO | VM_ALLOC_WAITOK);
+	pml4pg = pmap_page_alloc(0, VM_ALLOC_NORMAL | VM_ALLOC_WIRED |
+	    VM_ALLOC_ZERO | VM_ALLOC_WAITOK);
 
 	pml4phys = VM_PAGE_TO_PHYS(pml4pg);
 	pmap->pm_pml4 = (pml4_entry_t *)PHYS_TO_DMAP(pml4phys);
@@ -3420,8 +3432,6 @@ pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags)
 	pmap->pm_pml4u = NULL;
 
 	pmap->pm_type = pm_type;
-	if ((pml4pg->flags & PG_ZERO) == 0)
-		pagezero(pmap->pm_pml4);
 
 	/*
 	 * Do not install the host kernel mappings in the nested page
@@ -3433,8 +3443,8 @@ pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags)
 		pmap->pm_cr3 = pml4phys;
 		pmap_pinit_pml4(pml4pg);
 		if ((curproc->p_md.md_flags & P_MD_KPTI) != 0) {
-			pml4pgu = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL |
-			    VM_ALLOC_NOOBJ | VM_ALLOC_WIRED | VM_ALLOC_WAITOK);
+			pml4pgu = pmap_page_alloc(0, VM_ALLOC_NORMAL |
+			    VM_ALLOC_WIRED | VM_ALLOC_WAITOK);
 			pmap->pm_pml4u = (pml4_entry_t *)PHYS_TO_DMAP(
 			    VM_PAGE_TO_PHYS(pml4pgu));
 			pmap_pinit_pml4_pti(pml4pgu);
@@ -3490,8 +3500,8 @@ _pmap_allocpte(pmap_t pmap, vm_pindex_t ptepindex, struct rwlock **lockp)
 	/*
 	 * Allocate a page table page.
 	 */
-	if ((m = vm_page_alloc(NULL, ptepindex, VM_ALLOC_NOOBJ |
-	    VM_ALLOC_WIRED | VM_ALLOC_ZERO)) == NULL) {
+	m = pmap_page_alloc(ptepindex, VM_ALLOC_WIRED | VM_ALLOC_ZERO);
+	if (m == NULL) {
 		if (lockp != NULL) {
 			RELEASE_PV_LIST_LOCK(lockp);
 			PMAP_UNLOCK(pmap);
@@ -3506,8 +3516,6 @@ _pmap_allocpte(pmap_t pmap, vm_pindex_t ptepindex, struct rwlock **lockp)
 		 */
 		return (NULL);
 	}
-	if ((m->flags & PG_ZERO) == 0)
-		pmap_zero_page(m);
 
 	/*
 	 * Map the pagetable page into the process address space, if
@@ -3803,13 +3811,11 @@ pmap_growkernel(vm_offset_t addr)
 		pdpe = pmap_pdpe(kernel_pmap, kernel_vm_end);
 		if ((*pdpe & X86_PG_V) == 0) {
 			/* We need a new PDP entry */
-			nkpg = vm_page_alloc(NULL, kernel_vm_end >> PDPSHIFT,
-			    VM_ALLOC_INTERRUPT | VM_ALLOC_NOOBJ |
-			    VM_ALLOC_WIRED | VM_ALLOC_ZERO);
+			nkpg = pmap_page_alloc(kernel_vm_end >> PDPSHIFT,
+			    VM_ALLOC_INTERRUPT | VM_ALLOC_WIRED |
+			    VM_ALLOC_ZERO);
 			if (nkpg == NULL)
 				panic("pmap_growkernel: no memory to grow kernel");
-			if ((nkpg->flags & PG_ZERO) == 0)
-				pmap_zero_page(nkpg);
 			paddr = VM_PAGE_TO_PHYS(nkpg);
 			*pdpe = (pdp_entry_t)(paddr | X86_PG_V | X86_PG_RW |
 			    X86_PG_A | X86_PG_M);
@@ -3825,13 +3831,10 @@ pmap_growkernel(vm_offset_t addr)
 			continue;
 		}
 
-		nkpg = vm_page_alloc(NULL, pmap_pde_pindex(kernel_vm_end),
-		    VM_ALLOC_INTERRUPT | VM_ALLOC_NOOBJ | VM_ALLOC_WIRED |
-		    VM_ALLOC_ZERO);
+		nkpg = pmap_page_alloc(pmap_pde_pindex(kernel_vm_end),
+		    VM_ALLOC_INTERRUPT | VM_ALLOC_WIRED | VM_ALLOC_ZERO);
 		if (nkpg == NULL)
 			panic("pmap_growkernel: no memory to grow kernel");
-		if ((nkpg->flags & PG_ZERO) == 0)
-			pmap_zero_page(nkpg);
 		paddr = VM_PAGE_TO_PHYS(nkpg);
 		newpdir = paddr | X86_PG_V | X86_PG_RW | X86_PG_A | X86_PG_M;
 		pde_store(pde, newpdir);
@@ -4205,8 +4208,7 @@ retry:
 		}
 	}
 	/* No free items, allocate another chunk */
-	m = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ |
-	    VM_ALLOC_WIRED);
+	m = pmap_page_alloc(0, VM_ALLOC_NORMAL | VM_ALLOC_WIRED);
 	if (m == NULL) {
 		if (lockp == NULL) {
 			PV_STAT(pc_chunk_tryfail++);
@@ -4305,8 +4307,7 @@ retry:
 			break;
 	}
 	for (reclaimed = false; avail < needed; avail += _NPCPV) {
-		m = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ |
-		    VM_ALLOC_WIRED);
+		m = pmap_page_alloc(0, VM_ALLOC_NORMAL | VM_ALLOC_WIRED);
 		if (m == NULL) {
 			m = reclaim_pv_chunk(pmap, lockp);
 			if (m == NULL)
@@ -4673,9 +4674,8 @@ pmap_demote_pde_locked(pmap_t pmap, pd_entry_t *pde, vm_offset_t va,
 		 * priority (VM_ALLOC_INTERRUPT).  Otherwise, the
 		 * priority is normal.
 		 */
-		mpte = vm_page_alloc(NULL, pmap_pde_pindex(va),
-		    (in_kernel ? VM_ALLOC_INTERRUPT : VM_ALLOC_NORMAL) |
-		    VM_ALLOC_NOOBJ | VM_ALLOC_WIRED);
+		mpte = pmap_page_alloc(pmap_pde_pindex(va), VM_ALLOC_WIRED |
+		    (in_kernel ? VM_ALLOC_INTERRUPT : VM_ALLOC_NORMAL));
 
 		/*
 		 * If the allocation of the new page table page fails,
@@ -7854,8 +7854,8 @@ pmap_demote_pdpe(pmap_t pmap, pdp_entry_t *pdpe, vm_offset_t va)
 	oldpdpe = *pdpe;
 	KASSERT((oldpdpe & (PG_PS | PG_V)) == (PG_PS | PG_V),
 	    ("pmap_demote_pdpe: oldpdpe is missing PG_PS and/or PG_V"));
-	if ((pdpg = vm_page_alloc(NULL, va >> PDPSHIFT, VM_ALLOC_INTERRUPT |
-	    VM_ALLOC_NOOBJ | VM_ALLOC_WIRED)) == NULL) {
+	if ((pdpg = pmap_page_alloc(va >> PDPSHIFT, VM_ALLOC_INTERRUPT |
+	    VM_ALLOC_WIRED)) == NULL) {
 		CTR2(KTR_PMAP, "pmap_demote_pdpe: failure for va %#lx"
 		    " in pmap %p", va, pmap);
 		return (FALSE);
@@ -8835,13 +8835,9 @@ pmap_quick_remove_page(vm_offset_t addr)
 static vm_page_t
 pmap_large_map_getptp_unlocked(void)
 {
-	vm_page_t m;
 
-	m = vm_page_alloc(NULL, 0, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ |
-	    VM_ALLOC_ZERO);
-	if (m != NULL && (m->flags & PG_ZERO) == 0)
-		pmap_zero_page(m);
-	return (m);
+	return (pmap_page_alloc(0, VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ |
+	    VM_ALLOC_ZERO));
 }
 
 static vm_page_t
