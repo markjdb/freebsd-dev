@@ -471,6 +471,18 @@ pmap_pcid_save_cnt_proc(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_vm_pmap, OID_AUTO, pcid_save_cnt, CTLTYPE_U64 | CTLFLAG_RD |
     CTLFLAG_MPSAFE, NULL, 0, pmap_pcid_save_cnt_proc, "QU",
     "Count of saved TLB context on switch");
+static counter_u64_t pde_invl_elisions = EARLY_COUNTER;
+SYSCTL_COUNTER_U64(_vm_pmap, OID_AUTO, pde_invl_elisions, CTLFLAG_RD,
+    &pde_invl_elisions,
+    "XXX");
+
+static void
+pmap_counter_init(void *arg __unused)
+{
+
+	pde_invl_elisions = counter_u64_alloc(M_WAITOK);
+}
+SYSINIT(pmap_counter_init, SI_SUB_CPU, SI_ORDER_ANY, pmap_counter_init, NULL);
 
 static LIST_HEAD(, pmap_invl_gen) pmap_invl_gen_tracker =
     LIST_HEAD_INITIALIZER(&pmap_invl_gen_tracker);
@@ -1153,8 +1165,8 @@ static void pmap_pti_add_kva_locked(vm_offset_t sva, vm_offset_t eva,
 static pdp_entry_t *pmap_pti_pdpe(vm_offset_t va);
 static pd_entry_t *pmap_pti_pde(vm_offset_t va);
 static void pmap_pti_wire_pte(void *pte);
-static int pmap_remove_pde(pmap_t pmap, pd_entry_t *pdq, vm_offset_t sva,
-    struct spglist *free, struct rwlock **lockp);
+static int pmap_remove_pde(pmap_t pmap, pd_entry_t *pdq, pd_entry_t *oldpdep,
+    vm_offset_t sva, struct spglist *free, struct rwlock **lockp);
 static int pmap_remove_pte(pmap_t pmap, pt_entry_t *ptq, vm_offset_t sva,
     pd_entry_t ptepde, struct spglist *free, struct rwlock **lockp);
 static vm_page_t pmap_remove_pt_page(pmap_t pmap, vm_offset_t va);
@@ -1319,9 +1331,11 @@ pmap_page_alloc(vm_pindex_t pindex, int req)
 	vm_page_t m;
 
 	m = vm_page_alloc(NULL, pindex, req | VM_ALLOC_NOOBJ);
-	if (m != NULL && (req & VM_ALLOC_ZERO) != 0 &&
-	    (m->flags & PG_ZERO) == 0)
-		pmap_zero_page(m);
+	if (m != NULL) {
+		if ((req & VM_ALLOC_ZERO) != 0 && (m->flags & PG_ZERO) == 0)
+			pmap_zero_page(m);
+		m->md.pmap_gen = 0;
+	}
 	return (m);
 }
 
@@ -2526,6 +2540,9 @@ void
 pmap_invalidate_all(pmap_t pmap)
 {
 
+	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
+
+	pmap->pm_invlgen++;
 	if (pmap_type_guest(pmap)) {
 		pmap_invalidate_ept(pmap);
 		return;
@@ -2707,6 +2724,7 @@ pmap_invalidate_all(pmap_t pmap)
 	struct invpcid_descr d;
 	uint64_t kcr3, ucr3;
 
+	pmap->pm_invlgen++;
 	if (pmap->pm_type == PT_RVI || pmap->pm_type == PT_EPT) {
 		pmap->pm_eptgen++;
 		return;
@@ -3216,6 +3234,8 @@ pmap_add_delayed_free_list(vm_page_t m, struct spglist *free,
  * for mapping a distinct range of virtual addresses.  The pmap's collection is
  * ordered by this virtual address range.
  *
+ * XXX
+ *
  * If "promoted" is false, then the page table page "mpte" must be zero filled.
  */
 static __inline int
@@ -3224,6 +3244,7 @@ pmap_insert_pt_page(pmap_t pmap, vm_page_t mpte, bool promoted)
 
 	PMAP_LOCK_ASSERT(pmap, MA_OWNED);
 	mpte->valid = promoted ? VM_PAGE_BITS_ALL : 0;
+	mpte->md.pmap_gen = pmap->pm_invlgen;
 	return (vm_radix_insert(&pmap->pm_root, mpte));
 }
 
@@ -3462,6 +3483,7 @@ pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags)
 	bzero(&pmap->pm_stats, sizeof pmap->pm_stats);
 	pmap->pm_flags = flags;
 	pmap->pm_eptgen = 0;
+	pmap->pm_invlgen = 0; /* XXX should it be 1? */
 
 	return (1);
 }
@@ -4604,7 +4626,7 @@ pmap_demote_pde_abort(pmap_t pmap, vm_offset_t va, pd_entry_t *pde,
 
 	SLIST_INIT(&free);
 	sva = trunc_2mpage(va);
-	pmap_remove_pde(pmap, pde, sva, &free, lockp);
+	pmap_remove_pde(pmap, pde, &oldpde, sva, &free, lockp);
 	if ((oldpde & pmap_global_bit(pmap)) == 0)
 		pmap_invalidate_pde_page(pmap, sva, oldpde);
 	vm_page_free_pages_toq(&free, true);
@@ -4800,8 +4822,8 @@ pmap_remove_kernel_pde(pmap_t pmap, pd_entry_t *pde, vm_offset_t va)
  * pmap_remove_pde: do the things to unmap a superpage in a process
  */
 static int
-pmap_remove_pde(pmap_t pmap, pd_entry_t *pdq, vm_offset_t sva,
-    struct spglist *free, struct rwlock **lockp)
+pmap_remove_pde(pmap_t pmap, pd_entry_t *pdq, pd_entry_t *oldpdep,
+    vm_offset_t sva, struct spglist *free, struct rwlock **lockp)
 {
 	struct md_page *pvh;
 	pd_entry_t oldpde;
@@ -4847,6 +4869,13 @@ pmap_remove_pde(pmap_t pmap, pd_entry_t *pdq, vm_offset_t sva,
 		if (mpte != NULL) {
 			KASSERT(mpte->valid == VM_PAGE_BITS_ALL,
 			    ("pmap_remove_pde: pte page not promoted"));
+			KASSERT(mpte->md.pmap_gen <= pmap->pm_invlgen,
+			    ("pmap_remove_pde: pte page has invalid gen"));
+			if (mpte->md.pmap_gen < pmap->pm_invlgen &&
+			    (oldpde & PG_PROMOTED) != 0) {
+				counter_u64_add(pde_invl_elisions, 1);
+				oldpde &= ~PG_PROMOTED;
+			}
 			pmap_resident_count_dec(pmap, 1);
 			KASSERT(mpte->wire_count == NPTEPG,
 			    ("pmap_remove_pde: pte page wire count error"));
@@ -4854,6 +4883,7 @@ pmap_remove_pde(pmap_t pmap, pd_entry_t *pdq, vm_offset_t sva,
 			pmap_add_delayed_free_list(mpte, free, FALSE);
 		}
 	}
+	*oldpdep = oldpde;
 	return (pmap_unuse_pt(pmap, sva, *pmap_pdpe(pmap, sva), free));
 }
 
@@ -5057,7 +5087,8 @@ pmap_remove(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 				 */
 				if ((ptpaddr & PG_G) == 0)
 					anyvalid = 1;
-				pmap_remove_pde(pmap, pde, sva, &free, &lock);
+				pmap_remove_pde(pmap, pde, &ptpaddr, sva, &free,
+				    &lock);
 				continue;
 			} else if (!pmap_demote_pde_locked(pmap, pde, sva,
 			    &lock)) {
@@ -5895,7 +5926,8 @@ pmap_enter_pde(pmap_t pmap, vm_offset_t va, pd_entry_t newpde, u_int flags,
 			 * However, if the PDE resulted from a promotion, then
 			 * a reserved PT page could be freed.
 			 */
-			(void)pmap_remove_pde(pmap, pde, va, &free, lockp);
+			(void)pmap_remove_pde(pmap, pde, &oldpde, va, &free,
+			    lockp);
 			if ((oldpde & PG_G) == 0)
 				pmap_invalidate_pde_page(pmap, va, oldpde);
 		} else {
