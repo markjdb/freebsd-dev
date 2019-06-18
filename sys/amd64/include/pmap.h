@@ -307,18 +307,12 @@ struct	pv_chunk;
 
 /*
  * Locks
- * (p) pmap lock
- * (v) PV list lock
+ * (p) PV list lock
  */
 struct md_page {
-	union {
-		struct {
-			TAILQ_HEAD(, pv_entry)	pv_list;  /* (v) */
-			int			pv_gen;   /* (v) */
-		};
-		u_long	pmap_gen;	/* (p) */
-	};
-	int		pat_mode;
+	TAILQ_HEAD(, pv_entry)	pv_list;  /* (p) */
+	int			pv_gen;   /* (p) */
+	int			pat_mode;
 };
 
 enum pmap_type {
@@ -348,7 +342,6 @@ struct pmap {
 	struct pmap_statistics	pm_stats;	/* pmap statistics */
 	struct vm_radix		pm_root;	/* spare page table pages */
 	long			pm_eptgen;	/* EPT pmap generation id */
-	u_long			pm_invlgen;	/* XXX */ 
 	int			pm_flags;
 	struct pmap_pcids	pm_pcids[MAXCPU];
 	struct rangeset		pm_pkru;
