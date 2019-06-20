@@ -129,6 +129,7 @@ struct tnode {
 
 	uint64_t		gen;
 	bool			canonical;
+	struct tnode		*ref;
 
 	SLIST_HEAD(, tnode)	crefs;
 	SLIST_HEAD(, tnode)	refs;
@@ -198,12 +199,12 @@ doffmap_add_ref(struct doffmap *dmap, struct tnode *t, uint64_t id)
 }
 
 static struct tnode *
-doffmap_find(struct doffmap *m, uint64_t id)
+doffmap_find(struct doffmap *dmap, uint64_t id)
 {
 	struct doff *d, key;
 
 	key.d_off = id;
-	d = RB_FIND(doffmap, m, &key);
+	d = RB_FIND(doffmap, dmap, &key);
 	return (d != NULL ? d->d_ref : NULL);
 }
 
@@ -231,6 +232,7 @@ tnode_alloc(struct ctf_convert_cu *cu, uint64_t id, const char *name,
 	t->canonical = false;
 	t->cu = cu;
 	t->gen = 0;
+	t->ref = NULL;
 	SLIST_INIT(&t->crefs);
 	SLIST_INIT(&t->refs);
 
@@ -302,10 +304,9 @@ tnode_ref_equiv(struct ctf_imtype *t1, struct ctf_imtype *t2)
 	if (t1->t_kind != t2->t_kind)
 		return (false);
 
-	switch (t1->t_kind) {
+	switch (t2->t_kind) {
 	case CTF_K_ARRAY:
-		return (t1->t_array.tindex == t2->t_array.tindex &&
-		    t1->t_array.count == t2->t_array.count);
+		return (t1->t_array.count == t2->t_array.count);
 	case CTF_K_CONST:
 	case CTF_K_POINTER:
 	case CTF_K_RESTRICT:
@@ -335,6 +336,7 @@ tnode_find_or_add_ref(struct ctf_convert_cu *cu, struct ctf_imtype *search,
 		t = tnode_alloc(cu, search->t_id, NULL, search->t_kind);
 		tnode_ref_copy(&t->t, search);
 		if (target != NULL) {
+			t->ref = target;
 			if (target->canonical) {
 				SLIST_INSERT_HEAD(&target->crefs, t, reflink);
 				t->canonical = true;
@@ -397,6 +399,7 @@ tnode_from_array_type(struct ctf_convert_cu *cu, Dwarf_Die die)
 
 	toff = die_type(die);
 
+	search.t_name = 0;
 	search.t_id = die_dieoffset(die);
 	search.t_kind = CTF_K_ARRAY;
 	search.t_array.tref = toff;
@@ -729,9 +732,11 @@ tnode_equiv(struct ctf_convert *cvt, struct tnode *t1, struct tnode *t2)
 	case CTF_K_POINTER:
 	case CTF_K_RESTRICT:
 	case CTF_K_VOLATILE:
+#if 0
 		n1 = doffmap_find(&t1->cu->dmap, t1->t.t_ref.ref);
 		n2 = doffmap_find(&t2->cu->dmap, t2->t.t_ref.ref);
-		return (tnode_equiv(cvt, n1, n2));
+#endif
+		return (tnode_equiv(cvt, t1->ref, t2->ref));
 	case CTF_K_FUNCTION:
 		l1 = &t1->t.t_func.params;
 		l2 = &t2->t.t_func.params;
@@ -750,6 +755,11 @@ tnode_equiv(struct ctf_convert *cvt, struct tnode *t1, struct tnode *t2)
 		else
 			return (false);
 	}
+
+	if (kind == CTF_K_FUNCTION &&
+	    (t1->t.t_func.variadic ^ t2->t.t_func.variadic) != 0)
+		return (false);
+
 	for (i = 0; i < l1->el_count; i++) {
 		e1 = &l1->el_list[i];
 		e2 = &l2->el_list[i];
@@ -815,7 +825,7 @@ tnode_remap_refs(struct tnode *cref, struct tnode *ref)
 
 	while ((t = SLIST_FIRST(&ref->refs)) != NULL) {
 		SLIST_REMOVE_HEAD(&ref->refs, reflink);
-//		t->t.t_ref.ref = cref->t.t_id;
+		t->ref = cref;
 		tnode_canonicalize_or_discard(cref, t);
 	}
 }
@@ -831,6 +841,7 @@ ctf_convert_resolve_refs(struct ctf_convert_cu *cu)
 		t = doffmap_find(&cu->dmap, ref->t.t_ref.ref);
 		assert(t != NULL);
 
+		ref->ref = t;
 		if (t->canonical)
 			tnode_canonicalize_or_discard(t, ref);
 		else
@@ -1007,8 +1018,12 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 	voidt->t.t_id = 0;
 	voidt->t.t_kind = CTF_K_INTEGER;
 	voidt->t.t_integer.enc = 0;
+
 	voidt->canonical = true;
 	voidt->cu = NULL;
+	voidt->gen = 0;
+	SLIST_INIT(&voidt->crefs);
+	SLIST_INIT(&voidt->refs);
 
 	error = dwarf_init(fd, DW_DLC_READ, NULL, NULL, &dbg, NULL);
 	assert(error == DW_DLV_OK); /* XXX */
@@ -1040,7 +1055,8 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 			t->canonical = true;
 			/* XXX why do we do this here? */
 			tnode_canonicalize_refs(t);
-			count++;
+			if (t->t.t_name)
+				count++;
 
 			LIST_FOREACH_SAFE(t1, l, hashlink, tmp) {
 				if (tnode_equiv(&cvt, t, t1)) {
