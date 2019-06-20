@@ -37,6 +37,7 @@ typedef struct _Ctf Ctf;
 
 enum Ctf_Error {
 	CTF_E_ARGUMENT,
+	CTF_E_FULL,
 	CTF_E_IO,
 	CTF_E_RESOURCE,
 	CTF_E_VERSION,
@@ -89,6 +90,8 @@ ctf_id_t	ctf_type_resolve(Ctf *_ctf, ctf_id_t _id);
 int		ctf_update(Ctf *_ctf);
 int		ctf_version(int _version);
 int		ctf_write(Ctf *_ctf, int _fd);
+
+Ctf		*ctf_convert_dwarf(int, void (*)(const char *));
 
 #ifdef __cplusplus
 }

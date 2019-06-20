@@ -340,7 +340,7 @@ _DP_lzma=	pthread
 _DP_ucl=	m
 _DP_vmmapi=	util
 _DP_opencsd=	cxxrt
-_DP_ctf=	z
+_DP_ctf=	dwarf z
 _DP_dtrace=	ctf elf proc pthread rtld_db
 _DP_xo=		util
 # The libc dependencies are not strictly needed but are defined to make the
@@ -539,7 +539,6 @@ LIBC_NOSSP_PIC?=	${LIBC_NOSSP_PICDIR}/libc_nossp_pic.a
 # not using a --sysroot or for meta mode bootstrapping when there is no
 # Makefile.depend.  These are sorted by directory.
 LIBAVLDIR=	${OBJTOP}/cddl/lib/libavl
-LIBCTFDIR=	${OBJTOP}/cddl/lib/libctf
 LIBDTRACEDIR=	${OBJTOP}/cddl/lib/libdtrace
 LIBNVPAIRDIR=	${OBJTOP}/cddl/lib/libnvpair
 LIBUMEMDIR=	${OBJTOP}/cddl/lib/libumem
