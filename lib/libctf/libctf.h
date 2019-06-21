@@ -36,6 +36,7 @@ typedef long ctf_id_t;
 typedef struct _Ctf Ctf;
 
 enum Ctf_Error {
+	CTF_E_NONE,
 	CTF_E_ARGUMENT,
 	CTF_E_FULL,
 	CTF_E_IO,

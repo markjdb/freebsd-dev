@@ -11,6 +11,8 @@ SRCS=	ctf_add.c	\
 	ctf_model.c	\
 	ctf_open.c	\
 	ctf_specific.c	\
+	libctf_add.c	\
+	libctf_create.c	\
 	libctf_dwarf.c
 
 .PATH: ${SRCTOP}/contrib/elftoolchain/libelftc

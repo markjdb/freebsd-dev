@@ -156,7 +156,6 @@ RB_GENERATE_STATIC(doffmap, doff, d_link, doff_cmp);
 struct ctf_convert {
 	Ctf		*ctf;		/* dst CTF container */
 	Dwarf_Debug	dbg;		/* input debug info */
-	Elftc_String_Table *strtab;	/* CTF string table */
 
 	uint64_t	currgen;
 	uint64_t	gen;
@@ -165,8 +164,9 @@ struct ctf_convert {
 	struct tnode_list basehash[1024];
 	struct tnode_list enumhash[1024];
 	struct tnode_list structhash[1024];
-	struct tnode_list typedefhash[1024];
+	struct tnode_list structanonhash[1024];
 	struct tnode_list unionhash[1024];
+	struct tnode_list unionanonhash[1024];
 
 	void		(*errcb)(const char *); /* error callback */
 };
@@ -180,9 +180,8 @@ struct ctf_convert_cu {
 static void	ctf_convert_dwarf_die(struct ctf_convert_cu *, Dwarf_Die);
 static size_t	ctf_convert_str_insert(struct ctf_convert *, const char *);
 
-static void	tnode_canonicalize_or_discard(struct tnode *, struct tnode *);
 static void	tnode_canonicalize_refs(struct tnode *);
-static const char *tnode_name(struct tnode *);
+static void	tnode_dedup_ref(struct tnode *, struct tnode *);
 static void	tnode_remap_refs(struct tnode *, struct tnode *);
 
 static void
@@ -275,15 +274,6 @@ tnode_free(struct tnode *t)
 	free(t);
 }
 
-static const char * __unused
-tnode_name(struct tnode *t)
-{
-
-	if (t->t.t_name == 0)
-		return (NULL);
-	return (elftc_string_table_to_string(t->cu->cvt->strtab, t->t.t_name));
-}
-
 static void
 tnode_ref_copy(struct ctf_imtype *dst, struct ctf_imtype *src)
 {
@@ -333,9 +323,6 @@ tnode_find_or_add_ref(struct ctf_convert_cu *cu, struct ctf_imtype *search,
     Dwarf_Off toff)
 {
 	struct tnode *t, *target;
-#if 0
-	unsigned int hash;
-#endif
 
 	t = NULL;
 	target = doffmap_find(cu, toff);
@@ -358,14 +345,6 @@ tnode_find_or_add_ref(struct ctf_convert_cu *cu, struct ctf_imtype *search,
 		} else {
 			SLIST_INSERT_HEAD(&cu->dangling, t, reflink);
 		}
-#if 0
-		if (t->t.t_name != 0) {
-			hash = strhash(tnode_name(t));
-			assert(t->t.t_kind == CTF_K_TYPEDEF);
-			LIST_INSERT_HEAD(&cu->cvt->typedefhash[hash & 1023],
-			    t, hashlink);
-		}
-#endif
 	}
 	return (t);
 }
@@ -508,6 +487,12 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 	child = die_child(die);
 	if (child == NULL)
 		goto done;
+	if (tname != NULL)
+		hash = strhash(tname);
+	else if ((name = die_name(child)) != NULL)
+		hash = strhash(name);
+	else
+		hash = 0; /* XXX */
 	child1 = NULL;
 	do {
 		if (child1 != NULL) {
@@ -538,15 +523,19 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 	assert(error == DW_DLV_NO_ENTRY);
 	dwarf_dealloc(dbg, child, DW_DLA_DIE);
 
-done:
 	if (tname != NULL) {
-		hash = strhash(tname);
 		if (kind == CTF_K_STRUCT)
 			l = &cu->cvt->structhash[hash & 1023];
 		else
 			l = &cu->cvt->unionhash[hash & 1023];
-		LIST_INSERT_HEAD(l, t, hashlink);
+	} else {
+		if (kind == CTF_K_STRUCT)
+			l = &cu->cvt->structanonhash[hash & 1023];
+		else
+			l = &cu->cvt->unionanonhash[hash & 1023];
 	}
+	LIST_INSERT_HEAD(l, t, hashlink);
+done:
 	return (t);
 }
 
@@ -621,6 +610,7 @@ tnode_from_enumeration_type(struct ctf_convert_cu *cu, Dwarf_Die die)
 	}
 
 	if (s != NULL) {
+		t->t.t_name = 0;
 		tnode_free(t);
 		t = s;
 	} else {
@@ -697,6 +687,64 @@ tnode_from_typedef(struct ctf_convert_cu *cu, Dwarf_Die die)
 	search.t_kind = CTF_K_TYPEDEF;
 	search.t_ref.ref = toff;
 	return (tnode_find_or_add_ref(cu, &search, toff));
+}
+
+static void
+tnode_canonicalize(struct tnode *t)
+{
+
+	assert(!t->canonical);
+	t->canonical = true;
+	tnode_canonicalize_refs(t);
+}
+
+static void
+tnode_dedup_ref(struct tnode *t, struct tnode *ref)
+{
+	struct tnode *cref;
+
+	assert(t->canonical);
+	assert(!ref->canonical);
+
+	SLIST_FOREACH(cref, &t->crefs, reflink)
+		if (tnode_ref_equiv(&cref->t, &ref->t))
+			break;
+	if (cref != NULL) {
+		doffmap_remap(cref, ref);
+		tnode_remap_refs(cref, ref);
+		tnode_free(ref);
+	} else {
+		tnode_canonicalize(ref);
+		SLIST_INSERT_HEAD(&t->crefs, ref, reflink);
+	}
+}
+
+static void
+tnode_canonicalize_refs(struct tnode *t)
+{
+	struct tnode *ref;
+
+	assert(t->canonical);
+
+	while ((ref = SLIST_FIRST(&t->refs)) != NULL) {
+		SLIST_REMOVE_HEAD(&t->refs, reflink);
+		tnode_dedup_ref(t, ref);
+	}
+}
+
+static void
+tnode_remap_refs(struct tnode *cref, struct tnode *ref)
+{
+	struct tnode *t;
+
+	assert(cref->canonical);
+	assert(!ref->canonical);
+
+	while ((t = SLIST_FIRST(&ref->refs)) != NULL) {
+		SLIST_REMOVE_HEAD(&ref->refs, reflink);
+		t->ref = cref;
+		tnode_dedup_ref(cref, t);
+	}
 }
 
 /* XXX this is not as general as its name implies */
@@ -788,55 +836,37 @@ tnode_equiv(struct ctf_convert *cvt, struct tnode *t1, struct tnode *t2)
 	return (true);
 }
 
-static void
-tnode_canonicalize_or_discard(struct tnode *t, struct tnode *ref)
+static size_t
+ctf_convert_str_insert(struct ctf_convert *cu, const char *name)
 {
-	struct tnode *cref;
+	size_t off;
 
-	assert(t->canonical);
-	assert(!ref->canonical);
-
-	SLIST_FOREACH(cref, &t->crefs, reflink) {
-		if (tnode_ref_equiv(&cref->t, &ref->t))
-			break;
-	}
-	if (cref != NULL) {
-		doffmap_remap(cref, ref);
-		tnode_remap_refs(cref, ref);
-		tnode_free(ref);
-	} else {
-		ref->canonical = true;
-		assert(ref->t.t_kind != CTF_K_STRUCT);
-		tnode_canonicalize_refs(ref);
-		SLIST_INSERT_HEAD(&t->crefs, ref, reflink);
-	}
+	if (name == NULL)
+		return (0);
+	off = elftc_string_table_insert(cu->ctf->ctf_strtab, name);
+	assert(off != 0); /* XXX */
+	return (off);
 }
 
 static void
-tnode_canonicalize_refs(struct tnode *t)
+ctf_convert_dedup_list(struct ctf_convert *cvt, struct tnode_list *l)
 {
-	struct tnode *ref;
+	struct tnode *s, *t, *tmp;
 
-	assert(t->canonical);
+	while ((t = LIST_FIRST(l)) != NULL) {
+		LIST_REMOVE(t, hashlink);
+		tnode_canonicalize(t);
 
-	while ((ref = SLIST_FIRST(&t->refs)) != NULL) {
-		SLIST_REMOVE_HEAD(&t->refs, reflink);
-		tnode_canonicalize_or_discard(t, ref);
-	}
-}
-
-static void
-tnode_remap_refs(struct tnode *cref, struct tnode *ref)
-{
-	struct tnode *t;
-
-	assert(cref->canonical);
-	assert(!ref->canonical);
-
-	while ((t = SLIST_FIRST(&ref->refs)) != NULL) {
-		SLIST_REMOVE_HEAD(&ref->refs, reflink);
-		t->ref = cref;
-		tnode_canonicalize_or_discard(cref, t);
+		LIST_FOREACH_SAFE(s, l, hashlink, tmp) {
+			assert(!s->canonical);
+			if (tnode_equiv(cvt, t, s)) {
+				LIST_REMOVE(s, hashlink);
+				doffmap_remap(t, s);
+				tnode_remap_refs(t, s);
+				tnode_free(s);
+			}
+			cvt->gen = cvt->currgen + 1;
+		}
 	}
 }
 
@@ -848,27 +878,12 @@ ctf_convert_resolve_refs(struct ctf_convert_cu *cu)
 	while ((ref = SLIST_FIRST(&cu->dangling)) != NULL) {
 		SLIST_REMOVE_HEAD(&cu->dangling, reflink);
 
-		t = doffmap_find(cu, ref->t.t_ref.ref);
-		assert(t != NULL);
-
-		ref->ref = t;
+		ref->ref = t = doffmap_find(cu, ref->t.t_ref.ref);
 		if (t->canonical)
-			tnode_canonicalize_or_discard(t, ref);
+			tnode_dedup_ref(t, ref);
 		else
 			SLIST_INSERT_HEAD(&t->refs, ref, reflink);
 	}
-}
-
-static size_t
-ctf_convert_str_insert(struct ctf_convert *cu, const char *name)
-{
-	size_t off;
-
-	if (name == NULL)
-		return (0);
-	off = elftc_string_table_insert(cu->strtab, name);
-	assert(off != 0); /* XXX */
-	return (off);
 }
 
 static void
@@ -986,13 +1001,15 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 	Dwarf_Debug dbg;
 	Dwarf_Die cu;
 	struct ctf_convert cvt;
-	struct tnode *t, *t1, *tmp, *voidt;
-	struct tnode_list *l;
+	struct tnode *t, *voidt;
 	Ctf *ctf;
 	size_t i;
 	int error;
 
-	ctf = calloc(1, sizeof(*ctf));
+	/*
+	 * Use an initial string table size of 1MB.
+	 */
+	ctf = libctf_create(1024 * 1024, NULL);
 	assert(ctf != NULL); /* XXX */
 	cvt.ctf = ctf;
 
@@ -1002,16 +1019,12 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 		LIST_INIT(&cvt.enumhash[i]);
 	for (i = 0; i < nitems(cvt.structhash); i++)
 		LIST_INIT(&cvt.structhash[i]);
-	for (i = 0; i < nitems(cvt.typedefhash); i++)
-		LIST_INIT(&cvt.typedefhash[i]);
+	for (i = 0; i < nitems(cvt.structhash); i++)
+		LIST_INIT(&cvt.structhash[i]);
 	for (i = 0; i < nitems(cvt.unionhash); i++)
 		LIST_INIT(&cvt.unionhash[i]);
-
-	/*
-	 * Use an initial string table size of 1MB.
-	 */
-	cvt.strtab = elftc_string_table_create(1024 * 1024);
-	assert(cvt.strtab != NULL); /* XXX */
+	for (i = 0; i < nitems(cvt.unionanonhash); i++)
+		LIST_INIT(&cvt.unionanonhash[i]);
 
 	/*
 	 * Synthesize a "void" type.
@@ -1049,45 +1062,21 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 
 	cvt.gen = cvt.currgen = 1;
 
-	for (i = 0; i < nitems(cvt.structhash); i++) {
-		l = &cvt.structhash[i];
-		while ((t = LIST_FIRST(l)) != NULL) {
-			LIST_REMOVE(t, hashlink);
-			t->canonical = true;
-			tnode_canonicalize_refs(t);
+	for (i = 0; i < nitems(cvt.structhash); i++)
+		ctf_convert_dedup_list(&cvt, &cvt.structhash[i]);
+	for (i = 0; i < nitems(cvt.unionhash); i++)
+		ctf_convert_dedup_list(&cvt, &cvt.unionhash[i]);
+	for (i = 0; i < nitems(cvt.structanonhash); i++)
+		ctf_convert_dedup_list(&cvt, &cvt.structanonhash[i]);
+	for (i = 0; i < nitems(cvt.unionanonhash); i++)
+		ctf_convert_dedup_list(&cvt, &cvt.unionanonhash[i]);
 
-			LIST_FOREACH_SAFE(t1, l, hashlink, tmp) {
-				assert(!t1->canonical);
-				if (tnode_equiv(&cvt, t, t1)) {
-					LIST_REMOVE(t1, hashlink);
-					doffmap_remap(t, t1);
-					tnode_remap_refs(t, t1);
-					tnode_free(t1);
-				}
-				cvt.gen = cvt.currgen + 1;
-			}
-		}
-	}
-
-	for (i = 0; i < nitems(cvt.unionhash); i++) {
-		l = &cvt.unionhash[i];
-		while ((t = LIST_FIRST(l)) != NULL) {
-			LIST_REMOVE(t, hashlink);
-			t->canonical = true;
-			tnode_canonicalize_refs(t);
-
-			LIST_FOREACH_SAFE(t1, l, hashlink, tmp) {
-				assert(!t1->canonical);
-				if (tnode_equiv(&cvt, t, t1)) {
-					LIST_REMOVE(t1, hashlink);
-					doffmap_remap(t, t1);
-					tnode_remap_refs(t, t1);
-					tnode_free(t1);
-				}
-				cvt.gen = cvt.currgen + 1;
-			}
-		}
-	}
+	for (i = 0; i < nitems(cvt.basehash); i++)
+		LIST_FOREACH(t, &cvt.basehash[i], hashlink)
+			libctf_add_type(ctf, &t->t);
+	for (i = 0; i < nitems(cvt.enumhash); i++)
+		LIST_FOREACH(t, &cvt.enumhash[i], hashlink)
+			libctf_add_type(ctf, &t->t);
 
 	return (ctf);
 }
