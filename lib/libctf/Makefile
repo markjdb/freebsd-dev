@@ -15,14 +15,16 @@ SRCS=	ctf_add.c	\
 
 .PATH: ${SRCTOP}/contrib/elftoolchain/libelftc
 
-#CFLAGS+= -O0
-
 SRCS+=	elftc_string_table.c libelftc_hash.c
 CFLAGS+= -I${SRCTOP}/contrib/elftoolchain/common
 
 INCS=	libctf.h
 
+#CFLAGS+= -O0
+#CFLAGS+= -fno-inline
+
 LIBADD+= dwarf z
+#LDADD+= -L/usr/local/lib -ltcmalloc
 
 SHLIB_MAJOR=	1
 

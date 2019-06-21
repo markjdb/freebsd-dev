@@ -110,13 +110,10 @@ static Dwarf_Off
 die_type(Dwarf_Die die)
 {
 	Dwarf_Attribute attr;
-	Dwarf_Half form;
 	Dwarf_Off off;
 	int error;
 
 	error = dwarf_attr(die, DW_AT_type, &attr, NULL);
-	assert(error == DW_DLV_OK);
-	error = dwarf_whatform(attr, &form, NULL);
 	assert(error == DW_DLV_OK);
 	error = dwarf_global_formref(attr, &off, NULL);
 	assert(error == DW_DLV_OK);
@@ -168,6 +165,7 @@ struct ctf_convert {
 	struct tnode_list basehash[1024];
 	struct tnode_list enumhash[1024];
 	struct tnode_list structhash[1024];
+	struct tnode_list typedefhash[1024];
 	struct tnode_list unionhash[1024];
 
 	void		(*errcb)(const char *); /* error callback */
@@ -181,10 +179,10 @@ struct ctf_convert_cu {
 
 static void	ctf_convert_dwarf_die(struct ctf_convert_cu *, Dwarf_Die);
 static size_t	ctf_convert_str_insert(struct ctf_convert *, const char *);
-static const char *ctf_convert_str_lookup(struct ctf_convert *cu, size_t off);
 
 static void	tnode_canonicalize_or_discard(struct tnode *, struct tnode *);
 static void	tnode_canonicalize_refs(struct tnode *);
+static const char *tnode_name(struct tnode *);
 static void	tnode_remap_refs(struct tnode *, struct tnode *);
 
 static void
@@ -199,12 +197,14 @@ doffmap_add_ref(struct doffmap *dmap, struct tnode *t, uint64_t id)
 }
 
 static struct tnode *
-doffmap_find(struct doffmap *dmap, uint64_t id)
+doffmap_find(struct ctf_convert_cu *cu, uint64_t id)
 {
 	struct doff *d, key;
 
+	if (id == 0)
+		return (&cu->cvt->voidtype);
 	key.d_off = id;
-	d = RB_FIND(doffmap, dmap, &key);
+	d = RB_FIND(doffmap, &cu->dmap, &key);
 	return (d != NULL ? d->d_ref : NULL);
 }
 
@@ -275,6 +275,15 @@ tnode_free(struct tnode *t)
 	free(t);
 }
 
+static const char * __unused
+tnode_name(struct tnode *t)
+{
+
+	if (t->t.t_name == 0)
+		return (NULL);
+	return (elftc_string_table_to_string(t->cu->cvt->strtab, t->t.t_name));
+}
+
 static void
 tnode_ref_copy(struct ctf_imtype *dst, struct ctf_imtype *src)
 {
@@ -284,7 +293,7 @@ tnode_ref_copy(struct ctf_imtype *dst, struct ctf_imtype *src)
 		dst->t_array = src->t_array;
 		break;
 	case CTF_K_TYPEDEF:
-		dst->t_name = src->t_name; /* XXX put this field in the union */
+		dst->t_name = src->t_name;
 		/* FALLTHROUGH */
 	case CTF_K_CONST:
 	case CTF_K_POINTER:
@@ -324,9 +333,12 @@ tnode_find_or_add_ref(struct ctf_convert_cu *cu, struct ctf_imtype *search,
     Dwarf_Off toff)
 {
 	struct tnode *t, *target;
+#if 0
+	unsigned int hash;
+#endif
 
 	t = NULL;
-	target = doffmap_find(&cu->dmap, toff);
+	target = doffmap_find(cu, toff);
 	if (target != NULL && target->canonical) {
 		SLIST_FOREACH(t, &target->crefs, reflink)
 			if (tnode_ref_equiv(&t->t, search))
@@ -346,6 +358,14 @@ tnode_find_or_add_ref(struct ctf_convert_cu *cu, struct ctf_imtype *search,
 		} else {
 			SLIST_INSERT_HEAD(&cu->dangling, t, reflink);
 		}
+#if 0
+		if (t->t.t_name != 0) {
+			hash = strhash(tnode_name(t));
+			assert(t->t.t_kind == CTF_K_TYPEDEF);
+			LIST_INSERT_HEAD(&cu->cvt->typedefhash[hash & 1023],
+			    t, hashlink);
+		}
+#endif
 	}
 	return (t);
 }
@@ -474,34 +494,20 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 	struct ctf_imtelem e;
 	struct tnode *t;
 	struct tnode_list *l;
-	const char *name;
+	const char *name, *tname;
 	unsigned int hash;
 	int error;
 
 	assert(kind == CTF_K_STRUCT || kind == CTF_K_UNION);
 
 	dbg = cu->cvt->dbg;
-	name = die_name(die);
+	tname = die_name(die);
 
-	t = tnode_alloc(cu, die_dieoffset(die), name, kind);
+	t = tnode_alloc(cu, die_dieoffset(die), tname, kind);
 
 	child = die_child(die);
-	if (name != NULL) {
-		hash = strhash(name);
-		if (child == NULL)
-			goto done;
-	} else if (child != NULL) {
-		/* XXX this is wrong we should recurse. */
-		name = die_name(child);
-		if (name != NULL)
-			hash = strhash(name);
-		else
-			hash = 0;
-	} else {
-		hash = 0;
+	if (child == NULL)
 		goto done;
-	}
-
 	child1 = NULL;
 	do {
 		if (child1 != NULL) {
@@ -533,11 +539,14 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 	dwarf_dealloc(dbg, child, DW_DLA_DIE);
 
 done:
-	if (kind == CTF_K_STRUCT)
-		l = &cu->cvt->structhash[hash & 1023];
-	else
-		l = &cu->cvt->unionhash[hash & 1023];
-	LIST_INSERT_HEAD(l, t, hashlink);
+	if (tname != NULL) {
+		hash = strhash(tname);
+		if (kind == CTF_K_STRUCT)
+			l = &cu->cvt->structhash[hash & 1023];
+		else
+			l = &cu->cvt->unionhash[hash & 1023];
+		LIST_INSERT_HEAD(l, t, hashlink);
+	}
 	return (t);
 }
 
@@ -645,6 +654,7 @@ tnode_from_subroutine_type(struct ctf_convert_cu *cu, Dwarf_Die die)
 			child = child1;
 		}
 
+		assert(!t->t.t_func.variadic);
 		switch (die_tag(child)) {
 		case DW_TAG_formal_parameter:
 			e.e_name = 0;
@@ -653,7 +663,6 @@ tnode_from_subroutine_type(struct ctf_convert_cu *cu, Dwarf_Die die)
 			ctf_imtelem_list_add(&t->t.t_func.params, &e);
 			break;
 		case DW_TAG_unspecified_parameters:
-			assert(!t->t.t_func.variadic);
 			t->t.t_func.variadic = true;
 			break;
 		default:
@@ -732,10 +741,6 @@ tnode_equiv(struct ctf_convert *cvt, struct tnode *t1, struct tnode *t2)
 	case CTF_K_POINTER:
 	case CTF_K_RESTRICT:
 	case CTF_K_VOLATILE:
-#if 0
-		n1 = doffmap_find(&t1->cu->dmap, t1->t.t_ref.ref);
-		n2 = doffmap_find(&t2->cu->dmap, t2->t.t_ref.ref);
-#endif
 		return (tnode_equiv(cvt, t1->ref, t2->ref));
 	case CTF_K_FUNCTION:
 		l1 = &t1->t.t_func.params;
@@ -746,6 +751,8 @@ tnode_equiv(struct ctf_convert *cvt, struct tnode *t1, struct tnode *t2)
 		l1 = &t1->t.t_sou.members;
 		l2 = &t2->t.t_sou.members;
 		break;
+	default:
+		errx(1, "unhandled CTF kind %d", kind);
 	}
 
 	if (l1->el_count != l2->el_count) {
@@ -770,10 +777,12 @@ tnode_equiv(struct ctf_convert *cvt, struct tnode *t1, struct tnode *t2)
 		    e1->e_off != e2->e_off)
 			return (false);
 
-		n1 = doffmap_find(&t1->cu->dmap, e1->e_type);
-		n2 = doffmap_find(&t2->cu->dmap, e2->e_type);
-		if (!tnode_equiv(cvt, n1, n2))
-			return (false);
+		if (e1->e_type != e2->e_type) {
+			n1 = doffmap_find(t1->cu, e1->e_type);
+			n2 = doffmap_find(t2->cu, e2->e_type);
+			if (!tnode_equiv(cvt, n1, n2))
+				return (false);
+		}
 	}
 
 	return (true);
@@ -797,6 +806,7 @@ tnode_canonicalize_or_discard(struct tnode *t, struct tnode *ref)
 		tnode_free(ref);
 	} else {
 		ref->canonical = true;
+		assert(ref->t.t_kind != CTF_K_STRUCT);
 		tnode_canonicalize_refs(ref);
 		SLIST_INSERT_HEAD(&t->crefs, ref, reflink);
 	}
@@ -838,7 +848,7 @@ ctf_convert_resolve_refs(struct ctf_convert_cu *cu)
 	while ((ref = SLIST_FIRST(&cu->dangling)) != NULL) {
 		SLIST_REMOVE_HEAD(&cu->dangling, reflink);
 
-		t = doffmap_find(&cu->dmap, ref->t.t_ref.ref);
+		t = doffmap_find(cu, ref->t.t_ref.ref);
 		assert(t != NULL);
 
 		ref->ref = t;
@@ -859,13 +869,6 @@ ctf_convert_str_insert(struct ctf_convert *cu, const char *name)
 	off = elftc_string_table_insert(cu->strtab, name);
 	assert(off != 0); /* XXX */
 	return (off);
-}
-
-static const char * __unused
-ctf_convert_str_lookup(struct ctf_convert *cu, size_t off)
-{
-
-	return (elftc_string_table_to_string(cu->strtab, off));
 }
 
 static void
@@ -958,8 +961,6 @@ ctf_convert_dwarf_cu(struct ctf_convert *cvt, Dwarf_Die cu)
 	RB_INIT(&cucvt->dmap);
 	SLIST_INIT(&cucvt->dangling);
 
-	doffmap_add_ref(&cucvt->dmap, &cvt->voidtype, cvt->voidtype.t.t_id);
-
 	dbg = cvt->dbg;
 	die = die_child(cu);
 	assert(die != NULL);
@@ -1001,6 +1002,8 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 		LIST_INIT(&cvt.enumhash[i]);
 	for (i = 0; i < nitems(cvt.structhash); i++)
 		LIST_INIT(&cvt.structhash[i]);
+	for (i = 0; i < nitems(cvt.typedefhash); i++)
+		LIST_INIT(&cvt.typedefhash[i]);
 	for (i = 0; i < nitems(cvt.unionhash); i++)
 		LIST_INIT(&cvt.unionhash[i]);
 
@@ -1046,19 +1049,15 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 
 	cvt.gen = cvt.currgen = 1;
 
-	int count = 0;
 	for (i = 0; i < nitems(cvt.structhash); i++) {
 		l = &cvt.structhash[i];
 		while ((t = LIST_FIRST(l)) != NULL) {
 			LIST_REMOVE(t, hashlink);
-			assert(!t->canonical);
 			t->canonical = true;
-			/* XXX why do we do this here? */
 			tnode_canonicalize_refs(t);
-			if (t->t.t_name)
-				count++;
 
 			LIST_FOREACH_SAFE(t1, l, hashlink, tmp) {
+				assert(!t1->canonical);
 				if (tnode_equiv(&cvt, t, t1)) {
 					LIST_REMOVE(t1, hashlink);
 					doffmap_remap(t, t1);
@@ -1070,7 +1069,25 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 		}
 	}
 
-	printf("found %d structures\n", count);
+	for (i = 0; i < nitems(cvt.unionhash); i++) {
+		l = &cvt.unionhash[i];
+		while ((t = LIST_FIRST(l)) != NULL) {
+			LIST_REMOVE(t, hashlink);
+			t->canonical = true;
+			tnode_canonicalize_refs(t);
+
+			LIST_FOREACH_SAFE(t1, l, hashlink, tmp) {
+				assert(!t1->canonical);
+				if (tnode_equiv(&cvt, t, t1)) {
+					LIST_REMOVE(t1, hashlink);
+					doffmap_remap(t, t1);
+					tnode_remap_refs(t, t1);
+					tnode_free(t1);
+				}
+				cvt.gen = cvt.currgen + 1;
+			}
+		}
+	}
 
 	return (ctf);
 }
