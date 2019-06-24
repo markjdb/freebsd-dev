@@ -1,3 +1,30 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
+ * Copyright (c) 2019 Mark Johnston <markj@FreeBSD.org>
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
 #ifndef __LIBCTF_H_
 #define	__LIBCTF_H_
 
@@ -41,7 +68,7 @@ struct ctf_imtelem {
 	uint64_t	e_type; /* func, struct, union */
 	union {
 		int	e_val;	/* enum */
-		int	e_off;	/* struct, union */
+		uint64_t e_off;	/* struct, union */
 	};
 };
 
@@ -60,12 +87,6 @@ struct ctf_imtype {
 
 	union {
 		struct {
-			uint64_t	tref;
-			uint64_t	tindex;
-			int		count;
-		} t_array;
-
-		struct {
 			struct ctf_imtelem_list vals;
 		} t_enum;
 
@@ -76,16 +97,21 @@ struct ctf_imtype {
 
 		struct {
 			uint32_t	enc;
-		} t_integer; /* XXX should be t_num */
+		} t_num;
 
 		struct {
 			struct ctf_imtelem_list members;
+			size_t bsz;
 		} t_sou;
 
 		struct {
-			uint64_t	ref;
+			uint64_t	id;
+			uint64_t	tindex;	/* array */
+			int		count;	/* array */
 		} t_ref;
 	};
+
+	/* Fields filled in when adding a dynamic type to a container: */
 
 	uint64_t	t_id;		/* CTF type index */
 	size_t		t_ctfsz;	/* byte size of CTF representation */

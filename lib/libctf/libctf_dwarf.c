@@ -82,6 +82,47 @@ die_hasattr(Dwarf_Die die, Dwarf_Half tag)
 	return ((bool)present);
 }
 
+static uint64_t
+die_member_offset(Dwarf_Debug dbg, Dwarf_Die die)
+{
+	Dwarf_Attribute attr;
+	Dwarf_Loc *loc;
+	Dwarf_Locdesc **locdescs;
+	Dwarf_Half form;
+	Dwarf_Signed len;
+	Dwarf_Unsigned val;
+	int error;
+
+	error = dwarf_attr(die, DW_AT_data_member_location, &attr, NULL);
+	assert(error == DW_DLV_OK);
+	error = dwarf_whatform(attr, &form, NULL);
+	assert(error == DW_DLV_OK);
+
+	switch (form) {
+	case DW_FORM_block1:
+	case DW_FORM_block2:
+	case DW_FORM_block4:
+		error = dwarf_loclist_n(attr, &locdescs, &len, NULL);
+		assert(error == DW_DLV_OK);
+		if (len != 1)
+			errx(1, "%s: unexpected locdesc list length %ld",
+			    __func__, len);
+		if (locdescs[0]->ld_cents != 1)
+			errx(1, "%s: unexpected locdesc length %d",
+			    __func__, locdescs[0]->ld_cents);
+		loc = &locdescs[0]->ld_s[0];
+		if (loc->lr_atom != DW_OP_plus_uconst)
+			errx(1, "%s: unexpected location expression", __func__);
+		val = loc->lr_number;
+		dwarf_dealloc(dbg, locdescs[0]->ld_s, DW_DLA_LOC_BLOCK);
+		dwarf_dealloc(dbg, locdescs[0], DW_DLA_LOCDESC);
+		dwarf_dealloc(dbg, locdescs, DW_DLA_LIST);
+		return (val);
+	default:
+		errx(1, "%s: unhandled form %#x", __func__, form);
+	}
+}
+
 static const char *
 die_name(Dwarf_Die die)
 {
@@ -167,6 +208,9 @@ struct ctf_convert {
 	struct tnode_list structanonhash[1024];
 	struct tnode_list unionhash[1024];
 	struct tnode_list unionanonhash[1024];
+	struct tnode_list funchash[1024];
+
+	struct tnode_list deduped;
 
 	void		(*errcb)(const char *); /* error callback */
 };
@@ -246,6 +290,7 @@ tnode_alloc(struct ctf_convert_cu *cu, uint64_t id, const char *name,
 	case CTF_K_STRUCT:
 	case CTF_K_UNION:
 		ctf_imtelem_list_init(&t->t.t_sou.members, 8);
+		t->t.t_sou.bsz = -1;
 		break;
 	}
 	return (t);
@@ -279,17 +324,15 @@ tnode_ref_copy(struct ctf_imtype *dst, struct ctf_imtype *src)
 {
 
 	switch (src->t_kind) {
-	case CTF_K_ARRAY:
-		dst->t_array = src->t_array;
-		break;
 	case CTF_K_TYPEDEF:
 		dst->t_name = src->t_name;
 		/* FALLTHROUGH */
+	case CTF_K_ARRAY:
 	case CTF_K_CONST:
 	case CTF_K_POINTER:
 	case CTF_K_RESTRICT:
 	case CTF_K_VOLATILE:
-		dst->t_ref.ref = src->t_ref.ref;
+		memcpy(&dst->t_ref, &src->t_ref, sizeof(dst->t_ref));
 		break;
 	default:
 		errx(1, "unhandled CTF kind %d", src->t_kind);
@@ -305,7 +348,7 @@ tnode_ref_equiv(struct ctf_imtype *t1, struct ctf_imtype *t2)
 
 	switch (t2->t_kind) {
 	case CTF_K_ARRAY:
-		return (t1->t_array.count == t2->t_array.count);
+		return (t1->t_ref.count == t2->t_ref.count);
 	case CTF_K_CONST:
 	case CTF_K_POINTER:
 	case CTF_K_RESTRICT:
@@ -362,7 +405,7 @@ tnode_from_anon_ref_type(struct ctf_convert_cu *cu, Dwarf_Die die, char ctfkind)
 
 	search.t_id = die_dieoffset(die);
 	search.t_kind = ctfkind;
-	search.t_ref.ref = toff;
+	search.t_ref.id = toff;
 	return (tnode_find_or_add_ref(cu, &search, toff));
 }
 
@@ -401,9 +444,9 @@ tnode_from_array_type(struct ctf_convert_cu *cu, Dwarf_Die die)
 	search.t_name = 0;
 	search.t_id = die_dieoffset(die);
 	search.t_kind = CTF_K_ARRAY;
-	search.t_array.tref = toff;
-	search.t_array.tindex = ioff;
-	search.t_array.count = count;
+	search.t_ref.id = toff;
+	search.t_ref.tindex = ioff;
+	search.t_ref.count = count;
 	return (tnode_find_or_add_ref(cu, &search, toff));
 }
 
@@ -453,12 +496,12 @@ tnode_from_base_type(struct ctf_convert_cu *cu, Dwarf_Die die)
 	enc = CTF_INT_DATA(dwarf_enc2ctf(die), 0, die_byte_size(die) * NBBY);
 	hash = strhash(name);
 	LIST_FOREACH(t, &cu->cvt->basehash[hash & 1023 /* XXX */], hashlink) {
-		if (t->t.t_name == nameoff && t->t.t_integer.enc == enc)
+		if (t->t.t_name == nameoff && t->t.t_num.enc == enc)
 			break;
 	}
 	if (t == NULL) {
 		t = tnode_alloc(cu, die_dieoffset(die), name, CTF_K_INTEGER);
-		t->t.t_integer.enc = enc;
+		t->t.t_num.enc = enc;
 		LIST_INSERT_HEAD(&cu->cvt->basehash[hash & 1023], t, hashlink);
 		t->canonical = true;
 	}
@@ -470,6 +513,7 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 {
 	Dwarf_Debug dbg;
 	Dwarf_Die child, child1;
+	Dwarf_Unsigned bsz;
 	struct ctf_imtelem e;
 	struct tnode *t;
 	struct tnode_list *l;
@@ -484,8 +528,13 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 
 	t = tnode_alloc(cu, die_dieoffset(die), tname, kind);
 
+	if (die_hasattr(die, DW_AT_declaration))
+		/* Forward declaration. */
+		goto done;
+
 	child = die_child(die);
 	if (child == NULL)
+		/* Empty struct or union. */
 		goto done;
 	if (tname != NULL)
 		hash = strhash(tname);
@@ -506,7 +555,7 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 			e.e_name = ctf_convert_str_insert(cu->cvt, name);
 			e.e_type = die_type(child);
 			/* XXX handle bit fields */
-			e.e_off = 0; /* XXX */
+			e.e_off = die_member_offset(dbg, child);
 			ctf_imtelem_list_add(&t->t.t_sou.members, &e);
 			break;
 		case DW_TAG_enumeration_type:
@@ -522,6 +571,10 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 	    DW_DLV_OK);
 	assert(error == DW_DLV_NO_ENTRY);
 	dwarf_dealloc(dbg, child, DW_DLA_DIE);
+
+	error = dwarf_attrval_unsigned(die, DW_AT_byte_size, &bsz, NULL);
+	assert(error == DW_DLV_OK);
+	t->t.t_sou.bsz = bsz;
 
 	if (tname != NULL) {
 		if (kind == CTF_K_STRUCT)
@@ -628,6 +681,7 @@ tnode_from_subroutine_type(struct ctf_convert_cu *cu, Dwarf_Die die)
 	Dwarf_Die child, child1;
 	struct ctf_imtelem e;
 	struct tnode *t;
+	unsigned int hash;
 	int error;
 
 	dbg = cu->cvt->dbg;
@@ -664,6 +718,8 @@ tnode_from_subroutine_type(struct ctf_convert_cu *cu, Dwarf_Die die)
 	assert(error == DW_DLV_NO_ENTRY);
 	dwarf_dealloc(dbg, child, DW_DLA_DIE);
 
+	hash = t->t.t_func.params.el_count;
+	LIST_INSERT_HEAD(&cu->cvt->funchash[hash & 1023], t, hashlink);
 done:
 	return (t);
 }
@@ -685,7 +741,7 @@ tnode_from_typedef(struct ctf_convert_cu *cu, Dwarf_Die die)
 	search.t_name = ctf_convert_str_insert(cu->cvt, name);
 	search.t_id = die_dieoffset(die);
 	search.t_kind = CTF_K_TYPEDEF;
-	search.t_ref.ref = toff;
+	search.t_ref.id = toff;
 	return (tnode_find_or_add_ref(cu, &search, toff));
 }
 
@@ -778,7 +834,7 @@ tnode_equiv(struct ctf_convert *cvt, struct tnode *t1, struct tnode *t2)
 		/* It is sufficient to verify that t1 != t2. */
 		return (false);
 	case CTF_K_ARRAY:
-		if (t1->t.t_array.count != t2->t.t_array.count)
+		if (t1->t.t_ref.count != t2->t.t_ref.count)
 			return (false);
 		/* FALLTHROUGH */
 	case CTF_K_TYPEDEF:
@@ -867,6 +923,8 @@ ctf_convert_dedup_list(struct ctf_convert *cvt, struct tnode_list *l)
 			}
 			cvt->gen = cvt->currgen + 1;
 		}
+
+		LIST_INSERT_HEAD(&cvt->deduped, t, hashlink);
 	}
 }
 
@@ -878,7 +936,7 @@ ctf_convert_resolve_refs(struct ctf_convert_cu *cu)
 	while ((ref = SLIST_FIRST(&cu->dangling)) != NULL) {
 		SLIST_REMOVE_HEAD(&cu->dangling, reflink);
 
-		ref->ref = t = doffmap_find(cu, ref->t.t_ref.ref);
+		ref->ref = t = doffmap_find(cu, ref->t.t_ref.id);
 		if (t->canonical)
 			tnode_dedup_ref(t, ref);
 		else
@@ -995,6 +1053,18 @@ ctf_convert_dwarf_cu(struct ctf_convert *cvt, Dwarf_Die cu)
 	return (0);
 }
 
+static void
+ctf_convert_add_references(struct ctf_convert *cvt, struct tnode *t)
+{
+	struct tnode *ref;
+
+	SLIST_FOREACH(ref, &t->crefs, reflink) {
+		ref->t.t_ref.id = t->t.t_id;
+		(void)libctf_add_type(cvt->ctf, &ref->t);
+		ctf_convert_add_references(cvt, ref);
+	}
+}
+
 Ctf *
 ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX add warncb? */
 {
@@ -1025,6 +1095,10 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 		LIST_INIT(&cvt.unionhash[i]);
 	for (i = 0; i < nitems(cvt.unionanonhash); i++)
 		LIST_INIT(&cvt.unionanonhash[i]);
+	for (i = 0; i < nitems(cvt.funchash); i++)
+		LIST_INIT(&cvt.funchash[i]);
+
+	LIST_INIT(&cvt.deduped);
 
 	/*
 	 * Synthesize a "void" type.
@@ -1033,7 +1107,7 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 	voidt->t.t_name = ctf_convert_str_insert(&cvt, "void");
 	voidt->t.t_id = 0;
 	voidt->t.t_kind = CTF_K_INTEGER;
-	voidt->t.t_integer.enc = 0;
+	voidt->t.t_num.enc = 0;
 
 	voidt->canonical = true;
 	voidt->cu = NULL;
@@ -1066,17 +1140,36 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 		ctf_convert_dedup_list(&cvt, &cvt.structhash[i]);
 	for (i = 0; i < nitems(cvt.unionhash); i++)
 		ctf_convert_dedup_list(&cvt, &cvt.unionhash[i]);
+
+	/*
+	 * Deduplicating named compound types first gives a substantial
+	 * improvement in runtime.
+	 */
 	for (i = 0; i < nitems(cvt.structanonhash); i++)
 		ctf_convert_dedup_list(&cvt, &cvt.structanonhash[i]);
 	for (i = 0; i < nitems(cvt.unionanonhash); i++)
 		ctf_convert_dedup_list(&cvt, &cvt.unionanonhash[i]);
 
+	for (i = 0; i < nitems(cvt.funchash); i++)
+		ctf_convert_dedup_list(&cvt, &cvt.funchash[i]);
+
 	for (i = 0; i < nitems(cvt.basehash); i++)
 		LIST_FOREACH(t, &cvt.basehash[i], hashlink)
-			libctf_add_type(ctf, &t->t);
+			(void)libctf_add_type(ctf, &t->t);
 	for (i = 0; i < nitems(cvt.enumhash); i++)
 		LIST_FOREACH(t, &cvt.enumhash[i], hashlink)
-			libctf_add_type(ctf, &t->t);
+			(void)libctf_add_type(ctf, &t->t);
+
+	for (i = 0; i < nitems(cvt.basehash); i++)
+		LIST_FOREACH(t, &cvt.basehash[i], hashlink)
+			ctf_convert_add_references(&cvt, t);
+	for (i = 0; i < nitems(cvt.enumhash); i++)
+		LIST_FOREACH(t, &cvt.enumhash[i], hashlink)
+			ctf_convert_add_references(&cvt, t);
+	LIST_FOREACH(t, &cvt.deduped, hashlink) {
+		libctf_add_type(ctf, &t->t);
+		ctf_convert_add_references(&cvt, t);
+	}
 
 	return (ctf);
 }
