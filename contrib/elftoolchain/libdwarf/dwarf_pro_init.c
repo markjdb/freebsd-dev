@@ -28,9 +28,9 @@
 
 ELFTC_VCSID("$Id: dwarf_pro_init.c 2074 2011-10-27 03:34:33Z jkoshy $");
 
-Dwarf_P_Debug
-dwarf_producer_init(Dwarf_Unsigned flags, Dwarf_Callback_Func func,
-    Dwarf_Handler errhand, Dwarf_Ptr errarg, Dwarf_Error *error)
+static Dwarf_P_Debug
+_dwarf_producer_init(Dwarf_Unsigned flags, Dwarf_Handler errhand,
+    Dwarf_Ptr errarg, Dwarf_Error *error)
 {
 	Dwarf_P_Debug dbg;
 	int mode;
@@ -47,11 +47,6 @@ dwarf_producer_init(Dwarf_Unsigned flags, Dwarf_Callback_Func func,
 		return (DW_DLV_BADADDR);
 	}
 
-	if (func == NULL) {
-		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
-		return (DW_DLV_BADADDR);
-	}
-
 	if (_dwarf_alloc(&dbg, DW_DLC_WRITE, error) != DW_DLE_NONE)
 		return (DW_DLV_BADADDR);
 
@@ -62,7 +57,23 @@ dwarf_producer_init(Dwarf_Unsigned flags, Dwarf_Callback_Func func,
 		return (DW_DLV_BADADDR);
 	}
 
-	dbg->dbgp_func = func;
+	return (dbg);
+}
+
+Dwarf_P_Debug
+dwarf_producer_init(Dwarf_Unsigned flags, Dwarf_Callback_Func func,
+    Dwarf_Handler errhand, Dwarf_Ptr errarg, Dwarf_Error *error)
+{
+	Dwarf_P_Debug dbg;
+
+	if (func == NULL) {
+		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
+		return (DW_DLV_BADADDR);
+	}
+
+	dbg = _dwarf_producer_init(flags, errhand, errarg, error);
+	if (dbg != DW_DLV_BADADDR)
+		dbg->dbgp_func = func;
 
 	return (dbg);
 }
@@ -72,36 +83,35 @@ dwarf_producer_init_b(Dwarf_Unsigned flags, Dwarf_Callback_Func_b func,
     Dwarf_Handler errhand, Dwarf_Ptr errarg, Dwarf_Error *error)
 {
 	Dwarf_P_Debug dbg;
-	int mode;
-
-	if (flags & DW_DLC_READ || flags & DW_DLC_RDWR) {
-		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
-		return (DW_DLV_BADADDR);
-	}
-
-	if (flags & DW_DLC_WRITE)
-		mode = DW_DLC_WRITE;
-	else {
-		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
-		return (DW_DLV_BADADDR);
-	}
 
 	if (func == NULL) {
 		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
 		return (DW_DLV_BADADDR);
 	}
 
-	if (_dwarf_alloc(&dbg, DW_DLC_WRITE, error) != DW_DLE_NONE)
-		return (DW_DLV_BADADDR);
+	dbg = _dwarf_producer_init(flags, errhand, errarg, error);
+	if (dbg != DW_DLV_BADADDR)
+		dbg->dbgp_func_b = func;
 
-	dbg->dbg_mode = mode;
+	return (dbg);
+}
 
-	if (_dwarf_init(dbg, flags, errhand, errarg, error) != DW_DLE_NONE) {
-		free(dbg);
+Dwarf_P_Debug
+dwarf_producer_init_c(Dwarf_Unsigned flags, Dwarf_Callback_Func_c func,
+    void *cbarg, Dwarf_Handler errhand, Dwarf_Ptr errarg, Dwarf_Error *error)
+{
+	Dwarf_P_Debug dbg;
+
+	if (func == NULL) {
+		DWARF_SET_ERROR(NULL, error, DW_DLE_ARGUMENT);
 		return (DW_DLV_BADADDR);
 	}
 
-	dbg->dbgp_func_b = func;
+	dbg = _dwarf_producer_init(flags, errhand, errarg, error);
+	if (dbg != DW_DLV_BADADDR) {
+		dbg->dbgp_func_c = func;
+		dbg->dbgp_func_c_arg = cbarg;
+	}
 
 	return (dbg);
 }

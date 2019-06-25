@@ -102,7 +102,10 @@ _dwarf_pro_callback(Dwarf_P_Debug dbg, char *name, int size,
 
 	assert(dbg != NULL && name != NULL && symndx != NULL);
 
-	if (dbg->dbgp_func_b)
+	if (dbg->dbgp_func_c)
+		ret = dbg->dbgp_func_c(name, size, type, flags, link, info,
+		    symndx, &e, dbg->dbgp_func_c_arg);
+	else if (dbg->dbgp_func_b)
 		ret = dbg->dbgp_func_b(name, size, type, flags, link, info,
 		    symndx, &e);
 	else {
