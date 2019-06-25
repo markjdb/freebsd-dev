@@ -106,6 +106,10 @@ typedef int (*Dwarf_Callback_Func_b)(char *_name, int _size,
     Dwarf_Unsigned _type, Dwarf_Unsigned _flags, Dwarf_Unsigned _link,
     Dwarf_Unsigned _info, Dwarf_Unsigned *_index, int *_error);
 
+typedef int (*Dwarf_Callback_Func_c)(char *_name, int _size,
+    Dwarf_Unsigned _type, Dwarf_Unsigned _flags, Dwarf_Unsigned _link,
+    Dwarf_Unsigned _info, Dwarf_Unsigned *_index, int *_error, void *_arg);
+
 typedef Dwarf_Unsigned Dwarf_Tag;
 
 typedef struct {
@@ -774,6 +778,8 @@ Dwarf_P_Debug	dwarf_producer_init(Dwarf_Unsigned, Dwarf_Callback_Func,
 		    Dwarf_Handler, Dwarf_Ptr, Dwarf_Error *);
 Dwarf_P_Debug	dwarf_producer_init_b(Dwarf_Unsigned, Dwarf_Callback_Func_b,
 		    Dwarf_Handler, Dwarf_Ptr, Dwarf_Error *);
+Dwarf_P_Debug	dwarf_producer_init_c(Dwarf_Unsigned, Dwarf_Callback_Func_c,
+		    void *, Dwarf_Handler, Dwarf_Ptr, Dwarf_Error *);
 int		dwarf_producer_set_isa(Dwarf_P_Debug, enum Dwarf_ISA,
 		    Dwarf_Error *);
 int		dwarf_pubtype_cu_offset(Dwarf_Type, Dwarf_Off *, Dwarf_Error *);

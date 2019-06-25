@@ -451,6 +451,8 @@ struct _Dwarf_Debug {
 	Dwarf_Unsigned	dbgp_isa;
 	Dwarf_Callback_Func dbgp_func;
 	Dwarf_Callback_Func_b dbgp_func_b;
+	Dwarf_Callback_Func_c dbgp_func_c;
+	void		*dbgp_func_c_arg;
 	Dwarf_Die	dbgp_root_die;
 	STAILQ_HEAD(, _Dwarf_Die) dbgp_dielist;
 	STAILQ_HEAD(, _Dwarf_P_Expr) dbgp_pelist;
