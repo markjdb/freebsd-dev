@@ -336,7 +336,6 @@ device		iwn			# Intel 4965/1000/5000/6000 wireless NICs.
 # Pseudo devices.
 device		crypto			# core crypto support
 device		loop			# Network loopback
-device		random			# Entropy device
 #device		padlock_rng		# VIA Padlock RNG
 device		rdrand_rng		# Intel Bull Mountain RNG
 device		ether			# Ethernet support
