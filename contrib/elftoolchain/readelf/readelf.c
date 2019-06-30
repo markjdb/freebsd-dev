@@ -431,6 +431,13 @@ static struct eflags_desc powerpc_eflags_desc[] = {
 	{0, NULL}
 };
 
+static struct eflags_desc riscv_eflags_desc[] = {
+	{EF_RISCV_RVC, "RVC"},
+	{EF_RISCV_RVE, "RVE"},
+	{EF_RISCV_TSO, "TSO"},
+	{0, NULL}
+};
+
 static struct eflags_desc sparc_eflags_desc[] = {
 	{EF_SPARC_32PLUS, "v8+"},
 	{EF_SPARC_SUN_US1, "ultrasparcI"},
@@ -2290,9 +2297,33 @@ dump_eflags(struct readelf *re, uint64_t e_flags)
 		}
 		edesc = mips_eflags_desc;
 		break;
-	case EM_PPC:
 	case EM_PPC64:
+		switch (e_flags) {
+		case 0: printf(", Unspecified or Power ELF V1 ABI"); break;
+		case 1: printf(", Power ELF V1 ABI"); break;
+		case 2: printf(", OpenPOWER ELF V2 ABI"); break;
+		default: break;
+		}
+		/* explicit fall through*/
+	case EM_PPC:
 		edesc = powerpc_eflags_desc;
+		break;
+	case EM_RISCV:
+		switch (e_flags & EF_RISCV_FLOAT_ABI_MASK) {
+		case EF_RISCV_FLOAT_ABI_SOFT:
+			printf(", soft-float ABI");
+			break;
+		case EF_RISCV_FLOAT_ABI_SINGLE:
+			printf(", single-float ABI");
+			break;
+		case EF_RISCV_FLOAT_ABI_DOUBLE:
+			printf(", double-float ABI");
+			break;
+		case EF_RISCV_FLOAT_ABI_QUAD:
+			printf(", quad-float ABI");
+			break;
+		}
+		edesc = riscv_eflags_desc;
 		break;
 	case EM_SPARC:
 	case EM_SPARC32PLUS:
