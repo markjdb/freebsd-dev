@@ -1,6 +1,33 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
+ * Copyright (c) 2019 Mark Johnston <markj@FreeBSD.org>
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
 #include "_libctf.h"
 
-#include <stdio.h>
+#include <printf.h>
 
 Ctf *
 libctf_create(size_t strtabsz, int *errp)
@@ -27,10 +54,56 @@ libctf_create(size_t strtabsz, int *errp)
 	return (ctf);
 }
 
+struct ctf_buf {
+	uint8_t		*base;
+	size_t		sz;
+	size_t		off;
+};
+
+static int
+ctf_buf_init(struct ctf_buf *buf, size_t sz)
+{
+
+	buf->base = malloc(sz);
+	if (buf->base == NULL)
+		return (-1);
+	buf->sz = sz;
+	buf->off = 0;
+	return (0);
+}
+
+static void
+ctf_buf_cat(struct ctf_buf *buf, const void *data, size_t n)
+{
+
+	assert(buf->off + n <= buf->sz);
+	memcpy(buf->base + buf->off, data, n);
+	buf->off += n;
+}
+
+static void *
+ctf_buf_image(struct ctf_buf *buf)
+{
+
+	return (buf->base);
+}
+
+static void
+ctf_buf_padalign(struct ctf_buf *buf, size_t alignment)
+{
+	size_t n;
+
+	n = alignment - (buf->off % alignment);
+	assert(buf->off + n <= buf->sz);
+	memset(buf->base + buf->off, 0, n);
+	buf->off += n;
+}
+
 int
 ctf_update(Ctf *ctf)
 {
 	struct ctf_array arrayval;
+	struct ctf_buf buf;
 	struct ctf_enum enumval;
 	struct ctf_header hdr;
 	struct ctf_imtype *imt;
@@ -40,16 +113,16 @@ ctf_update(Ctf *ctf)
 	struct ctf_stype st;
 	struct ctf_type t;
 	const char *strtab;
-	char *buf, *obuf;
-	size_t bufsz, strtabsz;
+	size_t bufsz, objtabsz, strtabsz;
 	int count, i;
 	uint16_t param;
 
 	strtab = elftc_string_table_image(ctf->ctf_strtab, &strtabsz);
 
-	bufsz = sizeof(hdr) + ctf->ctf_dtype_bsz + strtabsz;
-	buf = obuf = malloc(bufsz);
-	if (buf == NULL) {
+	objtabsz = roundup2(ctf->objtabsz, 4);
+
+	bufsz = sizeof(hdr) + objtabsz + ctf->ctf_dtype_bsz + strtabsz;
+	if (ctf_buf_init(&buf, bufsz) != 0) {
 		ctf->ctf_error = errno;
 		return (-1);
 	}
@@ -62,13 +135,14 @@ ctf_update(Ctf *ctf)
 	hdr.cth_parname = 0;
 	hdr.cth_lbloff = 0;
 	hdr.cth_objtoff = 0;
-	hdr.cth_funcoff = 0;
-	hdr.cth_typeoff = 0;
-	hdr.cth_stroff = 0;
+	hdr.cth_funcoff = objtabsz;
+	hdr.cth_typeoff = objtabsz;
+	hdr.cth_stroff = objtabsz + ctf->ctf_dtype_bsz;
 	hdr.cth_strlen = strtabsz;
-	memcpy(buf, &hdr, sizeof(hdr));
+	ctf_buf_cat(&buf, &hdr, sizeof(hdr));
 
-	buf += sizeof(hdr);
+	ctf_buf_cat(&buf, ctf->objtab, ctf->objtabsz);
+	ctf_buf_padalign(&buf, 4);
 
 	STAILQ_FOREACH(imt, &ctf->ctf_dtypes, t_next) {
 		switch (imt->t_kind) {
@@ -82,15 +156,13 @@ ctf_update(Ctf *ctf)
 			st.cts_info = (imt->t_kind << 11) |
 			    (count & CTF_MAX_VLEN);
 			st.cts_size = sizeof(uint32_t);
-			memcpy(buf, &st, sizeof(st));
-			buf += sizeof(st);
+			ctf_buf_cat(&buf, &st, sizeof(st));
 			for (i = 0; i < count; i++) {
 				elem = &imt->t_enum.vals.el_list[i];
 				memset(&enumval, 0, sizeof(enumval));
 				enumval.cte_name = elem->e_name;
 				enumval.cte_value = elem->e_val;
-				memcpy(buf, &enumval, sizeof(enumval));
-				buf += sizeof(enumval);
+				ctf_buf_cat(&buf, &enumval, sizeof(enumval));
 			}
 			break;
 		case CTF_K_FLOAT:
@@ -100,10 +172,8 @@ ctf_update(Ctf *ctf)
 			st.cts_info = (imt->t_kind << 11) |
 			    (sizeof(uint32_t) & CTF_MAX_VLEN);
 			st.cts_size = CTF_INT_BITS(imt->t_num.enc) / NBBY;
-			memcpy(buf, &st, sizeof(st));
-			buf += sizeof(st);
-			memcpy(buf, &imt->t_num.enc, sizeof(uint32_t));
-			buf += sizeof(uint32_t);
+			ctf_buf_cat(&buf, &st, sizeof(st));
+			ctf_buf_cat(&buf, &imt->t_num.enc, sizeof(uint32_t));
 			break;
 		case CTF_K_ARRAY:
 			memset(&st, 0, sizeof(st));
@@ -111,14 +181,13 @@ ctf_update(Ctf *ctf)
 			st.cts_info = (imt->t_kind << 11) |
 			    (sizeof(arrayval) & CTF_MAX_VLEN);
 			st.cts_size = 0;
-			memcpy(buf, &st, sizeof(st));
-			buf += sizeof(st);
+			ctf_buf_cat(&buf, &st, sizeof(st));
+
 			memset(&arrayval, 0, sizeof(arrayval));
 			arrayval.cta_contents = imt->t_ref.id;
 			arrayval.cta_index = 0; /* XXX */
 			arrayval.cta_nelems = imt->t_ref.count;
-			memcpy(buf, &arrayval, sizeof(arrayval));
-			buf += sizeof(arrayval);
+			ctf_buf_cat(&buf, &arrayval, sizeof(arrayval));
 			break;
 		case CTF_K_STRUCT:
 		case CTF_K_UNION:
@@ -134,16 +203,14 @@ ctf_update(Ctf *ctf)
 				t.ctt_size = CTF_LSIZE_SENT;
 				t.ctt_lsizehi = imt->t_sou.bsz >> 32;
 				t.ctt_lsizelo = imt->t_sou.bsz & 0xffffffffu;
-				memcpy(buf, &t, sizeof(t));
-				buf += sizeof(t);
+				ctf_buf_cat(&buf, &t, sizeof(t));
 			} else {
 				memset(&st, 0, sizeof(st));
 				st.cts_name = imt->t_name;
 				st.cts_info = (imt->t_kind << 11) |
 				    (count & CTF_MAX_VLEN);
 				st.cts_size = imt->t_sou.bsz;
-				memcpy(buf, &st, sizeof(st));
-				buf += sizeof(st);
+				ctf_buf_cat(&buf, &st, sizeof(st));
 			}
 			if (imt->t_sou.bsz > CTF_LSTRUCT_THRESH) {
 				for (i = 0; i < count; i++) {
@@ -155,8 +222,8 @@ ctf_update(Ctf *ctf)
 					    elem->e_off >> 32;
 					lmember.ctlm_offsetlo =
 					    elem->e_off & 0xffffffffu;
-					memcpy(buf, &lmember, sizeof(lmember));
-					buf += sizeof(lmember);
+					ctf_buf_cat(&buf, &lmember,
+					    sizeof(lmember));
 				}
 			} else {
 				for (i = 0; i < count; i++) {
@@ -165,8 +232,8 @@ ctf_update(Ctf *ctf)
 					member.ctm_name = elem->e_name;
 					member.ctm_type = elem->e_type;
 					member.ctm_offset = elem->e_off;
-					memcpy(buf, &member, sizeof(member));
-					buf += sizeof(member);
+					ctf_buf_cat(&buf, &member,
+					    sizeof(member));
 				}
 			}
 			break;
@@ -182,8 +249,7 @@ ctf_update(Ctf *ctf)
 			st.cts_info = (imt->t_kind << 11) |
 			    (count & CTF_MAX_VLEN);
 			st.cts_type = imt->t_func.params.el_list[0].e_type;
-			memcpy(buf, &st, sizeof(st));
-			buf += sizeof(st);
+			ctf_buf_cat(&buf, &st, sizeof(st));
 			for (i = 0; i < count; i++) {
 				elem = &imt->t_func.params.el_list[i];
 				memset(&param, 0, sizeof(param));
@@ -191,13 +257,11 @@ ctf_update(Ctf *ctf)
 					param = 0;
 				else
 					param = elem->e_type;
-				memcpy(buf, &param, sizeof(param));
-				buf += sizeof(param);
+				ctf_buf_cat(&buf, &param, sizeof(param));
 			}
 			if (count % 2 != 0) {
 				memset(&param, 0, sizeof(param));
-				memcpy(buf, &param, sizeof(param));
-				buf += sizeof(param);
+				ctf_buf_cat(&buf, &param, sizeof(param));
 			}
 			break;
 		case CTF_K_CONST:
@@ -209,8 +273,7 @@ ctf_update(Ctf *ctf)
 			st.cts_name = imt->t_name;
 			st.cts_info = (imt->t_kind << 11);
 			st.cts_type = imt->t_ref.id;
-			memcpy(buf, &st, sizeof(st));
-			buf += sizeof(st);
+			ctf_buf_cat(&buf, &st, sizeof(st));
 			break;
 		default:
 			errx(1, "ctf_update: unimplemented kind %d",
@@ -218,11 +281,10 @@ ctf_update(Ctf *ctf)
 		}
 	}
 
-	memcpy(buf, strtab, strtabsz);
-	ctf->ctf_buf = obuf;
-	hdr.cth_stroff = buf - obuf - sizeof(hdr);
-	memcpy(obuf, &hdr, sizeof(hdr));
-	ctf->ctf_bufsz = buf - obuf + strtabsz;
+	ctf_buf_cat(&buf, strtab, strtabsz);
+
+	ctf->ctf_buf = ctf_buf_image(&buf);
+	ctf->ctf_bufsz = bufsz;
 
 	return (0);
 }

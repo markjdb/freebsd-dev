@@ -1,9 +1,38 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
+ * Copyright (c) 2019 Mark Johnston <markj@FreeBSD.org>
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
 #include "_libctf.h"
 
 #include <stdio.h>
 
 #include <dwarf.h>
+#include <gelf.h>
 #include <libdwarf.h>
+#include <libelf.h>
 
 static unsigned int
 strhash(const char *s)
@@ -21,6 +50,16 @@ xmalloc(size_t sz)
 	void *ret;
 
 	ret = malloc(sz);
+	assert(ret != NULL); /* XXX */
+	return (ret);
+}
+
+static void *
+xcalloc(size_t n, size_t sz)
+{
+	void *ret;
+
+	ret = calloc(n, sz);
 	assert(ret != NULL); /* XXX */
 	return (ret);
 }
@@ -161,6 +200,17 @@ die_type(Dwarf_Die die)
 	return (off);
 }
 
+struct onode {
+	struct ctf_convert_cu	*cu;
+	const char		*name;
+	uint64_t		type;
+
+	struct ctf_imtelem_list	params;
+
+	LIST_ENTRY(onode)	hashlink;
+};
+LIST_HEAD(onode_list, onode);
+
 struct tnode {
 	struct ctf_imtype	t;
 	struct ctf_convert_cu	*cu;
@@ -212,6 +262,9 @@ struct ctf_convert {
 
 	struct tnode_list deduped;
 
+	struct onode_list varhash[1024];
+	uint16_t	*objtab;
+
 	void		(*errcb)(const char *); /* error callback */
 };
 
@@ -221,7 +274,9 @@ struct ctf_convert_cu {
 	struct tnode_slist	dangling;
 };
 
-static void	ctf_convert_dwarf_die(struct ctf_convert_cu *, Dwarf_Die);
+static bool	ctf_convert_dwarf_object_die(struct ctf_convert_cu *,
+		    Dwarf_Die);
+static bool	ctf_convert_dwarf_type_die(struct ctf_convert_cu *, Dwarf_Die);
 static size_t	ctf_convert_str_insert(struct ctf_convert *, const char *);
 
 static void	tnode_canonicalize_refs(struct tnode *);
@@ -262,6 +317,19 @@ doffmap_remap(struct tnode *n, struct tnode *t)
 	d->d_ref = n;
 }
 
+static struct onode *
+onode_alloc(struct ctf_convert_cu *cu, const char *name, uint64_t type)
+{
+	struct onode *o;
+
+	o = xmalloc(sizeof(*o));
+	o->cu = cu;
+	o->name = name;
+	o->type = type;
+	ctf_imtelem_list_init(&o->params, 8);
+	return (o);
+}
+
 static struct tnode *
 tnode_alloc(struct ctf_convert_cu *cu, uint64_t id, const char *name,
     char kind)
@@ -293,6 +361,7 @@ tnode_alloc(struct ctf_convert_cu *cu, uint64_t id, const char *name,
 		t->t.t_sou.bsz = -1;
 		break;
 	}
+
 	return (t);
 }
 
@@ -314,6 +383,8 @@ tnode_free(struct tnode *t)
 	case CTF_K_STRUCT:
 	case CTF_K_UNION:
 		free(t->t.t_sou.members.el_list);
+		break;
+	default:
 		break;
 	}
 	free(t);
@@ -528,20 +599,20 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 
 	t = tnode_alloc(cu, die_dieoffset(die), tname, kind);
 
+	if (tname != NULL)
+		hash = strhash(tname);
+	else
+		hash = 0;
+
 	if (die_hasattr(die, DW_AT_declaration))
 		/* Forward declaration. */
 		goto done;
 
 	child = die_child(die);
 	if (child == NULL)
-		/* Empty struct or union. */
 		goto done;
-	if (tname != NULL)
-		hash = strhash(tname);
-	else if ((name = die_name(child)) != NULL)
+	if ((name = die_name(child)) != NULL && tname == NULL)
 		hash = strhash(name);
-	else
-		hash = 0; /* XXX */
 	child1 = NULL;
 	do {
 		if (child1 != NULL) {
@@ -561,7 +632,7 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 		case DW_TAG_enumeration_type:
 		case DW_TAG_structure_type:
 		case DW_TAG_union_type:
-			ctf_convert_dwarf_die(cu, child);
+			(void)ctf_convert_dwarf_type_die(cu, child);
 			break;
 		default:
 			errx(1, "unhandled child tag at offset %#lx",
@@ -576,6 +647,7 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 	assert(error == DW_DLV_OK);
 	t->t.t_sou.bsz = bsz;
 
+done:
 	if (tname != NULL) {
 		if (kind == CTF_K_STRUCT)
 			l = &cu->cvt->structhash[hash & 1023];
@@ -588,7 +660,6 @@ tnode_from_compound_type(struct ctf_convert_cu *cu, Dwarf_Die die, char kind)
 			l = &cu->cvt->unionanonhash[hash & 1023];
 	}
 	LIST_INSERT_HEAD(l, t, hashlink);
-done:
 	return (t);
 }
 
@@ -718,9 +789,10 @@ tnode_from_subroutine_type(struct ctf_convert_cu *cu, Dwarf_Die die)
 	assert(error == DW_DLV_NO_ENTRY);
 	dwarf_dealloc(dbg, child, DW_DLA_DIE);
 
+done:
+	/* XXX this is a terrible hash */
 	hash = t->t.t_func.params.el_count;
 	LIST_INSERT_HEAD(&cu->cvt->funchash[hash & 1023], t, hashlink);
-done:
 	return (t);
 }
 
@@ -893,13 +965,13 @@ tnode_equiv(struct ctf_convert *cvt, struct tnode *t1, struct tnode *t2)
 }
 
 static size_t
-ctf_convert_str_insert(struct ctf_convert *cu, const char *name)
+ctf_convert_str_insert(struct ctf_convert *cvt, const char *name)
 {
 	size_t off;
 
 	if (name == NULL)
 		return (0);
-	off = elftc_string_table_insert(cu->ctf->ctf_strtab, name);
+	off = elftc_string_table_insert(cvt->ctf->ctf_strtab, name);
 	assert(off != 0); /* XXX */
 	return (off);
 }
@@ -949,9 +1021,20 @@ ctf_convert_subprogram(struct ctf_convert_cu *cu, Dwarf_Die die)
 {
 	Dwarf_Debug dbg;
 	Dwarf_Die child, child1;
+	struct ctf_imtelem e;
+	struct onode *o;
+	const char *name;
 	int error;
 
 	dbg = cu->cvt->dbg;
+
+	name = die_name(die);
+	if (name != NULL) {
+		o = onode_alloc(cu, name, 0);
+		memset(&e, 0, sizeof(e));
+	} else {
+		o = NULL;
+	}
 
 	child = die_child(die);
 	if (child == NULL)
@@ -962,7 +1045,17 @@ ctf_convert_subprogram(struct ctf_convert_cu *cu, Dwarf_Die die)
 			dwarf_dealloc(dbg, child, DW_DLA_DIE);
 			child = child1;
 		}
-		ctf_convert_dwarf_die(cu, child);
+		switch (die_tag(child)) {
+		case DW_TAG_formal_parameter:
+			if (o != NULL) {
+				e.e_type = die_type(child);
+				ctf_imtelem_list_add(&o->params, &e);
+			}
+			break;
+		default:
+			(void)ctf_convert_dwarf_type_die(cu, child);
+			break;
+		}
 	} while ((error = dwarf_siblingof(dbg, child, &child1, NULL)) ==
 	    DW_DLV_OK);
 	assert(error == DW_DLV_NO_ENTRY);
@@ -970,7 +1063,46 @@ ctf_convert_subprogram(struct ctf_convert_cu *cu, Dwarf_Die die)
 }
 
 static void
-ctf_convert_dwarf_die(struct ctf_convert_cu *cu, Dwarf_Die die)
+ctf_convert_variable(struct ctf_convert_cu *cu, Dwarf_Die die)
+{
+	Dwarf_Off toff;
+	struct onode *o;
+	const char *name;
+	u_int hash;
+
+	name = die_name(die);
+	if (name == NULL)
+		return;
+	if (die_hasattr(die, DW_AT_declaration))
+		return;
+
+	toff = die_type(die);
+	o = onode_alloc(cu, name, toff);
+
+	hash = strhash(name);
+	LIST_INSERT_HEAD(&cu->cvt->varhash[hash & 1023], o, hashlink);
+}
+
+static bool
+ctf_convert_dwarf_object_die(struct ctf_convert_cu *cu, Dwarf_Die die)
+{
+
+	switch (die_tag(die)) {
+	case DW_TAG_subprogram:
+		ctf_convert_subprogram(cu, die);
+		break;
+	case DW_TAG_variable:
+		ctf_convert_variable(cu, die);
+		break;
+	default:
+		return (false);
+	}
+
+	return (true);
+}
+
+static bool
+ctf_convert_dwarf_type_die(struct ctf_convert_cu *cu, Dwarf_Die die)
 {
 	struct tnode *t;
 
@@ -1013,15 +1145,14 @@ ctf_convert_dwarf_die(struct ctf_convert_cu *cu, Dwarf_Die die)
 		t = tnode_from_anon_ref_type(cu, die, CTF_K_VOLATILE);
 		break;
 	default:
-		t = NULL;
-		break;
+		return (false);
 	}
 
-	if (t != NULL)
-		doffmap_add_ref(&cu->dmap, t, die_dieoffset(die));
+	doffmap_add_ref(&cu->dmap, t, die_dieoffset(die));
+	return (true);
 }
 
-static int
+static void
 ctf_convert_dwarf_cu(struct ctf_convert *cvt, Dwarf_Die cu)
 {
 	Dwarf_Debug dbg;
@@ -1043,14 +1174,63 @@ ctf_convert_dwarf_cu(struct ctf_convert *cvt, Dwarf_Die cu)
 			dwarf_dealloc(dbg, die, DW_DLA_DIE);
 			die = die1;
 		}
-		ctf_convert_dwarf_die(cucvt, die);
+		if (!ctf_convert_dwarf_type_die(cucvt, die))
+			(void)ctf_convert_dwarf_object_die(cucvt, die);
 	} while ((error = dwarf_siblingof(dbg, die, &die1, NULL)) == DW_DLV_OK);
 	assert(error == DW_DLV_NO_ENTRY);
 	dwarf_dealloc(dbg, die, DW_DLA_DIE);
 
 	ctf_convert_resolve_refs(cucvt);
+}
 
-	return (0);
+static void
+ctf_convert_elf_symtab(struct ctf_convert *cvt, Elf *elf, Elf_Scn *scn)
+{
+	Elf_Data *data;
+	GElf_Shdr shdr;
+	GElf_Sym sym;
+	struct onode *o;
+	struct tnode *t;
+	const char *symname;
+	uint16_t *nextobj;
+	u_int hash;
+	int symndx;
+
+	gelf_getshdr(scn, &shdr); /* XXX errors */
+	cvt->objtab = xcalloc(sizeof(uint16_t), shdr.sh_size / shdr.sh_entsize);
+	nextobj = cvt->objtab;
+
+	data = elf_getdata(scn, NULL);
+	assert(data != NULL); /* XXX */
+	for (symndx = 0; symndx < (int)(shdr.sh_size / shdr.sh_entsize);
+	    nextobj++, symndx++) {
+		*nextobj = 0;
+		if (gelf_getsym(data, symndx, &sym) == NULL)
+			errx(1, "gelf_getsym(i): %s", elf_errmsg(-1));
+		if (sym.st_shndx == SHN_UNDEF)
+			continue;
+		if (sym.st_shndx == SHN_ABS && sym.st_value == 0)
+			continue;
+		if (sym.st_name == 0)
+			continue;
+		symname = elf_strptr(elf, shdr.sh_link, sym.st_name);
+		switch (GELF_ST_TYPE(sym.st_info)) {
+		case STT_OBJECT:
+			hash = strhash(symname);
+			LIST_FOREACH(o, &cvt->varhash[hash & 1023], hashlink) {
+				if (strcmp(o->name, symname) == 0) {
+					t = doffmap_find(o->cu, o->type);
+					assert(t->t.t_id <= UINT16_MAX);
+					*nextobj = (uint16_t)t->t.t_id;
+				}
+			}
+			break;
+		case STT_FUNC:
+			break;
+		}
+	}
+
+	libctf_add_objtab(cvt->ctf, cvt->objtab, nextobj - cvt->objtab);
 }
 
 static void
@@ -1070,11 +1250,19 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 {
 	Dwarf_Debug dbg;
 	Dwarf_Die cu;
+	Elf *elf;
+	Elf_Scn *scn;
+	GElf_Shdr shdr;
 	struct ctf_convert cvt;
 	struct tnode *t, *voidt;
 	Ctf *ctf;
 	size_t i;
 	int error;
+
+	assert(elf_version(EV_CURRENT) != EV_NONE); /* XXX */
+
+	elf = elf_begin(fd, ELF_C_READ, NULL);
+	assert(elf != NULL);
 
 	/*
 	 * Use an initial string table size of 1MB.
@@ -1097,6 +1285,9 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 		LIST_INIT(&cvt.unionanonhash[i]);
 	for (i = 0; i < nitems(cvt.funchash); i++)
 		LIST_INIT(&cvt.funchash[i]);
+
+	for (i = 0; i < nitems(cvt.varhash); i++)
+		LIST_INIT(&cvt.varhash[i]);
 
 	LIST_INIT(&cvt.deduped);
 
@@ -1153,22 +1344,34 @@ ctf_convert_dwarf(int fd, void (*errcb)(const char *) __unused /* XXX */) /* XXX
 	for (i = 0; i < nitems(cvt.funchash); i++)
 		ctf_convert_dedup_list(&cvt, &cvt.funchash[i]);
 
+	(void)libctf_add_type(ctf, &cvt.voidtype.t);
+	ctf_convert_add_references(&cvt, &cvt.voidtype);
 	for (i = 0; i < nitems(cvt.basehash); i++)
-		LIST_FOREACH(t, &cvt.basehash[i], hashlink)
+		LIST_FOREACH(t, &cvt.basehash[i], hashlink) {
 			(void)libctf_add_type(ctf, &t->t);
+			ctf_convert_add_references(&cvt, t);
+		}
 	for (i = 0; i < nitems(cvt.enumhash); i++)
-		LIST_FOREACH(t, &cvt.enumhash[i], hashlink)
+		LIST_FOREACH(t, &cvt.enumhash[i], hashlink) {
 			(void)libctf_add_type(ctf, &t->t);
+			ctf_convert_add_references(&cvt, t);
+		}
 
-	for (i = 0; i < nitems(cvt.basehash); i++)
-		LIST_FOREACH(t, &cvt.basehash[i], hashlink)
-			ctf_convert_add_references(&cvt, t);
-	for (i = 0; i < nitems(cvt.enumhash); i++)
-		LIST_FOREACH(t, &cvt.enumhash[i], hashlink)
-			ctf_convert_add_references(&cvt, t);
 	LIST_FOREACH(t, &cvt.deduped, hashlink) {
-		libctf_add_type(ctf, &t->t);
+		(void)libctf_add_type(ctf, &t->t);
 		ctf_convert_add_references(&cvt, t);
+	}
+
+	error = dwarf_finish(dbg, NULL);
+	assert(error == DW_DLV_OK);
+
+	scn = NULL;
+	while ((scn = elf_nextscn(elf, scn)) != NULL) {
+		gelf_getshdr(scn, &shdr);
+		if (shdr.sh_type != SHT_SYMTAB)
+			continue;
+		ctf_convert_elf_symtab(&cvt, elf, scn);
+		break;
 	}
 
 	return (ctf);

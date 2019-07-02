@@ -36,6 +36,7 @@
 #include <err.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -50,6 +51,9 @@ struct _Ctf {
 	STAILQ_HEAD(, ctf_imtype) ctf_dtypes;
 	size_t		ctf_dtype_bsz;
 
+	uint16_t	*objtab;
+	size_t		objtabsz;
+
 	Elftc_String_Table *ctf_strtab;
 
 	int		ctf_error;
@@ -61,6 +65,24 @@ struct _Ctf {
 
 	int		ctf_model;
 	void		*ctf_specific;
+};
+
+/* Used internally to ensure that switch statements are fully cased. */
+enum _ctf_kind {
+	LIBCTF_K_UNKNOWN = CTF_K_UNKNOWN,
+	LIBCTF_K_INTEGER = CTF_K_INTEGER,
+	LIBCTF_K_FLOAT = CTF_K_FLOAT,
+	LIBCTF_K_POINTER = CTF_K_POINTER,
+	LIBCTF_K_ARRAY = CTF_K_ARRAY,
+	LIBCTF_K_FUNCTION = CTF_K_FUNCTION,
+	LIBCTF_K_STRUCT = CTF_K_STRUCT,
+	LIBCTF_K_UNION = CTF_K_UNION,
+	LIBCTF_K_ENUM = CTF_K_ENUM,
+	LIBCTF_K_FORWARD = CTF_K_FORWARD,
+	LIBCTF_K_TYPEDEF = CTF_K_TYPEDEF,
+	LIBCTF_K_VOLATILE = CTF_K_VOLATILE,
+	LIBCTF_K_CONST = CTF_K_CONST,
+	LIBCTF_K_RESTRICT = CTF_K_RESTRICT,
 };
 
 struct ctf_imtelem {
@@ -82,8 +104,10 @@ struct ctf_imtelem_list {
  * In-memory representation of a C type.
  */
 struct ctf_imtype {
+	/* CTF attributes: */
+
 	size_t		t_name;
-	int		t_kind;
+	enum _ctf_kind	t_kind;
 
 	union {
 		struct {
@@ -114,7 +138,6 @@ struct ctf_imtype {
 	/* Fields filled in when adding a dynamic type to a container: */
 
 	uint64_t	t_id;		/* CTF type index */
-	size_t		t_ctfsz;	/* byte size of CTF representation */
 	STAILQ_ENTRY(ctf_imtype) t_next; /* dynamic type list linkage */
 };
 
@@ -146,6 +169,7 @@ ctf_imtelem_list_add(struct ctf_imtelem_list *l, struct ctf_imtelem *e)
 	l->el_list[l->el_count++] = *e;
 }
 
+void		libctf_add_objtab(Ctf *, uint16_t *, size_t);
 ctf_id_t	libctf_add_type(Ctf *, struct ctf_imtype *);
 Ctf		*libctf_create(size_t, int *);
 
