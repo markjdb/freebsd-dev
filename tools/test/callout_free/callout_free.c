@@ -1,8 +1,7 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2018 Emmanuel Vadot <manu@FreeBSD.org>
- * All rights reserved.
+ * Copyright (c) 2019 Eric van Gyzen
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,62 +23,65 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
+ * $FreeBSD$
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+/*
+ * Free a pending callout.  This was useful for testing the
+ * "show callout_last" ddb command.
+ */
 
 #include <sys/param.h>
-#include <sys/bus.h>
+#include <sys/conf.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
-#include <sys/rman.h>
-#include <machine/bus.h>
+#include <sys/systm.h>
 
-#include <dev/ofw/openfirm.h>
-#include <dev/ofw/ofw_bus.h>
-#include <dev/ofw/ofw_bus_subr.h>
+static struct callout callout_free;
+static struct mtx callout_free_mutex;
+static int callout_free_arg;
 
-#include <dev/extres/syscon/syscon.h>
-#include <dev/fdt/simple_mfd.h>
-
-#include "opt_soc.h"
-
-static struct ofw_compat_data compat_data[] = {
-#ifdef SOC_ROCKCHIP_RK3328
-	{"rockchip,rk3328-grf", 1},
-#endif
-#ifdef SOC_ROCKCHIP_RK3399
-	{"rockchip,rk3399-grf", 1},
-	{"rockchip,rk3399-pmugrf", 1},
-#endif
-	{NULL,             0}
-};
-
-static int
-rk_grf_probe(device_t dev)
+static void
+callout_free_func(void *arg)
 {
-
-	if (!ofw_bus_status_okay(dev))
-		return (ENXIO);
-	if (ofw_bus_search_compatible(dev, compat_data)->ocd_data == 0)
-		return (ENXIO);
-
-	device_set_desc(dev, "RockChip General Register Files");
-	return (BUS_PROBE_DEFAULT);
+	printf("squirrel!\n");
+	mtx_destroy(&callout_free_mutex);
+	memset(&callout_free, 'C', sizeof(callout_free));
 }
 
-static device_method_t rk_grf_methods[] = {
-	DEVMETHOD(device_probe, rk_grf_probe),
+static int
+callout_free_load(module_t mod, int cmd, void *arg)
+{
+	int error;
 
-	DEVMETHOD_END
-};
+	switch (cmd) {
+	case MOD_LOAD:
+		mtx_init(&callout_free_mutex, "callout_free", NULL, MTX_DEF);
+		/*
+		 * Do not pass CALLOUT_RETURNUNLOCKED so the callout
+		 * subsystem will unlock the "destroyed" mutex.
+		 */
+		callout_init_mtx(&callout_free, &callout_free_mutex, 0);
+		printf("callout_free_func = %p\n", callout_free_func);
+		printf("callout_free_arg = %p\n", &callout_free_arg);
+		callout_reset(&callout_free, hz/10, callout_free_func,
+		    &callout_free_arg);
+		error = 0;
+		break;
 
-DEFINE_CLASS_1(rk_grf, rk_grf_driver, rk_grf_methods,
-    sizeof(struct simple_mfd_softc), simple_mfd_driver);
+	case MOD_UNLOAD:
+		error = 0;
+		break;
 
-static devclass_t rk_grf_devclass;
-EARLY_DRIVER_MODULE(rk_grf, simplebus, rk_grf_driver, rk_grf_devclass,
-    0, 0, BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE);
-MODULE_VERSION(rk_grf, 1);
+	default:
+		error = EOPNOTSUPP;
+		break;
+	}
+
+	return (error);
+}
+
+DEV_MODULE(callout_free, callout_free_load, NULL);
