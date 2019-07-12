@@ -68,23 +68,11 @@ __FBSDID("$FreeBSD$");
  * machine-independent limit on the number of FDs per message.  Each control
  * message contains 1 FD and requires 12 bytes for the header, 4 pad bytes,
  * 4 bytes for the descriptor, and another 4 pad bytes.
+ *
+ * XXX
  */
-#define	PKG_MAX_SIZE	(MCLBYTES / 24)
+#define	PKG_MAX_SIZE	((MCLBYTES - CMSG_SPACE(0)) / sizeof(void *))
 #endif
-
-static int
-msghdr_add_fd(struct cmsghdr *cmsg, int fd)
-{
-
-	PJDLOG_ASSERT(fd >= 0);
-
-	cmsg->cmsg_level = SOL_SOCKET;
-	cmsg->cmsg_type = SCM_RIGHTS;
-	cmsg->cmsg_len = CMSG_LEN(sizeof(fd));
-	bcopy(&fd, CMSG_DATA(cmsg), sizeof(fd));
-
-	return (0);
-}
 
 static void
 fd_wait(int fd, bool doread)
@@ -228,7 +216,6 @@ fd_package_send(int sock, const int *fds, size_t nfds)
 	struct msghdr msg;
 	struct cmsghdr *cmsg;
 	struct iovec iov;
-	unsigned int i;
 	int serrno, ret;
 	uint8_t dummy;
 
@@ -247,24 +234,19 @@ fd_package_send(int sock, const int *fds, size_t nfds)
 
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
-	msg.msg_controllen = nfds * CMSG_SPACE(sizeof(int));
+	msg.msg_controllen = CMSG_SPACE(nfds * sizeof(int));
 	msg.msg_control = calloc(1, msg.msg_controllen);
 	if (msg.msg_control == NULL)
 		return (-1);
 
-	ret = -1;
+	cmsg = msg.msg_control;
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(nfds * sizeof(int));
+	memcpy(CMSG_DATA(cmsg), fds, nfds * sizeof(int));
 
-	for (i = 0, cmsg = CMSG_FIRSTHDR(&msg); i < nfds && cmsg != NULL;
-	    i++, cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-		if (msghdr_add_fd(cmsg, fds[i]) == -1)
-			goto end;
-	}
+	ret = msg_send(sock, &msg);
 
-	if (msg_send(sock, &msg) == -1)
-		goto end;
-
-	ret = 0;
-end:
 	serrno = errno;
 	free(msg.msg_control);
 	errno = serrno;
@@ -274,11 +256,11 @@ end:
 static int
 fd_package_recv(int sock, int *fds, size_t nfds)
 {
+	struct iovec iov;
 	struct msghdr msg;
 	struct cmsghdr *cmsg;
-	unsigned int i;
+	unsigned int i, n;
 	int serrno, ret;
-	struct iovec iov;
 	uint8_t dummy;
 
 	PJDLOG_ASSERT(sock >= 0);
@@ -296,7 +278,7 @@ fd_package_recv(int sock, int *fds, size_t nfds)
 
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
-	msg.msg_controllen = nfds * CMSG_SPACE(sizeof(int));
+	msg.msg_controllen = CMSG_SPACE(nfds * sizeof(int));
 	msg.msg_control = calloc(1, msg.msg_controllen);
 	if (msg.msg_control == NULL)
 		return (-1);
@@ -306,42 +288,19 @@ fd_package_recv(int sock, int *fds, size_t nfds)
 	if (msg_recv(sock, &msg) == -1)
 		goto end;
 
-	i = 0;
 	cmsg = CMSG_FIRSTHDR(&msg);
-	while (cmsg && i < nfds) {
-		unsigned int n;
-
-		if (cmsg->cmsg_level != SOL_SOCKET ||
-		    cmsg->cmsg_type != SCM_RIGHTS) {
-			errno = EINVAL;
-			break;
-		}
-		n = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
-		if (i + n > nfds) {
-			errno = EINVAL;
-			break;
-		}
-		bcopy(CMSG_DATA(cmsg), fds + i, sizeof(int) * n);
-		cmsg = CMSG_NXTHDR(&msg, cmsg);
-		i += n;
-	}
-
-	if (cmsg != NULL || i < nfds) {
-		unsigned int last;
-
-		/*
-		 * We need to close all received descriptors, even if we have
-		 * different control message (eg. SCM_CREDS) in between.
-		 */
-		last = i;
-		for (i = 0; i < last; i++) {
-			if (fds[i] >= 0) {
-				close(fds[i]);
-			}
-		}
+	if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS) {
 		errno = EINVAL;
 		goto end;
 	}
+	n = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+	if (n != nfds) {
+		errno = EINVAL;
+		for (i = 0; i < n; i++)
+			(void)close(*((int *)(void *)CMSG_DATA(cmsg) + i));
+		goto end;
+	}
+	memcpy(fds, CMSG_DATA(cmsg), sizeof(int) * nfds);
 
 #ifndef MSG_CMSG_CLOEXEC
 	/*
@@ -350,7 +309,7 @@ fd_package_recv(int sock, int *fds, size_t nfds)
 	 * consistency.
 	 */
 	for (i = 0; i < nfds; i++) {
-		(void) fcntl(fds[i], F_SETFD, FD_CLOEXEC);
+		(void)fcntl(fds[i], F_SETFD, FD_CLOEXEC);
 	}
 #endif
 
