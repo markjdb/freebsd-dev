@@ -1628,17 +1628,15 @@ add_gnu_debuglink(struct elfcopy *ecp)
 		err(EXIT_FAILURE, "malloc failed");
 	if ((sa->name = strdup(".gnu_debuglink")) == NULL)
 		err(EXIT_FAILURE, "strdup failed");
-	if (stat(ecp->debuglink, &sb) == -1)
+	if (fstat(fileno(ecp->debuglinkf), &sb) == -1)
 		err(EXIT_FAILURE, "stat failed");
 	if (sb.st_size == 0)
 		errx(EXIT_FAILURE, "empty debug link target %s",
 		    ecp->debuglink);
 	if ((buf = malloc(sb.st_size)) == NULL)
 		err(EXIT_FAILURE, "malloc failed");
-	if ((fp = fopen(ecp->debuglink, "r")) == NULL)
-		err(EXIT_FAILURE, "can not open %s", ecp->debuglink);
-	if (fread(buf, 1, sb.st_size, fp) == 0 ||
-	    ferror(fp))
+	fp = ecp->debuglinkf;
+	if (fread(buf, 1, sb.st_size, fp) == 0 || ferror(fp))
 		err(EXIT_FAILURE, "fread failed");
 	fclose(fp);
 

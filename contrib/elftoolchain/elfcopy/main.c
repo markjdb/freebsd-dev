@@ -27,6 +27,7 @@
 #include <sys/param.h>
 #include <sys/stat.h>
 
+#include <capsicum_helpers.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -513,6 +514,7 @@ free_elf(struct elfcopy *ecp)
 static void
 inout_init(struct elfcopy *ecp, int argc, char **argv, const char *outfile)
 {
+	cap_rights_t	 rights;
 	char		 path[PATH_MAX];
 	char		*buf, **dargv;
 	size_t		 n;
@@ -534,6 +536,18 @@ inout_init(struct elfcopy *ecp, int argc, char **argv, const char *outfile)
 		buf += n;
 	}
 
+	cap_rights_init(&rights, CAP_FCNTL, CAP_FSTAT, CAP_LOOKUP, CAP_MMAP_R,
+	    CAP_SEEK);
+	if (outfile == NULL) {
+		cap_rights_set(&rights, CAP_CREATE, CAP_FCHMOD, CAP_FSTAT,
+		    CAP_FTRUNCATE, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET,
+		    CAP_UNLINKAT, CAP_WRITE);
+	}
+	ecp->fa = fileargs_init(argc, dargv, O_DIRECTORY | O_RDONLY, 0, &rights,
+	    FA_OPEN);
+	if (ecp->fa == NULL)
+		err(EXIT_FAILURE, "failed to initialize fileargs");
+
 	if (outfile != NULL) {
 		n = strlcpy(path, outfile, sizeof(path));
 		if (n >= sizeof(path))
@@ -544,6 +558,17 @@ inout_init(struct elfcopy *ecp, int argc, char **argv, const char *outfile)
 	} else {
 		dfd = -1;
 	}
+
+	if (ecp->debuglink != NULL) {
+		ecp->debuglinkf = fopen(ecp->debuglink, "r");
+		if (ecp->debuglinkf == NULL)
+			err(EXIT_FAILURE, "open %s failed", ecp->debuglink);
+		cap_rights_limit(fileno(ecp->debuglinkf),
+		    cap_rights_init(&rights, CAP_FSTAT, CAP_READ));
+	}
+
+	if (caph_enter_casper() < 0)
+		err(EXIT_FAILURE, "failed to enter capability mode");
 
 	ecp->outfile = outfile;
 	ecp->outdfd = dfd;
@@ -651,7 +676,7 @@ create_file(struct elfcopy *ecp, int argi)
 	dst = ecp->outfile;
 	src = ecp->argv[argi];
 
-	dfd = open(ecp->dargv[argi], O_DIRECTORY | O_RDONLY);
+	dfd = fileargs_open(ecp->fa, ecp->dargv[argi]);
 	if (dfd < 0)
 		err(EXIT_FAILURE, "open %s failed", ecp->dargv[argi]);
 
@@ -808,7 +833,7 @@ copy_done:
 		in_place = 0;
 		if (dst == NULL) {
 			dst = src;
-			if (lstat(dst, &sb) != -1 &&
+			if (fstatat(dfd, dst, &sb, AT_SYMLINK_NOFOLLOW) != -1 &&
 			    (sb.st_nlink > 1 || S_ISLNK(sb.st_mode)))
 				in_place = 1;
 		} else {
@@ -1631,6 +1656,10 @@ main(int argc, char **argv)
 	TAILQ_INIT(&ecp->v_sec);
 
 	ecp->tmpdfd = tempdir_open();
+
+	caph_cache_catpages();
+	if (caph_limit_stdio() < 0)
+		err(EXIT_FAILURE, "failed to limit stdio rights");
 
 	if ((ecp->progname = ELFTC_GETPROGNAME()) == NULL)
 		ecp->progname = "elfcopy";

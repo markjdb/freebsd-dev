@@ -29,6 +29,8 @@
 #include <sys/queue.h>
 #include <gelf.h>
 #include <libelftc.h>
+#include <libcasper.h>
+#include <casper/cap_fileargs.h>
 
 #include "_elftc.h"
 
@@ -237,6 +239,7 @@ struct elfcopy {
 	char		*prefix_alloc;	/* alloc section prefix. */
 	char		*prefix_sym;	/* symbol prefix. */
 	char		*debuglink;	/* GNU debuglink file. */
+	FILE		*debuglinkf;
 	struct section	*symtab;	/* .symtab section. */
 	struct section	*strtab;	/* .strtab section. */
 	struct section	*shstrtab;	/* .shstrtab section. */
@@ -254,6 +257,7 @@ struct elfcopy {
 
 	char		**argv;
 	char		**dargv;
+	fileargs_t	*fa;
 	int		 outdfd;
 	const char	*outfile;
 	int		 tmpdfd;	/* tmpdir descriptor. */

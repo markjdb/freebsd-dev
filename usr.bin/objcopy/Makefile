@@ -19,6 +19,12 @@ WARNS?=	5
 
 LIBADD=	archive elftc elf pe
 
+.if ${MK_CASPER} != "no" && !defined(BOOTSTRAPPING) && !defined(NXB_TARGET)
+LIBADD+=	casper
+LIBADD+=	cap_fileargs
+CFLAGS+=	-DWITH_CASPER
+.endif
+
 CFLAGS+=-I${ELFTCDIR}/libelftc -I${ELFTCDIR}/libpe -I${ELFTCDIR}/common
 CFLAGS+=-DWITH_PE=1
 
