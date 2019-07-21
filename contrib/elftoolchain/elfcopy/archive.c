@@ -68,7 +68,7 @@ process_ar_obj(struct elfcopy *ecp, struct ar_obj *obj)
 	int		 fd;
 
 	/* Output to a temporary file. */
-	fd = create_tempfile(ecp, &tempfile);
+	fd = create_tempfile(ecp->tmpdfd, &tempfile);
 	if ((ecp->eout = elf_begin(fd, ELF_C_WRITE, NULL)) == NULL)
 		errx(EXIT_FAILURE, "elf_begin() failed: %s",
 		    elf_errmsg(-1));
@@ -98,7 +98,7 @@ process_ar_obj(struct elfcopy *ecp, struct ar_obj *obj)
 		    tempfile);
 	if ((size_t) read(fd, obj->maddr, obj->size) != obj->size)
 		err(EXIT_FAILURE, "read failed for '%s'", tempfile);
-	unlink_tempfile(tempfile);
+	unlink_tempfile(ecp->tmpdfd, tempfile);
 	close(fd);
 	if (strlen(obj->name) > _MAXNAMELEN_SVR4)
 		add_to_ar_str_table(ecp, obj->name);

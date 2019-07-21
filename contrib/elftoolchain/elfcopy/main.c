@@ -31,6 +31,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <libgen.h>
 #include <libelftc.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -215,10 +216,9 @@ static struct {
 	{NULL, 0}
 };
 
-static int	copy_from_tempfile(char *src, const char *dst, int infd,
-    int in_place);
-static void	create_file(struct elfcopy *ecp, const char *src,
-    const char *dst);
+static int	copy_from_tempfile(int dfd, char *src, const char *dst,
+    int infd, int in_place);
+static void	create_file(struct elfcopy *ecp, int argi);
 static void	elfcopy_main(struct elfcopy *ecp, int argc, char **argv);
 static void	elfcopy_usage(void);
 static void	mcs_main(struct elfcopy *ecp, int argc, char **argv);
@@ -510,9 +510,50 @@ free_elf(struct elfcopy *ecp)
 	}
 }
 
+static void
+inout_init(struct elfcopy *ecp, int argc, char **argv, const char *outfile)
+{
+	char		 path[PATH_MAX];
+	char		*buf, **dargv;
+	size_t		 n;
+	int		 dfd, i;
+
+	buf = calloc(argc, PATH_MAX);
+	if (buf == NULL)
+		err(EXIT_FAILURE, "calloc");
+	dargv = calloc(argc, sizeof(char *));
+	if (dargv == NULL)
+		err(EXIT_FAILURE, "calloc");
+
+	for (i = 0; i < argc; i++) {
+		n = strlcpy(buf, argv[i], PATH_MAX);
+		if (n >= PATH_MAX)
+			errx(EXIT_FAILURE, "argument '%s' too long", argv[i]);
+		argv[i] = basename(argv[i]);
+		dargv[i] = dirname(buf);
+		buf += n;
+	}
+
+	if (outfile != NULL) {
+		n = strlcpy(path, outfile, sizeof(path));
+		if (n >= sizeof(path))
+			errx(EXIT_FAILURE, "argument '%s' too long", outfile);
+		dfd = open(dirname(path), O_DIRECTORY | O_RDONLY);
+		if (dfd < 0)
+			err(EXIT_FAILURE, "open %s failed", outfile);
+	} else {
+		dfd = -1;
+	}
+
+	ecp->outfile = outfile;
+	ecp->outdfd = dfd;
+	ecp->argv = argv;
+	ecp->dargv = dargv;
+}
+
 /* Create a temporary file. */
 int
-create_tempfile(struct elfcopy *ecp, char **fnp)
+create_tempfile(int dfd, char **fnp)
 {
 	char		*fn;
 	int		 fd;
@@ -520,7 +561,7 @@ create_tempfile(struct elfcopy *ecp, char **fnp)
 	asprintf(&fn, "ecp.XXXXXXXX");
 	if (fn == NULL)
 		err(EXIT_FAILURE, "asprintf");
-	fd = mkostempsat(ecp->tmpdfd, fn, 0, 0);
+	fd = mkostempsat(dfd, fn, 0, 0);
 	if (fd < 0)
 		err(EXIT_FAILURE, "mkstemp %s failed", fn);
 	*fnp = fn;
@@ -528,10 +569,10 @@ create_tempfile(struct elfcopy *ecp, char **fnp)
 }
 
 void
-unlink_tempfile(char *fn)
+unlink_tempfile(int dfd, char *fn)
 {
 
-	if (unlink(fn) < 0)
+	if (unlinkat(dfd, fn, 0) < 0)
 		err(EXIT_FAILURE, "failed to unlink '%s'", fn);
 	free(fn);
 }
@@ -543,15 +584,15 @@ unlink_tempfile(char *fn)
  * descriptor for the output file is returned.
  */
 static int
-copy_from_tempfile(char *src, const char *dst, int infd, int in_place)
+copy_from_tempfile(int dfd, char *src, const char *dst, int infd, int in_place)
 {
 	int tmpfd;
 
 	/*
-	 * First, check if we can use rename().
+	 * First, check if we can use renameat().
 	 */
 	if (in_place == 0) {
-		if (rename(src, dst) >= 0)
+		if (renameat(dfd, src, dfd, dst) >= 0)
 			return (infd);
 		else if (errno != EXDEV)
 			return (-1);
@@ -561,12 +602,11 @@ copy_from_tempfile(char *src, const char *dst, int infd, int in_place)
 		 * two different file systems, invoke a helper function in
 		 * libelftc to do the copy.
 		 */
-
-		if (unlink(dst) < 0)
+		if (unlinkat(dfd, dst, 0) < 0)
 			return (-1);
 	}
 
-	if ((tmpfd = open(dst, O_CREAT | O_TRUNC | O_WRONLY, 0755)) < 0)
+	if ((tmpfd = openat(dfd, dst, O_CREAT | O_TRUNC | O_WRONLY, 0755)) < 0)
 		return (-1);
 
 	if (elftc_copyfile(infd, tmpfd) < 0) {
@@ -574,7 +614,7 @@ copy_from_tempfile(char *src, const char *dst, int infd, int in_place)
 		return (-1);
 	}
 
-	unlink_tempfile(src);
+	unlink_tempfile(dfd, src);
 
 	(void) close(infd);
 
@@ -590,7 +630,7 @@ tempdir_open(void)
 	tmpdir = getenv("TMPDIR");
 	if (tmpdir == NULL || *tmpdir == '\0')
 		tmpdir = "/tmp";
-	dfd = open(tmpdir, O_DIRECTORY);
+	dfd = open(tmpdir, O_DIRECTORY | O_RDONLY);
 	if (dfd < 0)
 		err(EXIT_FAILURE, "failed to open $TMPDIR");
 
@@ -598,28 +638,34 @@ tempdir_open(void)
 }
 
 static void
-create_file(struct elfcopy *ecp, const char *src, const char *dst)
+create_file(struct elfcopy *ecp, int argi)
 {
+	char		 path[PATH_MAX];
 	struct stat	 sb;
+	const char	*dst, *src;
 	char		*tempfile, *elftemp;
-	int		 efd, ifd, ofd, ofd0;
+	int		 dfd, efd, ifd, ofd, ofd0;
 	int		 in_place;
 
 	tempfile = NULL;
+	dst = ecp->outfile;
+	src = ecp->argv[argi];
 
-	if (src == NULL)
-		errx(EXIT_FAILURE, "internal: src == NULL");
-	if ((ifd = open(src, O_RDONLY)) == -1)
-		err(EXIT_FAILURE, "open %s failed", src);
+	dfd = open(ecp->dargv[argi], O_DIRECTORY | O_RDONLY);
+	if (dfd < 0)
+		err(EXIT_FAILURE, "open %s failed", ecp->dargv[argi]);
 
+	if ((ifd = openat(dfd, ecp->argv[argi], O_RDONLY)) == -1)
+		err(EXIT_FAILURE, "open %s failed", ecp->argv[argi]);
 	if (fstat(ifd, &sb) == -1)
-		err(EXIT_FAILURE, "fstat %s failed", src);
+		err(EXIT_FAILURE, "fstat %s failed", ecp->argv[argi]);
 
-	if (dst == NULL)
-		ofd = create_tempfile(ecp, &tempfile);
-	else
-		if ((ofd = open(dst, O_RDWR|O_CREAT, 0755)) == -1)
-			err(EXIT_FAILURE, "open %s failed", dst);
+	if (dst != NULL) {
+		(void)close(dfd);
+		dfd = ecp->outdfd;
+	}
+
+	ofd = create_tempfile(dfd, &tempfile);
 
 #ifndef LIBELF_AR
 	/* Detect and process ar(1) archive using libarchive. */
@@ -649,7 +695,7 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 			if (ecp->oed == ELFDATANONE)
 				ecp->oed = ELFDATA2LSB;
 		}
-		efd = create_tempfile(ecp, &elftemp);
+		efd = create_tempfile(ecp->tmpdfd, &elftemp);
 		if ((ecp->eout = elf_begin(efd, ELF_C_WRITE, NULL)) == NULL)
 			errx(EXIT_FAILURE, "elf_begin() failed: %s",
 			    elf_errmsg(-1));
@@ -668,7 +714,7 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 			err(EXIT_FAILURE, "lseek failed for '%s'", elftemp);
 		ifd = efd;
 
-		unlink_tempfile(elftemp);
+		unlink_tempfile(ecp->tmpdfd, elftemp);
 	}
 
 	if ((ecp->ein = elf_begin(ifd, ELF_C_READ, NULL)) == NULL)
@@ -701,8 +747,8 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 			 * output object.
 			 */
 			if (tempfile != NULL)
-				unlink_tempfile(tempfile);
-			ofd0 = create_tempfile(ecp, &tempfile);
+				unlink_tempfile(dfd, tempfile);
+			ofd0 = create_tempfile(dfd, &tempfile);
 
 			/*
 			 * Rewind the file descriptor being processed.
@@ -765,12 +811,14 @@ copy_done:
 			if (lstat(dst, &sb) != -1 &&
 			    (sb.st_nlink > 1 || S_ISLNK(sb.st_mode)))
 				in_place = 1;
+		} else {
+			(void)strlcpy(path, dst, sizeof(path));
+			dst = basename(path);
 		}
 
-		ofd = copy_from_tempfile(tempfile, dst, ofd, in_place);
+		ofd = copy_from_tempfile(dfd, tempfile, dst, ofd, in_place);
 		if (ofd < 0)
 			err(EXIT_FAILURE, "creation of %s failed", dst);
-		tempfile = NULL;
 	}
 
 	if (strcmp(dst, "/dev/null") && fchmod(ofd, sb.st_mode) == -1)
@@ -780,6 +828,7 @@ copy_done:
 	    elftc_set_timestamps(ofd, &sb) < 0)
 		err(EXIT_FAILURE, "setting timestamps failed");
 
+	close(dfd);
 	close(ifd);
 	close(ofd);
 }
@@ -1003,17 +1052,20 @@ elfcopy_main(struct elfcopy *ecp, int argc, char **argv)
 
 	infile = argv[0];
 	outfile = NULL;
-	if (argc > 1)
+	if (argc == 2) {
 		outfile = argv[1];
+		argc--;
+	}
 
-	create_file(ecp, infile, outfile);
+	inout_init(ecp, argc, argv, outfile);
+	create_file(ecp, 0);
 }
 
 static void
 mcs_main(struct elfcopy *ecp, int argc, char **argv)
 {
 	struct sec_action	*sac;
-	const char		*string;
+	const char		*outfile, *string;
 	int			 append, delete, compress, name, print;
 	int			 opt, i;
 
@@ -1087,13 +1139,16 @@ mcs_main(struct elfcopy *ecp, int argc, char **argv)
 		sac->string = string;
 	}
 
-	for (i = 0; i < argc; i++) {
-		/* If only -p is specified, output to /dev/null */
-		if (print && !append && !compress && !delete)
-			create_file(ecp, argv[i], "/dev/null");
-		else
-			create_file(ecp, argv[i], NULL);
-	}
+	/* If only -p is specified, output to /dev/null */
+	if (print && !append && !compress && !delete)
+		/* XXX this case is broken */
+		outfile = "/dev/null";
+	else
+		outfile = NULL;
+
+	inout_init(ecp, argc, argv, outfile);
+	for (i = 0; i < argc; i++)
+		create_file(ecp, i);
 }
 
 static void
@@ -1179,8 +1234,9 @@ strip_main(struct elfcopy *ecp, int argc, char **argv)
 	if (outfile != NULL && argc != 1)
 		strip_usage();
 
+	inout_init(ecp, argc, argv, outfile);
 	for (i = 0; i < argc; i++)
-		create_file(ecp, argv[i], outfile);
+		create_file(ecp, i);
 }
 
 static void
