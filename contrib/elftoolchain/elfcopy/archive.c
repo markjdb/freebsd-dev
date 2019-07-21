@@ -68,7 +68,7 @@ process_ar_obj(struct elfcopy *ecp, struct ar_obj *obj)
 	int		 fd;
 
 	/* Output to a temporary file. */
-	create_tempfile(&tempfile, &fd);
+	fd = create_tempfile(&tempfile);
 	if ((ecp->eout = elf_begin(fd, ELF_C_WRITE, NULL)) == NULL)
 		errx(EXIT_FAILURE, "elf_begin() failed: %s",
 		    elf_errmsg(-1));
