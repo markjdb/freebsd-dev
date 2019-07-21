@@ -1020,7 +1020,6 @@ elfcopy_main(struct elfcopy *ecp, int argc, char **argv)
 			elfcopy_usage();
 		}
 	}
-
 	argc -= optind;
 	argv += optind;
 
@@ -1073,7 +1072,6 @@ mcs_main(struct elfcopy *ecp, int argc, char **argv)
 			mcs_usage();
 		}
 	}
-
 	argc -= optind;
 	argv += optind;
 
@@ -1189,7 +1187,6 @@ strip_main(struct elfcopy *ecp, int argc, char **argv)
 			strip_usage();
 		}
 	}
-
 	argc -= optind;
 	argv += optind;
 
