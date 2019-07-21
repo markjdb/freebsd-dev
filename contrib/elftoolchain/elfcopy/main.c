@@ -674,11 +674,10 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 			errx(EXIT_FAILURE, "Internal: invalid target flavour");
 		elf_end(ecp->eout);
 
-		/* Open intermediate ELF object as new input object. */
-		close(ifd);
-		if ((ifd = open(elftemp, O_RDONLY)) == -1)
-			err(EXIT_FAILURE, "open %s failed", src);
-		close(efd);
+		if (lseek(efd, SEEK_SET, 0) < 0)
+			err(EXIT_FAILURE, "lseek failed for '%s'", elftemp);
+		ifd = efd;
+
 		unlink_tempfile(elftemp);
 	}
 
