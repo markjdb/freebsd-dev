@@ -40,25 +40,25 @@ ELFTC_VCSID("$Id$");
 #if	defined(__FreeBSD__) || defined(__NetBSD__) || defined(__APPLE__)
 #define	ATIME	st_atimespec
 #define	MTIME	st_mtimespec
-#define	LIBELFTC_HAVE_UTIMES	1
+#define	LIBELFTC_HAVE_FUTIMES	1
 #endif
 
 #if	defined(__DragonFly__) || defined(__linux__) || defined(__OpenBSD__)
 #define	ATIME	st_atim
 #define	MTIME	st_mtim
-#define	LIBELFTC_HAVE_UTIMES	1
+#define	LIBELFTC_HAVE_FUTIMES	1
 #endif
 
-#if	LIBELFTC_HAVE_UTIMES
+#if	LIBELFTC_HAVE_FUTIMES
 #include <sys/time.h>
 #else
 #include <utime.h>
 #endif
 
 int
-elftc_set_timestamps(const char *fn, struct stat *sb)
+elftc_set_timestamps(int fd, struct stat *sb)
 {
-#if	LIBELFTC_HAVE_UTIMES
+#if	LIBELFTC_HAVE_FUTIMES
 	/*
 	 * The BSD utimes() system call offers timestamps
 	 * 1-microsecond granularity.
@@ -70,7 +70,7 @@ elftc_set_timestamps(const char *fn, struct stat *sb)
 	tv[1].tv_sec = sb->MTIME.tv_sec;
 	tv[1].tv_usec = sb->MTIME.tv_nsec / 1000;
 
-	return (utimes(fn, tv));
+	return (futimes(fd, tv));
 #else
 	/*
 	 * On OSes without utimes(), fall back to the POSIX utime()
@@ -80,6 +80,6 @@ elftc_set_timestamps(const char *fn, struct stat *sb)
 
 	utb.actime = sb->st_atime;
 	utb.modtime = sb->st_mtime;
-	return (utime(fn, &utb));
+	return (futime(fd, &utb));
 #endif
 }

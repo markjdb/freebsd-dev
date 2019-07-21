@@ -802,7 +802,7 @@ copy_done:
 		err(EXIT_FAILURE, "fchmod %s failed", dst);
 
 	if ((ecp->flags & PRESERVE_DATE) &&
-	    elftc_set_timestamps(dst, &sb) < 0)
+	    elftc_set_timestamps(ofd, &sb) < 0)
 		err(EXIT_FAILURE, "setting timestamps failed");
 
 	close(ifd);
