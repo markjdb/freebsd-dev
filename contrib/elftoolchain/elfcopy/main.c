@@ -215,8 +215,8 @@ static struct {
 	{NULL, 0}
 };
 
-static int	copy_from_tempfile(const char *src, const char *dst,
-    int infd, int *outfd, int in_place);
+static int	copy_from_tempfile(char *src, const char *dst, int infd,
+    int in_place);
 static void	create_file(struct elfcopy *ecp, const char *src,
     const char *dst);
 static void	elfcopy_main(struct elfcopy *ecp, int argc, char **argv);
@@ -553,15 +553,23 @@ create_tempfile(char **fn)
 	return (fd);
 }
 
+void
+unlink_tempfile(char *fn)
+{
+
+	if (unlink(fn) < 0)
+		err(EXIT_FAILURE, "failed to unlink '%s'", fn);
+	free(fn);
+}
+
 /*
  * Copy temporary file with path src and file descriptor infd to path dst.
  * If in_place is set act as if editing the file in place, avoiding rename()
- * to preserve hard and symbolic links. Output file remains open, with file
- * descriptor returned in outfd.
+ * to preserve hard and symbolic links. The output file remains open, and a
+ * descriptor for the output file is returned.
  */
 static int
-copy_from_tempfile(const char *src, const char *dst, int infd, int *outfd,
-    int in_place)
+copy_from_tempfile(char *src, const char *dst, int infd, int in_place)
 {
 	int tmpfd;
 
@@ -569,10 +577,9 @@ copy_from_tempfile(const char *src, const char *dst, int infd, int *outfd,
 	 * First, check if we can use rename().
 	 */
 	if (in_place == 0) {
-		if (rename(src, dst) >= 0) {
-			*outfd = infd;
-			return (0);
-		} else if (errno != EXDEV)
+		if (rename(src, dst) >= 0)
+			return (infd);
+		else if (errno != EXDEV)
 			return (-1);
 	
 		/*
@@ -593,23 +600,11 @@ copy_from_tempfile(const char *src, const char *dst, int infd, int *outfd,
 		return (-1);
 	}
 
-	/*
-	 * Remove the temporary file from the file system
-	 * namespace, and close its file descriptor.
-	 */
-	if (unlink(src) < 0) {
-		(void) close(tmpfd);
-		return (-1);
-	}
+	unlink_tempfile(src);
 
 	(void) close(infd);
 
-	/*
-	 * Return the file descriptor for the destination.
-	 */
-	*outfd = tmpfd;
-
-	return (0);
+	return (tmpfd);
 }
 
 static void
@@ -617,7 +612,7 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 {
 	struct stat	 sb;
 	char		*tempfile, *elftemp;
-	int		 efd, ifd, ofd, ofd0, tfd;
+	int		 efd, ifd, ofd, ofd0;
 	int		 in_place;
 
 	tempfile = NULL;
@@ -684,9 +679,7 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 		if ((ifd = open(elftemp, O_RDONLY)) == -1)
 			err(EXIT_FAILURE, "open %s failed", src);
 		close(efd);
-		if (unlink(elftemp) < 0)
-			err(EXIT_FAILURE, "unlink %s failed", elftemp);
-		free(elftemp);
+		unlink_tempfile(elftemp);
 	}
 
 	if ((ecp->ein = elf_begin(ifd, ELF_C_READ, NULL)) == NULL)
@@ -718,12 +711,8 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 			 * Create (another) tempfile for binary/srec/ihex
 			 * output object.
 			 */
-			if (tempfile != NULL) {
-				if (unlink(tempfile) < 0)
-					err(EXIT_FAILURE, "unlink %s failed",
-					    tempfile);
-				free(tempfile);
-			}
+			if (tempfile != NULL)
+				unlink_tempfile(tempfile);
 			ofd0 = create_tempfile(&tempfile);
 
 			/*
@@ -789,13 +778,10 @@ copy_done:
 				in_place = 1;
 		}
 
-		if (copy_from_tempfile(tempfile, dst, ofd, &tfd, in_place) < 0)
+		ofd = copy_from_tempfile(tempfile, dst, ofd, in_place);
+		if (ofd < 0)
 			err(EXIT_FAILURE, "creation of %s failed", dst);
-
-		free(tempfile);
 		tempfile = NULL;
-
-		ofd = tfd;
 	}
 
 	if (strcmp(dst, "/dev/null") && fchmod(ofd, sb.st_mode) == -1)

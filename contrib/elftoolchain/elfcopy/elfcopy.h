@@ -298,7 +298,7 @@ void	create_scn(struct elfcopy *_ecp);
 void	create_srec(struct elfcopy *_ecp, int _ifd, int _ofd, const char *_ofn);
 void	create_symtab(struct elfcopy *_ecp);
 void	create_symtab_data(struct elfcopy *_ecp);
-void	create_tempfile(char **_fn, int *_fd);
+int	create_tempfile(char **_fn);
 void	finalize_external_symtab(struct elfcopy *_ecp);
 void	free_elf(struct elfcopy *_ecp);
 void	free_sec_act(struct elfcopy *_ecp);
@@ -316,6 +316,7 @@ struct symop *lookup_symop_list(struct elfcopy *_ecp, const char *_name,
     unsigned int _op);
 void	resync_sections(struct elfcopy *_ecp);
 void	setup_phdr(struct elfcopy *_ecp);
+void	unlink_tempfile(char *_fn);
 void	update_shdr(struct elfcopy *_ecp, int _update_link);
 
 #ifndef LIBELF_AR

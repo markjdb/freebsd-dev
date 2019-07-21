@@ -98,9 +98,7 @@ process_ar_obj(struct elfcopy *ecp, struct ar_obj *obj)
 		    tempfile);
 	if ((size_t) read(fd, obj->maddr, obj->size) != obj->size)
 		err(EXIT_FAILURE, "read failed for '%s'", tempfile);
-	if (unlink(tempfile))
-		err(EXIT_FAILURE, "unlink %s failed", tempfile);
-	free(tempfile);
+	unlink_tempfile(tempfile);
 	close(fd);
 	if (strlen(obj->name) > _MAXNAMELEN_SVR4)
 		add_to_ar_str_table(ecp, obj->name);
