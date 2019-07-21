@@ -252,6 +252,8 @@ struct elfcopy {
 	STAILQ_HEAD(, symfile) v_symfile; /* list of symlist files. */
 	TAILQ_HEAD(, section) v_sec;	/* list of sections. */
 
+	int		 tmpdfd;	/* tmpdir descriptor. */
+
 	/*
 	 * Fields for the ar(1) archive.
 	 */
@@ -298,7 +300,7 @@ void	create_scn(struct elfcopy *_ecp);
 void	create_srec(struct elfcopy *_ecp, int _ifd, int _ofd, const char *_ofn);
 void	create_symtab(struct elfcopy *_ecp);
 void	create_symtab_data(struct elfcopy *_ecp);
-int	create_tempfile(char **_fn);
+int	create_tempfile(struct elfcopy *_ecp, char **_fn);
 void	finalize_external_symtab(struct elfcopy *_ecp);
 void	free_elf(struct elfcopy *_ecp);
 void	free_sec_act(struct elfcopy *_ecp);

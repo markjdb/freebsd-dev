@@ -512,44 +512,18 @@ free_elf(struct elfcopy *ecp)
 
 /* Create a temporary file. */
 int
-create_tempfile(char **fn)
+create_tempfile(struct elfcopy *ecp, char **fnp)
 {
-	const char	*tmpdir;
-	char		*cp, *tmpf;
-	size_t		 tlen, plen;
+	char		*fn;
 	int		 fd;
 
-#define	_TEMPFILE "ecp.XXXXXXXX"
-#define	_TEMPFILEPATH "/tmp/ecp.XXXXXXXX"
-
-	/* Repect TMPDIR environment variable. */
-	tmpdir = getenv("TMPDIR");
-	if (tmpdir != NULL && *tmpdir != '\0') {
-		tlen = strlen(tmpdir);
-		plen = strlen(_TEMPFILE);
-		tmpf = malloc(tlen + plen + 2);
-		if (tmpf == NULL)
-			err(EXIT_FAILURE, "malloc failed");
-		strncpy(tmpf, tmpdir, tlen);
-		cp = &tmpf[tlen - 1];
-		if (*cp++ != '/')
-			*cp++ = '/';
-		strncpy(cp, _TEMPFILE, plen);
-		cp[plen] = '\0';
-	} else {
-		tmpf = strdup(_TEMPFILEPATH);
-		if (tmpf == NULL)
-			err(EXIT_FAILURE, "strdup failed");
-	}
-	if ((fd = mkstemp(tmpf)) == -1)
-		err(EXIT_FAILURE, "mkstemp %s failed", tmpf);
-	if (fchmod(fd, 0644) == -1)
-		err(EXIT_FAILURE, "fchmod %s failed", tmpf);
-	*fn = tmpf;
-
-#undef _TEMPFILE
-#undef _TEMPFILEPATH
-
+	asprintf(&fn, "ecp.XXXXXXXX");
+	if (fn == NULL)
+		err(EXIT_FAILURE, "asprintf");
+	fd = mkostempsat(ecp->tmpdfd, fn, 0, 0);
+	if (fd < 0)
+		err(EXIT_FAILURE, "mkstemp %s failed", fn);
+	*fnp = fn;
 	return (fd);
 }
 
@@ -607,6 +581,22 @@ copy_from_tempfile(char *src, const char *dst, int infd, int in_place)
 	return (tmpfd);
 }
 
+static int
+tempdir_open(void)
+{
+	const char	*tmpdir;
+	int		 dfd;
+
+	tmpdir = getenv("TMPDIR");
+	if (tmpdir == NULL || *tmpdir == '\0')
+		tmpdir = "/tmp";
+	dfd = open(tmpdir, O_DIRECTORY);
+	if (dfd < 0)
+		err(EXIT_FAILURE, "failed to open $TMPDIR");
+
+	return (dfd);
+}
+
 static void
 create_file(struct elfcopy *ecp, const char *src, const char *dst)
 {
@@ -626,7 +616,7 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 		err(EXIT_FAILURE, "fstat %s failed", src);
 
 	if (dst == NULL)
-		ofd = create_tempfile(&tempfile);
+		ofd = create_tempfile(ecp, &tempfile);
 	else
 		if ((ofd = open(dst, O_RDWR|O_CREAT, 0755)) == -1)
 			err(EXIT_FAILURE, "open %s failed", dst);
@@ -659,7 +649,7 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 			if (ecp->oed == ELFDATANONE)
 				ecp->oed = ELFDATA2LSB;
 		}
-		efd = create_tempfile(&elftemp);
+		efd = create_tempfile(ecp, &elftemp);
 		if ((ecp->eout = elf_begin(efd, ELF_C_WRITE, NULL)) == NULL)
 			errx(EXIT_FAILURE, "elf_begin() failed: %s",
 			    elf_errmsg(-1));
@@ -712,7 +702,7 @@ create_file(struct elfcopy *ecp, const char *src, const char *dst)
 			 */
 			if (tempfile != NULL)
 				unlink_tempfile(tempfile);
-			ofd0 = create_tempfile(&tempfile);
+			ofd0 = create_tempfile(ecp, &tempfile);
 
 			/*
 			 * Rewind the file descriptor being processed.
@@ -1583,6 +1573,8 @@ main(int argc, char **argv)
 	STAILQ_INIT(&ecp->v_symfile);
 	STAILQ_INIT(&ecp->v_arobj);
 	TAILQ_INIT(&ecp->v_sec);
+
+	ecp->tmpdfd = tempdir_open();
 
 	if ((ecp->progname = ELFTC_GETPROGNAME()) == NULL)
 		ecp->progname = "elfcopy";
