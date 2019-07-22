@@ -6,6 +6,8 @@ SHLIBDIR?=	/lib/casper
 
 PACKAGE=	runtime
 
+LIB=		cap_fileargs
+
 SHLIB_MAJOR=	1
 INCSDIR?=	${INCLUDEDIR}/casper
 
