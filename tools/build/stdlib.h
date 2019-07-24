@@ -34,6 +34,7 @@
 __BEGIN_DECLS
    
 #if __BSD_VISIBLE
+int	mkostempsat(int, char *, int, int);
 void	*reallocarray(void *, size_t, size_t);
 #endif /* __BSD_VISIBLE */
 

@@ -65,6 +65,12 @@ INCS+=		capsicum_helpers.h
 INCS+=		libcasper.h
 .endif
 
+_WITH_MKOSTEMPSAT!= grep -c mkostempsat /usr/include/stdlib.h || true
+.if ${_WITH_MKOSTEMPSAT} == 0
+INCS+=		stdlib.h
+SRCS+=		mktemp.c
+.endif
+
 CASPERINC+=	${SRCTOP}/lib/libcasper/services/cap_fileargs/cap_fileargs.h
 
 .if empty(SRCS)
