@@ -321,7 +321,7 @@ arscp_create(char *in, char *out)
 		free(target);
 
 	target = out;
-	bsdar->filename = tmpac;
+	bsdar->outfile = tmpac;
 }
 
 /* A file copying implementation using mmap. */
@@ -443,7 +443,7 @@ arscp_dir(char *archive, struct list *list, char *rlt)
 			    "fopen %s failed", rlt);
 	}
 
-	bsdar->filename = archive;
+	bsdar->infile = archive;
 	if (list)
 		arscp_mlist2argv(list);
 	else {
@@ -463,7 +463,7 @@ arscp_dir(char *archive, struct list *list, char *rlt)
 		free(rlt);
 	}
 	free(archive);
-	bsdar->filename = tmpac;
+	bsdar->infile = tmpac;
 	arscp_free_argv();
 	arscp_free_mlist(list);
 }
@@ -503,7 +503,7 @@ arscp_save(void)
 		free(target);
 		tmpac = NULL;
 		target= NULL;
-		bsdar->filename = NULL;
+		bsdar->infile = NULL;
 	} else
 		bsdar_warnc(bsdar, 0, "no open output archive");
 }

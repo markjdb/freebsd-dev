@@ -134,7 +134,7 @@ create_obj_from_file(struct bsdar *bsdar, const char *name, time_t mtime)
 	obj = malloc(sizeof(struct ar_obj));
 	if (obj == NULL)
 		bsdar_errc(bsdar, EX_SOFTWARE, errno, "malloc failed");
-	if ((obj->fd = open(name, O_RDONLY, 0)) < 0) {
+	if ((obj->fd = fileargs_open(bsdar->fa, name)) < 0) {
 		bsdar_warnc(bsdar, errno, "can't open file: %s", name);
 		free(obj);
 		return (NULL);
@@ -272,7 +272,7 @@ tail:
  * specifies the members ADDLIB want.
  */
 static void
-read_objs(struct bsdar *bsdar, const char *archive, int checkargv)
+read_objs(struct bsdar *bsdar, const char *archive __unused, int checkargv)
 {
 	struct archive		 *a;
 	struct archive_entry	 *entry;
@@ -287,7 +287,8 @@ read_objs(struct bsdar *bsdar, const char *archive, int checkargv)
 	if ((a = archive_read_new()) == NULL)
 		bsdar_errc(bsdar, EX_SOFTWARE, 0, "archive_read_new failed");
 	archive_read_support_format_ar(a);
-	AC(archive_read_open_filename(a, archive, DEF_BLKSZ));
+	/* XXX this is wrong for archive != bsdar->filename */
+	AC(archive_read_open_fd(a, bsdar->infd, DEF_BLKSZ));
 	for (;;) {
 		r = archive_read_next_header(a, &entry);
 		if (r == ARCHIVE_FATAL)
@@ -396,30 +397,24 @@ write_archive(struct bsdar *bsdar, char mode)
 	 * Test if the specified archive exists, to figure out
 	 * whether we are creating one here.
 	 */
-	if (stat(bsdar->filename, &sb) != 0) {
-		if (errno != ENOENT) {
-			bsdar_warnc(bsdar, 0, "stat %s failed",
-			    bsdar->filename);
-			return;
-		}
-
+	if (bsdar->infd == -1) {
 		/* We do not create archive in mode 'd', 'm' and 's'.  */
 		if (mode != 'r' && mode != 'q') {
 			bsdar_warnc(bsdar, 0, "%s: no such file",
-			    bsdar->filename);
+			    bsdar->infile);
 			return;
 		}
 
 		/* Issue a warning if -c is not specified when creating. */
 		if (!(bsdar->options & AR_C))
-			bsdar_warnc(bsdar, 0, "creating %s", bsdar->filename);
+			bsdar_warnc(bsdar, 0, "creating %s", bsdar->outfile);
 		goto new_archive;
 	}
 
 	/*
 	 * First read members from existing archive.
 	 */
-	read_objs(bsdar, bsdar->filename, 0);
+	read_objs(bsdar, bsdar->infile, 0);
 
 	/*
 	 * For mode 's', no member will be moved, deleted or replaced.
@@ -690,7 +685,7 @@ write_objs(struct bsdar *bsdar)
 
 	archive_write_set_format_ar_svr4(a);
 
-	AC(archive_write_open_filename(a, bsdar->filename));
+	AC(archive_write_open_fd(a, bsdar->outfd));
 
 	/*
 	 * write the archive symbol table, if there is one.

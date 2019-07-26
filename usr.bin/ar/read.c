@@ -32,9 +32,11 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/queue.h>
 #include <sys/stat.h>
+
 #include <archive.h>
 #include <archive_entry.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <libgen.h>
 #include <stdio.h>
 #include <string.h>
@@ -71,7 +73,7 @@ ar_mode_x(struct bsdar *bsdar)
 static void
 read_archive(struct bsdar *bsdar, char mode)
 {
-	struct archive		 *a;
+	struct archive		 *a, *out;
 	struct archive_entry	 *entry;
 	struct stat		  sb;
 	struct tm		 *tp;
@@ -90,7 +92,20 @@ read_archive(struct bsdar *bsdar, char mode)
 	if ((a = archive_read_new()) == NULL)
 		bsdar_errc(bsdar, EX_SOFTWARE, 0, "archive_read_new failed");
 	archive_read_support_format_ar(a);
-	AC(archive_read_open_filename(a, bsdar->filename, DEF_BLKSZ));
+	AC(archive_read_open_fd(a, bsdar->infd, DEF_BLKSZ));
+
+	/* Basic path security flags. */
+	flags = ARCHIVE_EXTRACT_SECURE_SYMLINKS |
+	    ARCHIVE_EXTRACT_SECURE_NODOTDOT |
+	    ARCHIVE_EXTRACT_SECURE_NOABSOLUTEPATHS;
+	if (bsdar->options & AR_O)
+		flags |= ARCHIVE_EXTRACT_TIME;
+
+	if ((out = archive_write_disk_new()) == NULL)
+		bsdar_errc(bsdar, EX_SOFTWARE, 0,
+		    "archive_write_disk_new failed");
+	AC(archive_write_disk_set_rootdir(out, bsdar->rootdfd));
+	AC(archive_write_disk_set_options(out, flags));
 
 	for (;;) {
 		r = archive_read_next_header(a, &entry);
@@ -172,11 +187,11 @@ read_archive(struct bsdar *bsdar, char mode)
 				r = archive_read_data_into_fd(a, 1);
 			} else {
 				/* mode == 'x' */
-				if (stat(name, &sb) != 0) {
+				if (fstatat(bsdar->rootdfd, name, &sb, 0) !=
+				    0) {
 					if (errno != ENOENT) {
 						bsdar_warnc(bsdar, 0,
-						    "stat %s failed",
-						    bsdar->filename);
+						    "stat %s failed", name);
 						continue;
 					}
 				} else {
@@ -191,14 +206,8 @@ read_archive(struct bsdar *bsdar, char mode)
 
 				if (bsdar->options & AR_V)
 					(void)fprintf(stdout, "x - %s\n", name);
-				/* Basic path security flags. */
-				flags = ARCHIVE_EXTRACT_SECURE_SYMLINKS |
-				    ARCHIVE_EXTRACT_SECURE_NODOTDOT |
-				    ARCHIVE_EXTRACT_SECURE_NOABSOLUTEPATHS;
-				if (bsdar->options & AR_O)
-					flags |= ARCHIVE_EXTRACT_TIME;
 
-				r = archive_read_extract(a, entry, flags);
+				r = archive_read_extract2(a, entry, out);
 			}
 
 			if (r)
@@ -208,4 +217,5 @@ read_archive(struct bsdar *bsdar, char mode)
 	}
 	AC(archive_read_close(a));
 	AC(archive_read_free(a));
+	AC(archive_write_free(out));
 }
