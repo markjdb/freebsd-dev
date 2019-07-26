@@ -228,6 +228,7 @@ struct archive_write_disk {
 	int64_t			 skip_file_dev;
 	int64_t			 skip_file_ino;
 	time_t			 start_time;
+	int			 rootdir;
 
 	int64_t (*lookup_gid)(void *private, const char *gname, int64_t gid);
 	void  (*cleanup_gid)(void *private);
@@ -360,7 +361,7 @@ static int	la_mktemp(struct archive_write_disk *);
 static void	fsobj_error(int *, struct archive_string *, int, const char *,
 		    const char *);
 static int	check_symlinks_fsobj(char *, int *, struct archive_string *,
-		    int);
+		    int, int);
 static int	check_symlinks(struct archive_write_disk *);
 static int	create_filesystem_object(struct archive_write_disk *);
 static struct fixup_entry *current_fixup(struct archive_write_disk *,
@@ -481,7 +482,7 @@ lazy_stat(struct archive_write_disk *a)
 	 * XXX At this point, symlinks should not be hit, otherwise
 	 * XXX a race occurred.  Do we want to check explicitly for that?
 	 */
-	if (lstat(a->name, &a->st) == 0) {
+	if (fstatat(a->rootdir, a->name, &a->st, AT_SYMLINK_NOFOLLOW) == 0) {
 		a->pst = &a->st;
 		return (ARCHIVE_OK);
 	}
@@ -907,6 +908,18 @@ archive_write_disk_set_skip_file(struct archive *_a, la_int64_t d, la_int64_t i)
 	a->skip_file_set = 1;
 	a->skip_file_dev = d;
 	a->skip_file_ino = i;
+	return (ARCHIVE_OK);
+}
+
+int
+archive_write_disk_set_rootdir(struct archive *_a, int dfd)
+{
+	struct archive_write_disk *a = (struct archive_write_disk *)_a;
+
+	archive_check_magic(&a->archive, ARCHIVE_WRITE_DISK_MAGIC,
+	    ARCHIVE_STATE_ANY, "archive_write_disk_set_skip_file");
+
+	a->rootdir = dfd;
 	return (ARCHIVE_OK);
 }
 
@@ -1946,6 +1959,7 @@ archive_write_disk_new(void)
 	a->archive.state = ARCHIVE_STATE_HEADER;
 	a->archive.vtable = archive_write_disk_vtable();
 	a->start_time = time(NULL);
+	a->rootdir = AT_FDCWD;
 	/* Query and restore the umask. */
 	umask(a->user_umask = umask(0));
 #ifdef HAVE_GETEUID
@@ -2085,7 +2099,7 @@ restore_entry(struct archive_write_disk *a)
 	 */
 	if (en == EISDIR) {
 		/* A dir is in the way of a non-dir, rmdir it. */
-		if (rmdir(a->name) != 0) {
+		if (unlinkat(a->rootdir, a->name, AT_REMOVEDIR) != 0) {
 			archive_set_error(&a->archive, errno,
 			    "Can't remove already-existing dir");
 			return (ARCHIVE_FAILED);
@@ -2111,7 +2125,8 @@ restore_entry(struct archive_write_disk *a)
 		 * then don't follow it.
 		 */
 		if (r != 0 || !S_ISDIR(a->mode))
-			r = lstat(a->name, &a->st);
+			r = fstatat(a->rootdir, a->name, &a->st,
+			    AT_SYMLINK_NOFOLLOW);
 		if (r != 0) {
 			archive_set_error(&a->archive, errno,
 			    "Can't stat existing object");
@@ -2223,6 +2238,7 @@ create_filesystem_object(struct archive_write_disk *a)
 
 	/* We identify hard/symlinks according to the link names. */
 	/* Since link(2) and symlink(2) don't handle modes, we're done here. */
+	/* XXX convert for rootdir */
 	linkname = archive_entry_hardlink(a->entry);
 	if (linkname != NULL) {
 #if !HAVE_LINK
@@ -2251,7 +2267,7 @@ create_filesystem_object(struct archive_write_disk *a)
 			return (EPERM);
 		}
 		r = check_symlinks_fsobj(linkname_copy, &error_number,
-		    &error_string, a->flags);
+		    &error_string, a->rootdir, a->flags);
 		if (r != ARCHIVE_OK) {
 			archive_set_error(&a->archive, error_number, "%s",
 			    error_string.s);
@@ -2271,8 +2287,10 @@ create_filesystem_object(struct archive_write_disk *a)
 		 * an mktemplink() function, and then use rename(2).
 		 */
 		if (a->flags & ARCHIVE_EXTRACT_SAFE_WRITES)
-			unlink(a->name);
-		r = link(linkname, a->name) ? errno : 0;
+			unlinkat(a->rootdir, a->name, 0);
+		r = linkat(a->rootdir, linkname, a->rootdir, a->name, 0) ?
+		    errno : 0;
+
 		/*
 		 * New cpio and pax formats allow hardlink entries
 		 * to carry data, so we may have to open the file
@@ -2290,15 +2308,18 @@ create_filesystem_object(struct archive_write_disk *a)
 			a->deferred = 0;
 		} else if (r == 0 && a->filesize > 0) {
 #ifdef HAVE_LSTAT
-			r = lstat(a->name, &st);
+			/* XXX */
+			r = fstatat(a->rootdir, a->name, &st,
+			    AT_SYMLINK_NOFOLLOW);
 #else
 			r = la_stat(a->name, &st);
 #endif
 			if (r != 0)
 				r = errno;
 			else if ((st.st_mode & AE_IFMT) == AE_IFREG) {
-				a->fd = open(a->name, O_WRONLY | O_TRUNC |
-				    O_BINARY | O_CLOEXEC | O_NOFOLLOW);
+				a->fd = openat(a->rootdir, a->name,
+				    O_WRONLY | O_TRUNC | O_BINARY | O_CLOEXEC |
+				    O_NOFOLLOW);
 				__archive_ensure_cloexec_flag(a->fd);
 				if (a->fd < 0)
 					r = errno;
@@ -2309,7 +2330,16 @@ create_filesystem_object(struct archive_write_disk *a)
 	}
 	linkname = archive_entry_symlink(a->entry);
 	if (linkname != NULL) {
-#if HAVE_SYMLINK
+#if 1 /* XXX */
+		/*
+		 * Unlinking and linking here is really not atomic,
+		 * but doing it right, would require us to construct
+		 * an mktempsymlink() function, and then use rename(2).
+		 */
+		if (a->flags & ARCHIVE_EXTRACT_SAFE_WRITES)
+			unlinkat(a->rootdir, a->name);
+		return symlinkat(linkname, a->rootdir, a->name) ? errno : 0;
+#elif HAVE_SYMLINK
 		/*
 		 * Unlinking and linking here is really not atomic,
 		 * but doing it right, would require us to construct
@@ -2353,7 +2383,7 @@ create_filesystem_object(struct archive_write_disk *a)
 		/* FALLTHROUGH */
 	case AE_IFREG:
 		a->tmpname = NULL;
-		a->fd = open(a->name,
+		a->fd = openat(a->rootdir, a->name,
 		    O_WRONLY | O_CREAT | O_EXCL | O_BINARY | O_CLOEXEC, mode);
 		__archive_ensure_cloexec_flag(a->fd);
 		r = (a->fd < 0);
@@ -2362,7 +2392,7 @@ create_filesystem_object(struct archive_write_disk *a)
 #ifdef HAVE_MKNOD
 		/* Note: we use AE_IFCHR for the case label, and
 		 * S_IFCHR for the mknod() call.  This is correct.  */
-		r = mknod(a->name, mode | S_IFCHR,
+		r = mknodat(a->rootdir, a->name, mode | S_IFCHR,
 		    archive_entry_rdev(a->entry));
 		break;
 #else
@@ -2372,7 +2402,7 @@ create_filesystem_object(struct archive_write_disk *a)
 #endif /* HAVE_MKNOD */
 	case AE_IFBLK:
 #ifdef HAVE_MKNOD
-		r = mknod(a->name, mode | S_IFBLK,
+		r = mknodat(a->rootdir, a->name, mode | S_IFBLK,
 		    archive_entry_rdev(a->entry));
 		break;
 #else
@@ -2382,7 +2412,7 @@ create_filesystem_object(struct archive_write_disk *a)
 #endif /* HAVE_MKNOD */
 	case AE_IFDIR:
 		mode = (mode | MINIMUM_DIR_MODE) & MAXIMUM_DIR_MODE;
-		r = mkdir(a->name, mode);
+		r = mkdirat(a->rootdir, a->name, mode);
 		if (r == 0) {
 			/* Defer setting dir times. */
 			a->deferred |= (a->todo & TODO_TIMES);
@@ -2398,7 +2428,7 @@ create_filesystem_object(struct archive_write_disk *a)
 		break;
 	case AE_IFIFO:
 #ifdef HAVE_MKFIFO
-		r = mkfifo(a->name, mode);
+		r = mkfifoat(a->rootdir, a->name, mode);
 		break;
 #else
 		/* TODO: Find a better way to warn about our inability
@@ -2459,6 +2489,7 @@ _archive_write_disk_close(struct archive *_a)
 		a->pst = NULL; /* Mark stat cache as out-of-date. */
 		if (p->fixup &
 		    (TODO_TIMES | TODO_MODE_BASE | TODO_ACLS | TODO_FFLAGS)) {
+			/* XXX */
 			fd = open(p->name,
 			    O_WRONLY | O_BINARY | O_NOFOLLOW | O_CLOEXEC);
 		}
@@ -2663,7 +2694,7 @@ fsobj_error(int *a_eno, struct archive_string *a_estr,
  */
 static int
 check_symlinks_fsobj(char *path, int *a_eno, struct archive_string *a_estr,
-    int flags)
+    int rootdir, int flags)
 {
 #if !defined(HAVE_LSTAT) && \
     !(defined(HAVE_OPENAT) && defined(HAVE_FSTATAT) && defined(HAVE_UNLINKAT))
@@ -2705,7 +2736,7 @@ check_symlinks_fsobj(char *path, int *a_eno, struct archive_string *a_estr,
 	 *  c holds what used to be in *tail
 	 *  last is 1 if this is the last tail
 	 */
-	chdir_fd = la_opendirat(AT_FDCWD, ".");
+	chdir_fd = la_opendirat(rootdir, ".");
 	__archive_ensure_cloexec_flag(chdir_fd);
 	if (chdir_fd < 0) {
 		fsobj_error(a_eno, a_estr, errno,
@@ -2959,7 +2990,7 @@ check_symlinks(struct archive_write_disk *a)
 	int rc;
 	archive_string_init(&error_string);
 	rc = check_symlinks_fsobj(a->name, &error_number, &error_string,
-	    a->flags);
+	    a->rootdir, a->flags);
 	if (rc != ARCHIVE_OK) {
 		archive_set_error(&a->archive, error_number, "%s",
 		    error_string.s);
@@ -3259,7 +3290,7 @@ create_dir(struct archive_write_disk *a, char *path)
 	mode = mode_final;
 	mode |= MINIMUM_DIR_MODE;
 	mode &= MAXIMUM_DIR_MODE;
-	if (mkdir(path, mode) == 0) {
+	if (mkdirat(a->rootdir, path, mode) == 0) {
 		if (mode != mode_final) {
 			le = new_fixup(a, path);
 			if (le == NULL)

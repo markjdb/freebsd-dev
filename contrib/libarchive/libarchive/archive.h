@@ -910,6 +910,9 @@ __LA_DECL int archive_write_disk_set_skip_file(struct archive *,
  * This accepts a bitmask of ARCHIVE_EXTRACT_XXX flags defined above. */
 __LA_DECL int		 archive_write_disk_set_options(struct archive *,
 		     int flags);
+/* Set root directory for extraction. */
+__LA_DECL int		archive_write_disk_set_rootdir(struct archive *, int);
+
 /*
  * The lookup functions are given uname/uid (or gname/gid) pairs and
  * return a uid (gid) suitable for this system.  These are used for
