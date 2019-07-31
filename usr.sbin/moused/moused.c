@@ -926,6 +926,10 @@ main(int argc, char *argv[])
 	    }
 
 	    moused();
+
+	    /* moused() returns only upon an error reading from the mouse. */
+	    if (rodent.is_removable)
+		break;
 	}
 
 	if (rodent.mfd != -1)
@@ -933,12 +937,9 @@ main(int argc, char *argv[])
 	if (rodent.cfd != -1)
 	    close(rodent.cfd);
 	rodent.mfd = rodent.cfd = -1;
-	if (rodent.is_removable)
-		exit(0);
     }
-    /* NOT REACHED */
 
-    exit(0);
+    exit(1);
 }
 
 /*
