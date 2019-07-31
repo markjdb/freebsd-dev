@@ -136,11 +136,15 @@ __FBSDID("$FreeBSD$");
 
 #define logerr(e, ...) do {					\
 	log_or_warn(LOG_DAEMON | LOG_ERR, errno, __VA_ARGS__);	\
+	if (pfh != NULL)					\
+		pidfile_remove(pfh);				\
 	exit(e);						\
 } while (0)
 
 #define logerrx(e, ...) do {					\
 	log_or_warn(LOG_DAEMON | LOG_ERR, 0, __VA_ARGS__);	\
+	if (pfh != NULL)					\
+		pidfile_remove(pfh);				\
 	exit(e);						\
 } while (0)
 
@@ -559,6 +563,7 @@ static int	gtco_digipad(u_char, mousestatus_t *);
 int
 main(int argc, char *argv[])
 {
+    pid_t mpid;
     int c;
     int	i;
     int	j;
@@ -861,6 +866,16 @@ main(int argc, char *argv[])
     if (strncmp(rodent.portname, "/dev/ums", 8) == 0)
 	rodent.is_removable = 1;
 
+    if (!nodaemon) {
+	pfh = pidfile_open(pidfile, 0600, &mpid);
+	if (pfh == NULL) {
+	    if (errno == EEXIST)
+		logerrx(1, "moused already running, pid: %d", mpid);
+	    logwarn("cannot open pid file");
+	}
+	pidfile_write(pfh);
+    }
+
     for (;;) {
 	if (setjmp(env) == 0) {
 	    signal(SIGHUP, hup);
@@ -878,7 +893,6 @@ main(int argc, char *argv[])
 		rodent.mfd = -1;
 	    }
 
-	    /* print some information */
 	    if (identify != ID_NONE) {
 		if (identify == ID_ALL)
 		    printf("%s %s %s %s\n",
@@ -899,18 +913,18 @@ main(int argc, char *argv[])
 		    r_name(rodent.rtype), r_model(rodent.hw.model));
 	    }
 
-	    if (rodent.mfd == -1) {
-		/*
-		 * We cannot continue because of error.  Exit if the
-		 * program has not become a daemon.  Otherwise, block
-		 * until the user corrects the problem and issues SIGHUP.
-		 */
-		if (!background)
-		    exit(1);
-		sigpause(0);
+	    r_init();
+
+	    if ((rodent.cfd = open("/dev/consolectl", O_RDWR, 0)) == -1)
+		logerr(1, "cannot open /dev/consolectl");
+
+	    if (!nodaemon && !background) {
+		if (daemon(0, 0))
+		    logerr(1, "failed to become a daemon");
+		else
+		    background = TRUE;
 	    }
 
-	    r_init();			/* call init function */
 	    moused();
 	}
 
@@ -998,31 +1012,9 @@ moused(void)
     struct timeval timeout;
     fd_set fds;
     u_char b;
-    pid_t mpid;
     int flags;
     int c;
     int i;
-
-    if ((rodent.cfd = open("/dev/consolectl", O_RDWR, 0)) == -1)
-	logerr(1, "cannot open /dev/consolectl");
-
-    if (!nodaemon && !background) {
-	pfh = pidfile_open(pidfile, 0600, &mpid);
-	if (pfh == NULL) {
-	    if (errno == EEXIST)
-		logerrx(1, "moused already running, pid: %d", mpid);
-	    logwarn("cannot open pid file");
-	}
-	if (daemon(0, 0)) {
-	    int saved_errno = errno;
-	    pidfile_remove(pfh);
-	    errno = saved_errno;
-	    logerr(1, "failed to become a daemon");
-	} else {
-	    background = TRUE;
-	    pidfile_write(pfh);
-	}
-    }
 
     /* clear mouse data */
     bzero(&action0, sizeof(action0));
