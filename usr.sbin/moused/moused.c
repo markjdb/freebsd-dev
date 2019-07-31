@@ -3348,10 +3348,6 @@ mremote_serversetup(void)
     bzero(&ad, sizeof(ad));
     ad.sun_family = AF_UNIX;
     strcpy(ad.sun_path, _PATH_MOUSEREMOTE);
-#ifndef SUN_LEN
-#define SUN_LEN(unp) (((char *)(unp)->sun_path - (char *)(unp)) + \
-		       strlen((unp)->path))
-#endif
     if (bind(rodent.mremsfd, (struct sockaddr *) &ad, SUN_LEN(&ad)) < 0)
 	logerrx(1, "unable to bind unix domain socket %s", _PATH_MOUSEREMOTE);
 
