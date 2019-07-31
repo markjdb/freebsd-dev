@@ -28,9 +28,6 @@
  * $FreeBSD$
  */
 
-#include <libcasper.h>
-#include <casper/cap_fileargs.h>
-
 #define	BSDAR_VERSION	"1.1.0"
 
 /*
@@ -83,11 +80,7 @@ struct ar_obj {
  * Structure encapsulates the "global" data for "ar" program.
  */
 struct bsdar {
-	const char	 *infile;	/* input archive name. */
-	int		  infd;		/* input archive file descriptor. */
-	const char	 *outfile;	/* output archive name. */
-	int		  outfd;	/* output archive file descriptor. */
-	int		  rootdfd;
+	const char	 *filename;	/* archive name. */
 	const char	 *addlib;	/* target of ADDLIB. */
 	const char	 *posarg;	/* position arg for modifiers -a, -b. */
 	char		  mode;		/* program mode */
@@ -96,7 +89,6 @@ struct bsdar {
 	const char	 *progname;	/* program name */
 	int		  argc;
 	char		**argv;
-	fileargs_t	 *fa;
 
 	/*
 	 * Fields for the archive string table.

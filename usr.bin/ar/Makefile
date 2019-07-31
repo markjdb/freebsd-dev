@@ -7,12 +7,6 @@ SRCS=	ar.c acplex.l acpyacc.y read.c util.c write.c y.tab.h
 
 LIBADD=	archive elf
 
-.if ${MK_CASPER} != "no"
-LIBADD+=	casper
-LIBADD+=	cap_fileargs
-CFLAGS+=	-DWITH_CASPER
-.endif
-
 NO_WMISSING_VARIABLE_DECLARATIONS=
 
 CFLAGS+=-I. -I${.CURDIR}

@@ -65,9 +65,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/queue.h>
 #include <sys/types.h>
-
 #include <archive.h>
-#include <capsicum_helpers.h>
 #include <errno.h>
 #include <getopt.h>
 #include <libgen.h>
@@ -90,7 +88,7 @@ static struct option longopts[] =
 	{NULL, 0, NULL, 0}
 };
 
-static void _Noreturn bsdar_usage(void);
+static void	bsdar_usage(void);
 static void	ranlib_usage(void);
 static void	set_mode(struct bsdar *bsdar, char opt);
 static void	only_mode(struct bsdar *bsdar, const char *opt,
@@ -101,11 +99,10 @@ static void	ranlib_version(void);
 int
 main(int argc, char **argv)
 {
-	cap_rights_t	 rights;
 	struct bsdar	*bsdar, bsdar_storage;
 	char		*p;
 	size_t		 len;
-	int		 flags, i, opt, Dflag, Uflag;
+	int		 i, opt, Dflag, Uflag;
 
 	bsdar = &bsdar_storage;
 	memset(bsdar, 0, sizeof(*bsdar));
@@ -153,7 +150,7 @@ main(int argc, char **argv)
 		if (Uflag == 0)
 			bsdar->options |= AR_D;
 		bsdar->options |= AR_S;
-		while ((bsdar->infile = *argv++) != NULL)
+		while ((bsdar->filename = *argv++) != NULL)
 			ar_mode_s(bsdar);
 
 		exit(EX_OK);
@@ -257,6 +254,7 @@ main(int argc, char **argv)
 			bsdar_usage();
 		}
 	}
+
 	argv += optind;
 	argc -= optind;
 
@@ -311,61 +309,15 @@ main(int argc, char **argv)
 		only_mode(bsdar, "-u", "qrx");
 
 	if (bsdar->mode == 'M') {
-		/* We do not run in capability mode here. */
 		ar_mode_script(bsdar);
 		exit(EX_OK);
 	}
 
-	if (*argv == NULL)
+	if ((bsdar->filename = *argv) == NULL)
 		bsdar_usage();
-	bsdar->infile = bsdar->outfile = *argv;
+
 	bsdar->argc = --argc;
 	bsdar->argv = ++argv;
-
-	/*
-	 * All modes except 'q' and 'r' require an input file.
-	 */
-	if ((bsdar->infd = open(bsdar->infile, O_RDONLY)) < 0) {
-		if (errno != ENOENT ||
-		    (bsdar->mode != 'q' && bsdar->mode != 'r'))
-			bsdar_errc(bsdar, EX_NOINPUT, errno,
-			    "open %s failed", bsdar->infile);
-	}
-
-	flags = O_RDWR;
-	switch (bsdar->mode) {
-	case 'q':
-	case 'r':
-		flags |= O_CREAT;
-		/* FALLTHROUGH */
-	case 'd':
-	case 'm':
-		if ((bsdar->outfd = open(bsdar->outfile, flags, 0666)) < 0)
-			bsdar_errc(bsdar, EX_NOINPUT, errno,
-			    "open %s failed", bsdar->infile);
-		break;
-	default:
-		bsdar->outfd = -1;
-		break;
-	}
-
-	if ((bsdar->rootdfd = open(".", O_DIRECTORY | O_RDONLY)) < 0)
-		bsdar_errc(bsdar, EX_NOINPUT, errno,
-		    "failed to open current directory");
-
-	bsdar->fa = fileargs_init(argc, argv, O_RDONLY, 0,
-	    cap_rights_init(&rights, CAP_FSTAT, CAP_MMAP_R), FA_OPEN);
-	if (bsdar->fa == NULL)
-		bsdar_errc(bsdar, EX_SOFTWARE, errno,
-		    "failed to initialize fileargs");
-
-	caph_cache_catpages();
-	if (caph_limit_stdio() < 0)
-		bsdar_errc(bsdar, EX_OSERR, errno,
-		    "failed to limit stdio rights");
-	if (caph_enter_casper() < 0)
-		bsdar_errc(bsdar, EX_OSERR, errno,
-		    "failed to enter capability mode");
 
 	if ((!bsdar->mode || strchr("ptx", bsdar->mode)) &&
 	    bsdar->options & AR_S) {
@@ -374,7 +326,7 @@ main(int argc, char **argv)
 			exit(EX_OK);
 	}
 
-	switch (bsdar->mode) {
+	switch(bsdar->mode) {
 	case 'd':
 		ar_mode_d(bsdar);
 		break;
