@@ -57,12 +57,16 @@ __FBSDID("$FreeBSD$");
 #include <sys/time.h>
 #include <sys/un.h>
 
+#include <capsicum_helpers.h>
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <libgen.h>
 #include <libutil.h>
 #include <limits.h>
+#include <math.h>
+#include <paths.h>
 #include <setjmp.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -73,7 +77,14 @@ __FBSDID("$FreeBSD$");
 #include <syslog.h>
 #include <termios.h>
 #include <unistd.h>
-#include <math.h>
+
+#include <libcasper.h>
+#include <casper/cap_fileargs.h>
+#include <casper/cap_syslog.h>
+
+#ifndef _PATH_VAREMPTY
+#define	_PATH_VAREMPTY	"/var/empty"
+#endif
 
 #define MAX_CLICKTHRESHOLD	2000	/* 2 seconds */
 #define MAX_BUTTON2TIMEOUT	2000	/* 2 seconds */
@@ -188,6 +199,8 @@ static int	identify = ID_NONE;
 static int	extioctl = FALSE;
 static const char *pidfile = "/var/run/moused.pid";
 static struct pidfh *pfh;
+static int	sdfd = -1;
+static cap_channel_t *capsyslog;
 
 #define SCROLL_NOTSCROLLING	0
 #define SCROLL_PREPARE		1
@@ -563,10 +576,12 @@ static int	gtco_digipad(u_char, mousestatus_t *);
 int
 main(int argc, char *argv[])
 {
+    char path[MAXPATHLEN];
+    cap_channel_t *capcas;
+    cap_rights_t rights;
+    fileargs_t *fa;
     pid_t mpid;
-    int c;
-    int	i;
-    int	j;
+    int c, devnull, i, j;
 
     for (i = 0; i < MOUSE_MAXBUTTON; ++i)
 	mstate[i] = &bstate[i];
@@ -874,7 +889,64 @@ main(int argc, char *argv[])
 	    logwarn("cannot open pid file");
 	}
 	pidfile_write(pfh);
+
+	devnull = open(_PATH_DEVNULL, O_RDONLY);
+	if (devnull < 0)
+	    logerr(1, "failed to open %s", _PATH_DEVNULL);
+    } else {
+	devnull = -1;
+	pfh = NULL;
     }
+
+    /*
+     * Make sure that we can update the console mouse pointer.
+     */
+    if ((rodent.cfd = open("/dev/consolectl", O_RDWR, 0)) == -1)
+	logerr(1, "cannot open /dev/consolectl");
+    cap_rights_init(&rights, CAP_IOCTL);
+    if (caph_rights_limit(rodent.cfd, &rights) == -1)
+	logerr(1, "failed to limit rights on /dev/consolectl");
+    if (caph_ioctls_limit(rodent.cfd, (long[]){CONS_MOUSECTL}, 1) == -1)
+	logerr(1, "failed to limit ioctls on /dev/consolectl");
+
+    /*
+     * The mouse device may need to be reopened upon SIGHUP, so use the fileargs
+     * service to ensure that we can do so.
+     */
+    cap_rights_init(&rights, CAP_EVENT, CAP_IOCTL, CAP_READ, CAP_WRITE);
+    fa = fileargs_init(1, __DECONST(char **, &rodent.portname),
+	O_RDWR | O_NONBLOCK, 0, &rights, FA_OPEN);
+    if (fa == NULL)
+	logerr(1, "failed to initialize fileargs");
+
+    /*
+     * Pre-open /var/run in case we have an X10 remote mouse.
+     */
+    (void)strlcpy(path, _PATH_MOUSEREMOTE, sizeof(path));
+    dirname(path);
+    sdfd = open(dirname(path), O_DIRECTORY | O_RDONLY);
+    if (sdfd < 0)
+	logerr(1, "failed to open %s", path);
+    if (caph_rights_limit(sdfd, cap_rights_init(&rights, CAP_BINDAT,
+	CAP_UNLINKAT)) != 0)
+	logerr(1, "failed to limit rights on %s", path);
+
+    /*
+     * Use the system.syslog service to log messages.
+     */
+    capcas = cap_init();
+    if (capcas == NULL)
+	logerr(1, "unable to initialize casper service");
+    capsyslog = cap_service_open(capcas, "system.syslog");
+    if (capsyslog == NULL)
+	logerr(1, "unable to open system.syslog service");
+    cap_close(capcas);
+
+    caph_cache_catpages();
+    if (caph_limit_stdio() < 0)
+	logerr(1, "failed to limit stdio rights");
+    if (caph_enter() < 0)
+	logerr(1, "failed to enter capability mode");
 
     for (;;) {
 	if (setjmp(env) == 0) {
@@ -884,7 +956,7 @@ main(int argc, char *argv[])
 	    signal(SIGTERM, cleanup);
 	    signal(SIGUSR1, pause_mouse);
 
-	    rodent.mfd = open(rodent.portname, O_RDWR | O_NONBLOCK);
+	    rodent.mfd = fileargs_open(fa, rodent.portname);
 	    if (rodent.mfd == -1)
 		logerr(1, "unable to open %s", rodent.portname);
 	    if (r_identify() == MOUSE_PROTO_UNKNOWN) {
@@ -913,13 +985,21 @@ main(int argc, char *argv[])
 		    r_name(rodent.rtype), r_model(rodent.hw.model));
 	    }
 
+	    if (rodent.mfd == -1) {
+		/*
+		 * We cannot continue because of error.  Exit if the
+		 * program has not become a daemon.  Otherwise, block
+		 * until the user corrects the problem and issues SIGHUP.
+		 */
+		if (!background)
+		    exit(1);
+		sigpause(0);
+	    }
+
 	    r_init();
 
-	    if ((rodent.cfd = open("/dev/consolectl", O_RDWR, 0)) == -1)
-		logerr(1, "cannot open /dev/consolectl");
-
 	    if (!nodaemon && !background) {
-		if (daemon(0, 0))
+		if (daemonfd(-1, devnull))
 		    logerr(1, "failed to become a daemon");
 		else
 		    background = TRUE;
@@ -932,11 +1012,10 @@ main(int argc, char *argv[])
 		break;
 	}
 
-	if (rodent.mfd != -1)
+	if (rodent.mfd != -1) {
 	    close(rodent.mfd);
-	if (rodent.cfd != -1)
-	    close(rodent.cfd);
-	rodent.mfd = rodent.cfd = -1;
+	    rodent.mfd = -1;
+	}
     }
 
     exit(1);
@@ -1325,7 +1404,9 @@ static void
 cleanup(__unused int sig)
 {
     if (rodent.rtype == MOUSE_PROTO_X10MOUSEREM)
-	unlink(_PATH_MOUSEREMOTE);
+	unlinkat(sdfd, _PATH_MOUSEREMOTE, 0);
+    if (pfh != NULL)
+	pidfile_remove(pfh);
     exit(0);
 }
 
@@ -1371,7 +1452,7 @@ log_or_warn(int log_pri, int errnum, const char *fmt, ...)
 	}
 
 	if (background)
-		syslog(log_pri, "%s", buf);
+		cap_syslog(capsyslog, log_pri, "%s", buf);
 	else
 		warnx("%s", buf);
 }
@@ -3331,7 +3412,7 @@ mremote_serversetup(void)
     struct sockaddr_un ad;
 
     /* Open a UNIX domain stream socket to listen for mouse remote clients */
-    unlink(_PATH_MOUSEREMOTE);
+    unlinkat(sdfd, _PATH_MOUSEREMOTE, 0);
 
     if ((rodent.mremsfd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
 	logerrx(1, "unable to create unix domain socket %s",_PATH_MOUSEREMOTE);
@@ -3341,7 +3422,7 @@ mremote_serversetup(void)
     bzero(&ad, sizeof(ad));
     ad.sun_family = AF_UNIX;
     strcpy(ad.sun_path, _PATH_MOUSEREMOTE);
-    if (bind(rodent.mremsfd, (struct sockaddr *) &ad, SUN_LEN(&ad)) < 0)
+    if (bindat(sdfd, rodent.mremsfd, (struct sockaddr *)&ad, SUN_LEN(&ad)) < 0)
 	logerrx(1, "unable to bind unix domain socket %s", _PATH_MOUSEREMOTE);
 
     listen(rodent.mremsfd, 1);
@@ -3367,13 +3448,11 @@ mremote_clientchg(int add)
 	if (rodent.mremcfd < 0) {
 	    rodent.mremcfd = fd;
 	    debug("remote client connect...accepted");
-	}
-	else {
+	} else {
 	    close(fd);
 	    debug("another remote client connect...disconnected");
 	}
-    }
-    else {
+    } else {
 	/* Client disconnected */
 	debug("remote client disconnected");
 	close(rodent.mremcfd);
