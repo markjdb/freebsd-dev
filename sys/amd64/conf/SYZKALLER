@@ -1,6 +1,9 @@
 include "./GENERIC"
 
 ident		SYZKALLER
-options 	ALT_BREAK_TO_DEBUGGER
 options 	COVERAGE
 options 	KCOV
+
+options 	ALT_BREAK_TO_DEBUGGER
+options 	DEBUG_VFS_LOCKS
+options 	DIAGNOSTIC
