@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-4-Clause
+ *
  * Copyright (C) 1994, 1995, 1997 Wolfgang Solfrank.
  * Copyright (C) 1994, 1995, 1997 TooLs GmbH.
  * All rights reserved.
@@ -29,7 +31,7 @@
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-/*
+/*-
  * Written by Paul Popelka (paulp@uts.amdahl.com)
  *
  * You can do anything you want with this software, just don't say you wrote
@@ -356,4 +358,34 @@ msdosfs_root(struct msdosfsmount *pmp, struct vnode *vp) {
 	}
 	vp->v_data = ndep;
 	return 0;
+}
+
+/*
+ * If we have an FSInfo block, update it.
+ */
+int
+msdosfs_fsiflush(struct msdosfsmount *pmp)
+{
+	struct fsinfo *fp;
+	struct buf *bp;
+	int error;
+
+	if (pmp->pm_fsinfo == 0 || (pmp->pm_flags & MSDOSFS_FSIMOD) == 0) {
+		error = 0;
+		goto out;
+	}
+	error = bread(pmp->pm_devvp, pmp->pm_fsinfo, pmp->pm_BytesPerSec,
+	    NOCRED, &bp);
+	if (error != 0) {
+		brelse(bp);
+		goto out;
+	}
+	fp = (struct fsinfo *)bp->b_data;
+	putulong(fp->fsinfree, pmp->pm_freeclustercount);
+	putulong(fp->fsinxtfree, pmp->pm_nxtfree);
+	pmp->pm_flags &= ~MSDOSFS_FSIMOD;
+	error = bwrite(bp);
+
+out:
+	return (error);
 }
