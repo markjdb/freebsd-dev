@@ -14,6 +14,9 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
+#include <sys/soundcard.h>
+
+#include <capsicum_helpers.h>
 #include <err.h>
 #include <fcntl.h>
 #include <libgen.h>
@@ -22,7 +25,6 @@ __FBSDID("$FreeBSD$");
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/soundcard.h>
 
 static const char *names[SOUND_MIXER_NRDEVICES] = SOUND_DEVICE_NAMES;
 
@@ -101,6 +103,7 @@ print_recsrc(int recsrc, int recmask, int sflag)
 int
 main(int argc, char *argv[])
 {
+	cap_rights_t rights;
 	char	mixer[PATH_MAX] = "/dev/mixer";
 	char	lstr[8], rstr[8];
 	char	*name, *eptr;
@@ -151,6 +154,14 @@ main(int argc, char *argv[])
 
 	if ((baz = open(name, O_RDWR)) < 0)
 		err(1, "%s", name);
+	if (caph_rights_limit(baz, cap_rights_init(&rights, CAP_IOCTL)) != 0)
+		err(1, "failed to limit rights on %s", name);
+
+	if (caph_limit_stdio() != 0)
+		err(1, "failed to limit stdio rights");
+	if (caph_enter_casper() != 0)
+		err(1, "failed to enter capability mode");
+
 	if (ioctl(baz, SOUND_MIXER_READ_DEVMASK, &devmask) == -1)
 		err(1, "SOUND_MIXER_READ_DEVMASK");
 	if (ioctl(baz, SOUND_MIXER_READ_RECMASK, &recmask) == -1)
