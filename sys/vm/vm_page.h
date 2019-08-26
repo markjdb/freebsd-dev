@@ -780,6 +780,16 @@ _Static_assert(sizeof(((struct vm_page *)NULL)->queue) == 1,
 #define	VM_PAGE_QUEUE_MASK	(0xff << VM_PAGE_QUEUE_SHIFT)
 
 /*
+ *	Return the atomic flag set for the page.
+ */
+static inline int
+vm_page_aflags(vm_page_t m)
+{
+
+	return (m->aflags);
+}
+
+/*
  *	Clear the given bits in the specified page.
  */
 static inline void
