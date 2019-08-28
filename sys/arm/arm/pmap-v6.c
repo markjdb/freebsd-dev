@@ -5194,7 +5194,12 @@ pmap_is_modified(vm_page_t m)
 	/*
 	 * If the page is not busied then this check is racy.
 	 */
+<<<<<<< HEAD
 	if (!pmap_page_is_write_mapped(m))
+=======
+	VM_OBJECT_ASSERT_WLOCKED(m->object);
+	if (!vm_page_xbusied(m) && (vm_page_aflags(m) & PGA_WRITEABLE) == 0)
+>>>>>>> 33e736fe066d... pmap: Avoid direct aflags accesses.
 		return (FALSE);
 	rw_wlock(&pvh_global_lock);
 	rv = pmap_is_modified_pvh(&m->md) ||
@@ -5532,7 +5537,17 @@ pmap_remove_write(vm_page_t m)
 	    ("%s: page %p is not managed", __func__, m));
 	vm_page_assert_busied(m);
 
+<<<<<<< HEAD
 	if (!pmap_page_is_write_mapped(m))
+=======
+	/*
+	 * If the page is not exclusive busied, then PGA_WRITEABLE cannot be
+	 * set by another thread while the object is locked.  Thus,
+	 * if PGA_WRITEABLE is clear, no page table entries need updating.
+	 */
+	VM_OBJECT_ASSERT_WLOCKED(m->object);
+	if (!vm_page_xbusied(m) && !pmap_page_is_write_mapped(m))
+>>>>>>> 33e736fe066d... pmap: Avoid direct aflags accesses.
 		return;
 	rw_wlock(&pvh_global_lock);
 	sched_pin();

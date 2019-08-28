@@ -2689,8 +2689,19 @@ mmu_booke_remove_write(mmu_t mmu, vm_page_t m)
 	    ("mmu_booke_remove_write: page %p is not managed", m));
 	vm_page_assert_busied(m);
 
+<<<<<<< HEAD
 	if (!pmap_page_is_write_mapped(m))
 	        return;
+=======
+	/*
+	 * If the page is not exclusive busied, then PGA_WRITEABLE cannot be
+	 * set by another thread while the object is locked.  Thus,
+	 * if PGA_WRITEABLE is clear, no page table entries need updating.
+	 */
+	VM_OBJECT_ASSERT_WLOCKED(m->object);
+	if (!vm_page_xbusied(m) && (vm_page_aflags(m) & PGA_WRITEABLE) == 0)
+		return;
+>>>>>>> 33e736fe066d... pmap: Avoid direct aflags accesses.
 	rw_wlock(&pvh_global_lock);
 	TAILQ_FOREACH(pv, &m->md.pv_list, pv_link) {
 		PMAP_LOCK(pv->pv_pmap);
@@ -3032,9 +3043,15 @@ mmu_booke_is_modified(mmu_t mmu, vm_page_t m)
 	/*
 	 * If the page is not busied then this check is racy.
 	 */
+<<<<<<< HEAD
 	if (!pmap_page_is_write_mapped(m))
 		return (FALSE);
 
+=======
+	VM_OBJECT_ASSERT_WLOCKED(m->object);
+	if (!vm_page_xbusied(m) && (vm_page_aflags(m) & PGA_WRITEABLE) == 0)
+		return (rv);
+>>>>>>> 33e736fe066d... pmap: Avoid direct aflags accesses.
 	rw_wlock(&pvh_global_lock);
 	TAILQ_FOREACH(pv, &m->md.pv_list, pv_link) {
 		PMAP_LOCK(pv->pv_pmap);
@@ -3108,6 +3125,16 @@ mmu_booke_clear_modify(mmu_t mmu, vm_page_t m)
 	if (!pmap_page_is_write_mapped(m))
 	        return;
 
+<<<<<<< HEAD
+=======
+	/*
+	 * If the page is not PG_AWRITEABLE, then no PTEs can be modified.
+	 * If the object containing the page is locked and the page is not
+	 * exclusive busied, then PG_AWRITEABLE cannot be concurrently set.
+	 */
+	if ((vm_page_aflags(m) & PGA_WRITEABLE) == 0)
+		return;
+>>>>>>> 33e736fe066d... pmap: Avoid direct aflags accesses.
 	rw_wlock(&pvh_global_lock);
 	TAILQ_FOREACH(pv, &m->md.pv_list, pv_link) {
 		PMAP_LOCK(pv->pv_pmap);

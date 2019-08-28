@@ -153,9 +153,7 @@ release_page(struct faultstate *fs)
 {
 
 	vm_page_xunbusy(fs->m);
-	vm_page_lock(fs->m);
 	vm_page_deactivate(fs->m);
-	vm_page_unlock(fs->m);
 	fs->m = NULL;
 }
 
@@ -389,9 +387,7 @@ vm_fault_populate_cleanup(vm_object_t object, vm_pindex_t first,
 	for (pidx = first, m = vm_page_lookup(object, pidx);
 	    pidx <= last; pidx++, m = vm_page_next(m)) {
 		vm_fault_populate_check_page(m);
-		vm_page_lock(m);
 		vm_page_deactivate(m);
-		vm_page_unlock(m);
 		vm_page_xunbusy(m);
 	}
 }
@@ -1332,9 +1328,7 @@ readrest:
 	if ((fault_flags & VM_FAULT_WIRE) != 0) {
 		vm_page_wire(fs.m);
 	} else {
-		vm_page_lock(fs.m);
 		vm_page_activate(fs.m);
-		vm_page_unlock(fs.m);
 	}
 	if (m_hold != NULL) {
 		*m_hold = fs.m;
@@ -1436,10 +1430,8 @@ vm_fault_dontneed(const struct faultstate *fs, vm_offset_t vaddr, int ahead)
 				 * pages that triggered page faults are in the
 				 * active queue.
 				 */
-				vm_page_lock(m);
 				if (!vm_page_inactive(m))
 					vm_page_deactivate(m);
-				vm_page_unlock(m);
 			}
 		}
 	}
@@ -1813,9 +1805,7 @@ again:
 				    ("dst_m %p is not wired", dst_m));
 			}
 		} else {
-			vm_page_lock(dst_m);
 			vm_page_activate(dst_m);
-			vm_page_unlock(dst_m);
 		}
 		vm_page_xunbusy(dst_m);
 	}
