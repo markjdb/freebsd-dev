@@ -1424,9 +1424,7 @@ retry:
 					 * current operation is not regarded
 					 * as an access.
 					 */
-					vm_page_lock(m);
 					vm_page_launder(m);
-					vm_page_unlock(m);
 				} else {
 					vm_page_free(m);
 					if (ignerr)

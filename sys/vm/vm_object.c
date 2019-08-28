@@ -897,7 +897,8 @@ vm_object_page_remove_write(vm_page_t p, int flags, boolean_t *allclean)
 	 * nosync page, skip it.  Note that the object flags were not
 	 * cleared in this case so we do not have to set them.
 	 */
-	if ((flags & OBJPC_NOSYNC) != 0 && (p->aflags & PGA_NOSYNC) != 0) {
+	if ((flags & OBJPC_NOSYNC) != 0 &&
+	    (p->astate.flags & PGA_NOSYNC) != 0) {
 		*allclean = FALSE;
 		return (FALSE);
 	} else {
@@ -2473,10 +2474,12 @@ sysctl_vm_object_list(SYSCTL_HANDLER_ARGS)
 			 * count pages set to PQ_NONE.  However, this
 			 * sysctl is only meant to give an
 			 * approximation of the system anyway.
+			 *
+			 * XXX missing laundry
 			 */
-			if (m->queue == PQ_ACTIVE)
+			if (vm_page_active(m))
 				kvo->kvo_active++;
-			else if (m->queue == PQ_INACTIVE)
+			else if (vm_page_inactive(m))
 				kvo->kvo_inactive++;
 		}
 
