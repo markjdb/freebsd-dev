@@ -2778,6 +2778,7 @@ void
 vref(struct vnode *vp)
 {
 
+	ASSERT_VI_UNLOCKED(vp, __func__);
 	CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
 	_vhold(vp, false);
 	v_incr_usecount(vp);
@@ -2853,6 +2854,9 @@ vputx(struct vnode *vp, int func)
 	else
 		KASSERT(func == VPUTX_VRELE, ("vputx: wrong func"));
 	ASSERT_VI_UNLOCKED(vp, __func__);
+	VNASSERT(vp->v_holdcnt > 0 && vp->v_usecount > 0, vp,
+	    ("%s: wrong ref counts", __func__));
+
 	CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
 
 	if (vp->v_type != VCHR &&
@@ -2889,6 +2893,21 @@ vputx(struct vnode *vp, int func)
 	}
 
 	CTR2(KTR_VFS, "%s: return vnode %p to the freelist", __func__, vp);
+
+	/*
+	 * Check if the fs wants to perform inactive processing. Note we
+	 * may be only holding the interlock, in which case it is possible
+	 * someone else called vgone on the vnode and ->v_data is now NULL.
+	 * Since vgone performs inactive on its own there is nothing to do
+	 * here but to drop our hold count.
+	 */
+	if (__predict_false(vp->v_iflag & VI_DOOMED) ||
+	    VOP_NEED_INACTIVE(vp) == 0) {
+		if (func == VPUTX_VPUT)
+			VOP_UNLOCK(vp, 0);
+		vdropl(vp);
+		return;
+	}
 
 	/*
 	 * We must call VOP_INACTIVE with the node locked. Mark
@@ -3054,8 +3073,10 @@ _vdrop(struct vnode *vp, bool locked)
 	else
 		ASSERT_VI_UNLOCKED(vp, __func__);
 	CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
-	if ((int)vp->v_holdcnt <= 0)
-		panic("vdrop: holdcnt %d", vp->v_holdcnt);
+	if (__predict_false((int)vp->v_holdcnt <= 0)) {
+		vn_printf(vp, "vdrop: holdcnt %d", vp->v_holdcnt);
+		panic("vdrop: wrong holdcnt");
+	}
 	if (!locked) {
 		if (refcount_release_if_not_last(&vp->v_holdcnt))
 			return;
@@ -3466,9 +3487,9 @@ static void
 vgonel(struct vnode *vp)
 {
 	struct thread *td;
-	int oweinact;
-	int active;
 	struct mount *mp;
+	vm_object_t object;
+	bool active, oweinact;
 
 	ASSERT_VOP_ELOCKED(vp, "vgonel");
 	ASSERT_VI_LOCKED(vp, "vgonel");
@@ -3488,8 +3509,8 @@ vgonel(struct vnode *vp)
 	 * Check to see if the vnode is in use.  If so, we have to call
 	 * VOP_CLOSE() and VOP_INACTIVE().
 	 */
-	active = vp->v_usecount;
-	oweinact = (vp->v_iflag & VI_OWEINACT);
+	active = vp->v_usecount > 0;
+	oweinact = (vp->v_iflag & VI_OWEINACT) != 0;
 	VI_UNLOCK(vp);
 	vfs_notify_upper(vp, VFS_NOTIFY_UPPER_RECLAIM);
 
@@ -3528,12 +3549,24 @@ vgonel(struct vnode *vp)
 	    ("vp %p bufobj not invalidated", vp));
 
 	/*
-	 * For VMIO bufobj, BO_DEAD is set in vm_object_terminate()
-	 * after the object's page queue is flushed.
+	 * For VMIO bufobj, BO_DEAD is set later, or in
+	 * vm_object_terminate() after the object's page queue is
+	 * flushed.
 	 */
-	if (vp->v_bufobj.bo_object == NULL)
+	object = vp->v_bufobj.bo_object;
+	if (object == NULL)
 		vp->v_bufobj.bo_flag |= BO_DEAD;
 	BO_UNLOCK(&vp->v_bufobj);
+
+	/*
+	 * Handle the VM part.  Tmpfs handles v_object on its own (the
+	 * OBJT_VNODE check).  Nullfs or other bypassing filesystems
+	 * should not touch the object borrowed from the lower vnode
+	 * (the handle check).
+	 */
+	if (object != NULL && object->type == OBJT_VNODE &&
+	    object->handle == vp)
+		vnode_destroy_vobject(vp);
 
 	/*
 	 * Reclaim the vnode.
@@ -4353,6 +4386,7 @@ static struct vop_vector sync_vnodeops = {
 	.vop_close =	sync_close,		/* close */
 	.vop_fsync =	sync_fsync,		/* fsync */
 	.vop_inactive =	sync_inactive,	/* inactive */
+	.vop_need_inactive = vop_stdneed_inactive, /* need_inactive */
 	.vop_reclaim =	sync_reclaim,	/* reclaim */
 	.vop_lock1 =	vop_stdlock,	/* lock */
 	.vop_unlock =	vop_stdunlock,	/* unlock */
@@ -4512,6 +4546,20 @@ sync_reclaim(struct vop_reclaim_args *ap)
 	BO_UNLOCK(bo);
 
 	return (0);
+}
+
+int
+vn_need_pageq_flush(struct vnode *vp)
+{
+	struct vm_object *obj;
+	int need;
+
+	MPASS(mtx_owned(VI_MTX(vp)));
+	need = 0;
+	if ((obj = vp->v_object) != NULL && (vp->v_vflag & VV_NOSYNC) == 0 &&
+	    (obj->flags & OBJ_MIGHTBEDIRTY) != 0)
+		need = 1;
+	return (need);
 }
 
 /*
@@ -4893,6 +4941,22 @@ vop_unlock_post(void *ap, int rc)
 
 	if (a->a_flags & LK_INTERLOCK)
 		ASSERT_VI_UNLOCKED(a->a_vp, "VOP_UNLOCK");
+}
+
+void
+vop_need_inactive_pre(void *ap)
+{
+	struct vop_need_inactive_args *a = ap;
+
+	ASSERT_VI_LOCKED(a->a_vp, "VOP_NEED_INACTIVE");
+}
+
+void
+vop_need_inactive_post(void *ap, int rc)
+{
+	struct vop_need_inactive_args *a = ap;
+
+	ASSERT_VI_LOCKED(a->a_vp, "VOP_NEED_INACTIVE");
 }
 #endif
 

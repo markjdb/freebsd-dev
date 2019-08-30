@@ -1,8 +1,10 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * Copyright (c) 2012 NetApp, Inc.
- * All rights reserved.
+ * Copyright (c) 2019 The FreeBSD Foundation
+ *
+ * This software was developed by Konstantin Belousov <kib@FreeBSD.org>
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -13,10 +15,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY NETAPP, INC ``AS IS'' AND
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL NETAPP, INC OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -28,55 +30,43 @@
  * $FreeBSD$
  */
 
-#ifndef	_VMM_HOST_H_
-#define	_VMM_HOST_H_
+#ifndef _MACHINE_PCPU_AUX_H_
+#define	_MACHINE_PCPU_AUX_H_
 
-#ifndef	_KERNEL
-#error "no user-serviceable parts inside"
+#ifndef _KERNEL
+#error "Not for userspace"
 #endif
 
-struct xsave_limits {
-	int		xsave_enabled;
-	uint64_t	xcr0_allowed;
-	uint32_t	xsave_max_size;
-};
-
-void vmm_host_state_init(void);
-
-uint64_t vmm_get_host_pat(void);
-uint64_t vmm_get_host_efer(void);
-uint64_t vmm_get_host_cr0(void);
-uint64_t vmm_get_host_cr4(void);
-uint64_t vmm_get_host_xcr0(void);
-uint64_t vmm_get_host_datasel(void);
-uint64_t vmm_get_host_codesel(void);
-uint64_t vmm_get_host_tsssel(void);
-uint64_t vmm_get_host_fsbase(void);
-uint64_t vmm_get_host_idtrbase(void);
-const struct xsave_limits *vmm_get_xsave_limits(void);
-
-/*
- * Inline access to host state that is used on every VM entry
- */
-static __inline uint64_t
-vmm_get_host_trbase(void)
-{
-
-	return ((uint64_t)PCPU_GET(tssp));
-}
-
-static __inline uint64_t
-vmm_get_host_gdtrbase(void)
-{
-
-	return ((uint64_t)&gdt[NGDT * curcpu]);
-}
-
-static __inline uint64_t
-vmm_get_host_gsbase(void)
-{
-
-	return ((uint64_t)get_pcpu());
-}
-
+#ifndef _SYS_PCPU_H_
+#error "Do not include machine/pcpu_aux.h directly"
 #endif
+
+/* Required for counters(9) to work on x86. */
+_Static_assert(sizeof(struct pcpu) == UMA_PCPU_ALLOC_SIZE, "fix pcpu size");
+
+extern struct pcpu *__pcpu;
+extern struct pcpu temp_bsp_pcpu;
+
+static __inline __pure2 struct thread *
+__curthread(void)
+{
+	struct thread *td;
+
+	__asm("movq %%gs:%P1,%0" : "=r" (td) : "n" (offsetof(struct pcpu,
+	    pc_curthread)));
+	return (td);
+}
+#define	curthread		(__curthread())
+
+static __inline __pure2 struct pcb *
+__curpcb(void)
+{
+	struct pcb *pcb;
+
+	__asm("movq %%gs:%P1,%0" : "=r" (pcb) : "n" (offsetof(struct pcpu,
+	    pc_curpcb)));
+	return (pcb);
+}
+#define	curpcb		(__curpcb())
+
+#endif	/* _MACHINE_PCPU_AUX_H_ */
