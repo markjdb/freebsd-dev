@@ -83,7 +83,13 @@
 	je	bp_ret
 
 	/* When all else fails handle the trap in the usual way. */
+#ifdef __PIC__
+	movq	dtrace_invop_calltrap_addr@GOTPCREL(%rip),%rax
+	movq	(%rax),%rax
+	jmpq	*%rax
+#else
 	jmpq	*dtrace_invop_calltrap_addr
+#endif
 
 bp_push:
 	/*
