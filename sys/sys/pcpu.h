@@ -85,14 +85,14 @@ extern uintptr_t dpcpu_off[];
 /* struct _hack is to stop this from being used with the static keyword. */
 #define	DPCPU_DEFINE(t, n)	\
     struct _hack; t DPCPU_NAME(n) __section(DPCPU_SETNAME) __used
-#if defined(KLD_MODULE) && (defined(__aarch64__) || defined(__riscv) \
-		|| defined(__powerpc64__))
+#if defined(KLD_MODULE) && (defined(__aarch64__) || defined(__amd64__) || \
+    defined(__powerpc64__) || defined(__riscv))
 /*
  * On some architectures the compiler will use PC-relative load to
  * find the address of DPCPU data with the static keyword. We then
  * use this to find the offset of the data in a per-CPU region.
  * This works for in the kernel as we can allocate the space ahead
- * of time, however modules need to allocate a sepatate space and
+ * of time, however modules need to allocate a separate space and
  * then use relocations to fix the address of the data. As
  * PC-relative data doesn't have a relocation there is nothing for
  * the kernel module linker to fix so data is accessed from the
