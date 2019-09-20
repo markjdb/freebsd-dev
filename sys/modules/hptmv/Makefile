@@ -13,6 +13,11 @@ SRCS+= bus_if.h device_if.h pci_if.h
 SRCS+= mv.c entry.c ioctl.c hptproc.c gui_lib.c
 OBJS+= hptmvraid.o
 
+.if $(MACHINE_CPUARCH) == "amd64"
+# The amd64 blob is not PIC.
+KLD_SHARED=no
+.endif
+
 hptmvraid.o:
 	uudecode -p < ${HPTMV}/${MACHINE_CPUARCH}-elf.raid.o.uu > ${.TARGET}
 

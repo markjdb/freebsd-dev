@@ -8,6 +8,11 @@ SRCS+=	opt_cam.h opt_scsi.h
 SRCS+=	os_bsd.h hpt27xx_os_bsd.c hpt27xx_osm_bsd.c hpt27xx_config.c
 OBJS+=	hpt27xx_lib.o
 
+# The amd64 blob is not PIC.
+.if ${MACHINE_CPUARCH} == "amd64"
+KLD_SHARED=no
+.endif
+
 hpt27xx_lib.o:
 	uudecode -p < ${HPT27XX}/$(MACHINE_ARCH)-elf.hpt27xx_lib.o.uu > ${.TARGET}
 

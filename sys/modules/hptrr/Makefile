@@ -8,6 +8,11 @@ SRCS = opt_scsi.h opt_cam.h bus_if.h device_if.h pci_if.h os_bsd.h
 SRCS+= hptrr_os_bsd.c hptrr_osm_bsd.c hptrr_config.c
 OBJS = hptrr_lib.o
 
+# The amd64 blob is not PIC.
+.if ${MACHINE_CPUARCH} == "amd64"
+KLD_SHARED=no
+.endif
+
 hptrr_lib.o:
 	uudecode -p < ${HPTRR}/$(MACHINE_CPUARCH)-elf.hptrr_lib.o.uu > hptrr_lib.o
 

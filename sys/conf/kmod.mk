@@ -14,6 +14,9 @@
 #		to export all symbols.  If not defined, no symbols are
 #		exported.
 #
+# KLD_SHARED	A boolean indicating whether the module is to be built as
+#		a shared object.
+#
 # KMOD		The name of the kernel module to build.
 #
 # KMODDIR	Base path for kernel modules (see kld(4)). [/boot/kernel]
@@ -97,8 +100,11 @@ SYSDIR=	${_dir:tA}
 
 .SUFFIXES: .out .o .c .cc .cxx .C .y .l .s .S .m
 
-# amd64 and mips use direct linking for kmod, all others use shared binaries
-.if ${MACHINE_CPUARCH} != amd64 && ${MACHINE_CPUARCH} != mips
+# amd64 and mips use direct linking for kmods, all others use shared objects by
+# default.
+.if defined(KLD_SHARED)
+__KLD_SHARED=${KLD_SHARED:tl}
+.elif ${MACHINE_CPUARCH} != "amd64" && ${MACHINE_CPUARCH} != "mips"
 __KLD_SHARED=yes
 .else
 __KLD_SHARED=no
@@ -151,8 +157,9 @@ CFLAGS+=	${DEBUG_FLAGS}
 CFLAGS+=	-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
 .endif
 
-.if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "riscv"
-CFLAGS+=	-fPIC
+.if ${__KLD_SHARED} == "yes" && (${MACHINE_CPUARCH} == "aarch64" || \
+    ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "riscv")
+CFLAGS+=	-fPIC -fno-plt
 .endif
 
 # Temporary workaround for PR 196407, which contains the fascinating details.
