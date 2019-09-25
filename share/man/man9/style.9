@@ -58,6 +58,27 @@ is silent on an issue.
  * Multi-line comments look like this.  Make them real sentences.  Fill
  * them so they look like real paragraphs.
  */
+
+static int
+foo(void)
+{
+	a = b;
+
+	/*
+	 * A comment following a statement should be preceded by a blank line.
+	 */
+	if (!c) {
+		/*
+		 * No blank line is needed at the beginning of a new block.
+		 * Code described by a multi-line comment should be followed
+		 * by a blank line to delineate the scope of that comment.
+		 */
+		c = b;
+		d = c * c / 2;
+
+		bar();
+	}
+}
 .Ed
 .Pp
 The copyright header should be a multi-line comment, with the first
