@@ -1433,6 +1433,8 @@ vm_map_insert(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	    ("vm_map_insert: paradoxical MAP_NOFAULT request"));
 	KASSERT((prot & ~max) == 0,
 	    ("prot %#x is not subset of max_prot %#x", prot, max));
+	KASSERT((start & PAGE_MASK) == 0 && (end & PAGE_MASK) == 0,
+	    ("vm_map_insert: unaligned range %#lx-%#lx", start, end));
 
 	/*
 	 * Check that the start and end points are not bogus.
@@ -2442,6 +2444,9 @@ vm_map_protect(vm_map_t map, vm_offset_t start, vm_offset_t end,
 	vm_prot_t old_prot;
 	int rv;
 
+	KASSERT((start & PAGE_MASK) == 0 && (end & PAGE_MASK) == 0,
+	    ("vm_map_protect: unaligned range %#lx-%#lx", start, end));
+
 	if (start == end)
 		return (KERN_SUCCESS);
 
@@ -2810,6 +2815,9 @@ vm_map_inherit(vm_map_t map, vm_offset_t start, vm_offset_t end,
 	vm_map_entry_t entry;
 	vm_map_entry_t temp_entry;
 
+	KASSERT((start & PAGE_MASK) == 0 && (end & PAGE_MASK) == 0,
+	    ("vm_map_inherit: unaligned range %#lx-%#lx", start, end));
+
 	switch (new_inheritance) {
 	case VM_INHERIT_NONE:
 	case VM_INHERIT_COPY:
@@ -2902,6 +2910,9 @@ vm_map_unwire(vm_map_t map, vm_offset_t start, vm_offset_t end,
 	vm_map_entry_t entry, first_entry;
 	int rv;
 	bool first_iteration, holes_ok, need_wakeup, user_unwire;
+
+	KASSERT((start & PAGE_MASK) == 0 && (end & PAGE_MASK) == 0,
+	    ("vm_map_unwire: unaligned range %#lx-%#lx", start, end));
 
 	if (start == end)
 		return (KERN_SUCCESS);
@@ -3110,6 +3121,8 @@ vm_map_wire_locked(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 	vm_prot_t prot;
 
 	VM_MAP_ASSERT_LOCKED(map);
+	KASSERT((start & PAGE_MASK) == 0 && (end & PAGE_MASK) == 0,
+	    ("vm_map_wire_locked: unaligned range %#lx-%#lx", start, end));
 
 	if (start == end)
 		return (KERN_SUCCESS);
@@ -3550,6 +3563,9 @@ vm_map_delete(vm_map_t map, vm_offset_t start, vm_offset_t end)
 	vm_map_entry_t first_entry;
 
 	VM_MAP_ASSERT_LOCKED(map);
+	KASSERT((start & PAGE_MASK) == 0 && (end & PAGE_MASK) == 0,
+	    ("vm_map_delete: unaligned range %#lx-%#lx", start, end));
+
 	if (start == end)
 		return (KERN_SUCCESS);
 
