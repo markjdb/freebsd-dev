@@ -56,15 +56,13 @@ __FBSDID("$FreeBSD$");
 
 #include <compat/linux/linux_vdso.h>
 
-SLIST_HEAD(, linux_vdso_sym) __elfN(linux_vdso_syms) =
+static SLIST_HEAD(, linux_vdso_sym) __elfN(linux_vdso_syms) =
     SLIST_HEAD_INITIALIZER(__elfN(linux_vdso_syms));
 
 static int __elfN(symtabindex);
 static int __elfN(symstrindex);
 
-static void
-__elfN(linux_vdso_lookup)(Elf_Ehdr *, struct linux_vdso_sym *);
-
+static void __elfN(linux_vdso_lookup)(Elf_Ehdr *, struct linux_vdso_sym *);
 
 void
 __elfN(linux_vdso_sym_init)(struct linux_vdso_sym *s)
