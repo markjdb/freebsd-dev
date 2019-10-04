@@ -176,9 +176,9 @@ main(int argc, char **argv)
 		fprintf(out, "%10ld  %s\n",
 			ru.ru_isrss / ticks, "average unshared stack size");
 		fprintf(out, "%10ld  %s\n",
-			ru.ru_minflt, "page reclaims");
+			ru.ru_minflt, "soft page faults");
 		fprintf(out, "%10ld  %s\n",
-			ru.ru_majflt, "page faults");
+			ru.ru_majflt, "hard page faults");
 		fprintf(out, "%10ld  %s\n",
 			ru.ru_nswap, "swaps");
 		fprintf(out, "%10ld  %s\n",

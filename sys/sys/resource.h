@@ -78,8 +78,8 @@ struct rusage {
 	long	ru_ixrss;		/* integral shared memory size */
 	long	ru_idrss;		/* integral unshared data " */
 	long	ru_isrss;		/* integral unshared stack " */
-	long	ru_minflt;		/* page reclaims */
-	long	ru_majflt;		/* page faults */
+	long	ru_minflt;		/* soft page faults */
+	long	ru_majflt;		/* hard page faults */
 	long	ru_nswap;		/* swaps */
 	long	ru_inblock;		/* block input operations */
 	long	ru_oublock;		/* block output operations */
