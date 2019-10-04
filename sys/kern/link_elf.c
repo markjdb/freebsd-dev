@@ -740,16 +740,15 @@ parse_vnet(elf_file_t ef)
  * Apply the specified protection to the loadable segments of a preloaded linker
  * file.
  */
-static int
+static void
 preload_protect(elf_file_t ef, vm_prot_t prot)
 {
 #ifdef __amd64__
 	Elf_Ehdr *hdr;
 	Elf_Phdr *phdr, *phlimit;
 	vm_prot_t nprot;
-	int error;
+	int error __unused;
 
-	error = 0;
 	hdr = (Elf_Ehdr *)ef->address;
 	phdr = (Elf_Phdr *)(ef->address + hdr->e_phoff);
 	phlimit = phdr + hdr->e_phnum;
@@ -764,12 +763,9 @@ preload_protect(elf_file_t ef, vm_prot_t prot)
 			nprot |= VM_PROT_EXECUTE;
 		error = pmap_change_prot((vm_offset_t)ef->address +
 		    phdr->p_vaddr, round_page(phdr->p_memsz), nprot);
-		if (error != 0)
-			break;
+		KASSERT(error == 0,
+		    ("preload_protect: pmap_change_prot() returned %d", error));
 	}
-	return (error);
-#else
-	return (0);
 #endif
 }
 
@@ -835,12 +831,11 @@ link_elf_link_preload(linker_class_t cls, const char *filename,
 	if (error == 0)
 		error = parse_vnet(ef);
 #endif
-	if (error == 0)
-		error = preload_protect(ef, VM_PROT_ALL);
 	if (error != 0) {
 		linker_file_unload(lf, LINKER_UNLOAD_FORCE);
 		return (error);
 	}
+	preload_protect(ef, VM_PROT_ALL);
 	link_elf_reloc_local(lf);
 	*result = lf;
 	return (0);
@@ -854,10 +849,9 @@ link_elf_link_preload_finish(linker_file_t lf)
 
 	ef = (elf_file_t) lf;
 	error = relocate_file(ef);
-	if (error == 0)
-		error = preload_protect(ef, VM_PROT_NONE);
 	if (error != 0)
 		return (error);
+	preload_protect(ef, VM_PROT_NONE);
 	(void)link_elf_preload_parse_symbols(ef);
 
 	return (link_elf_link_common_finish(lf));
@@ -1150,10 +1144,9 @@ link_elf_load_file(linker_class_t cls, const char* filename,
 		    (vm_offset_t)segbase,
 		    (vm_offset_t)segbase + round_page(segs[i]->p_memsz),
 		    prot, FALSE);
-		if (error != KERN_SUCCESS) {
-			error = ENOMEM;
-			goto out;
-		}
+		KASSERT(error == KERN_SUCCESS,
+		    ("link_elf_load_file: vm_map_protect() returned %d",
+		    error));
 	}
 #endif
 
