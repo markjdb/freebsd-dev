@@ -1066,6 +1066,7 @@ vm_reserv_init(void)
 		while (paddr + VM_LEVEL_0_SIZE > paddr && paddr +
 		    VM_LEVEL_0_SIZE <= seg->end) {
 			rv = &vm_reserv_array[paddr >> VM_LEVEL_0_SHIFT];
+			memset(rv, 0, sizeof(*rv));
 			rv->pages = PHYS_TO_VM_PAGE(paddr);
 			rv->domain = seg->domain;
 			mtx_init(&rv->lock, "vm reserv", NULL, MTX_DEF);
@@ -1401,7 +1402,7 @@ vm_paddr_t
 vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end)
 {
 	vm_paddr_t new_end, high_water;
-	size_t size;
+	long count;
 	int i;
 
 	high_water = phys_avail[1];
@@ -1416,6 +1417,13 @@ vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end)
 			high_water = phys_avail[i + 1];
 	}
 
+	count = howmany(high_water, VM_LEVEL_0_SIZE);
+
+#ifdef PMAP_HAS_PAGE_ARRAY
+	vm_reserv_array = (vm_reserv_t)pmap_reserv_array_startup(count,
+	    sizeof(struct vm_reserv));
+	new_end = phys_avail[vm_phys_avail_largest() + 1];
+#else
 	/*
 	 * Calculate the size (in bytes) of the reservation array.  Round up
 	 * from "high_water" because every small page is mapped to an element
@@ -1423,16 +1431,15 @@ vm_reserv_startup(vm_offset_t *vaddr, vm_paddr_t end)
 	 * number of elements in the reservation array can be greater than the
 	 * number of superpages. 
 	 */
-	size = howmany(high_water, VM_LEVEL_0_SIZE) * sizeof(struct vm_reserv);
 
 	/*
 	 * Allocate and map the physical memory for the reservation array.  The
 	 * next available virtual address is returned by reference.
 	 */
-	new_end = end - round_page(size);
+	new_end = end - round_page(count * sizeof(struct vm_reserv));
 	vm_reserv_array = (void *)(uintptr_t)pmap_map(vaddr, new_end, end,
 	    VM_PROT_READ | VM_PROT_WRITE);
-	bzero(vm_reserv_array, size);
+#endif
 
 	/*
 	 * Return the next available physical address.

@@ -408,7 +408,7 @@ struct pv_chunk {
 
 extern caddr_t	CADDR1;
 extern pt_entry_t *CMAP1;
-extern vm_offset_t virtual_avail;
+extern vm_offset_t virtual_avail, virtual_avail2;
 extern vm_offset_t virtual_end;
 extern vm_paddr_t dmaplimit;
 extern int pmap_pcid_enabled;
@@ -469,7 +469,8 @@ int	pmap_pkru_set(pmap_t pmap, vm_offset_t sva, vm_offset_t eva,
 	    u_int keyidx, int flags);
 void	pmap_thread_init_invl_gen(struct thread *td);
 int	pmap_vmspace_copy(pmap_t dst_pmap, pmap_t src_pmap);
-void	pmap_page_array_startup(long count);
+vm_offset_t pmap_page_array_startup(long count, size_t sz);
+vm_offset_t pmap_reserv_array_startup(long count, size_t sz);
 #endif /* _KERNEL */
 
 /* Return various clipped indexes for a given VA */
