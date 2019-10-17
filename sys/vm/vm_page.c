@@ -676,8 +676,7 @@ vm_page_startup(vm_offset_t vaddr)
 #endif
 
 #ifdef PMAP_HAS_PAGE_ARRAY
-	vm_page_array = (vm_page_t)pmap_page_array_startup(size / PAGE_SIZE,
-	    sizeof(struct vm_page));
+	pmap_page_array_startup(size / PAGE_SIZE);
 	biggestone = vm_phys_avail_largest();
 	end = new_end = phys_avail[biggestone + 1];
 #else

@@ -772,8 +772,10 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 	 * that handle vm_page_array allocation can simply adjust virtual_avail
 	 * instead.
 	 */
-	(void)vm_map_insert(m, NULL, 0, VM_MIN_KERNEL_ADDRESS,
-	    round_2mpage(virtual_avail2), VM_PROT_RW, VM_PROT_RW, MAP_NOFAULT);
+	(void)vm_map_insert(m, NULL, 0, (vm_offset_t)vm_page_array,
+	    (vm_offset_t)vm_page_array + round_2mpage(vm_page_array_size *
+	    sizeof(struct vm_page)),
+	    VM_PROT_RW, VM_PROT_RW, MAP_NOFAULT);
 #endif
 	vm_map_unlock(m);
 

@@ -380,7 +380,6 @@ pmap_pku_mask_bit(pmap_t pmap)
 struct pmap kernel_pmap_store;
 
 vm_offset_t virtual_avail;	/* VA of first avail page (after kernel bss) */
-vm_offset_t virtual_avail2;	/* XXX */
 vm_offset_t virtual_end;	/* VA of last avail page (end of kernel AS) */
 
 int nkpt;
@@ -4098,8 +4097,8 @@ SYSCTL_PROC(_vm, OID_AUTO, kvm_free, CTLTYPE_LONG | CTLFLAG_RD | CTLFLAG_MPSAFE,
  * Allocate physical memory for the vm_page array and map it into KVA,
  * attempting to back the vm_pages with domain-local memory.
  */
-vm_offset_t
-pmap_page_array_startup(long count, size_t sz)
+void
+pmap_page_array_startup(long pages)
 {
 	pdp_entry_t *pdpe;
 	pd_entry_t *pde, newpdir;
@@ -4108,12 +4107,12 @@ pmap_page_array_startup(long count, size_t sz)
 	long pfn;
 	int domain, i;
 
-	vm_page_array_size = count;
+	vm_page_array_size = pages;
 
 	start = VM_MIN_KERNEL_ADDRESS;
-	end = start + count * sz;
+	end = start + pages * sizeof(struct vm_page);
 	for (va = start; va < end; va += NBPDR) {
-		pfn = first_page + (va - start) / sz;
+		pfn = first_page + (va - start) / sizeof(struct vm_page);
 		domain = _vm_phys_domain(ptoa(pfn));
 		pdpe = pmap_pdpe(kernel_pmap, va);
 		if ((*pdpe & X86_PG_V) == 0) {
@@ -4133,49 +4132,8 @@ pmap_page_array_startup(long count, size_t sz)
 		    X86_PG_M | PG_PS | pg_g | pg_nx);
 		pde_store(pde, newpdir);
 	}
-	virtual_avail2 = end;
-	return (start);
+	vm_page_array = (vm_page_t)start;
 }
-
-#if VM_NRESERVLEVEL > 0
-vm_offset_t
-pmap_reserv_array_startup(long count, size_t sz)
-{
-	pdp_entry_t *pdpe;
-	pd_entry_t *pde, newpdir;
-	vm_offset_t va, start, end;
-	vm_paddr_t pa;
-	long pfn;
-	int domain, i;
-
-	/* XXX */
-	start = round_2mpage(virtual_avail2);
-	end = start + count * sz;
-	for (va = start; va < end; va += NBPDR) {
-		pfn = (va - start) / sz;
-		domain = _vm_phys_domain(pfn << PDRSHIFT);
-		pdpe = pmap_pdpe(kernel_pmap, va);
-		if ((*pdpe & X86_PG_V) == 0) {
-			pa = vm_phys_early_alloc(domain, PAGE_SIZE);
-			dump_add_page(pa);
-			pagezero((void *)PHYS_TO_DMAP(pa));
-			*pdpe = (pdp_entry_t)(pa | X86_PG_V | X86_PG_RW |
-			    X86_PG_A | X86_PG_M);
-		}
-		pde = pmap_pdpe_to_pde(pdpe, va);
-		if ((*pde & X86_PG_V) != 0)
-			panic("Unexpected pde");
-		pa = vm_phys_early_alloc(domain, NBPDR);
-		for (i = 0; i < NPDEPG; i++)
-			dump_add_page(pa + i * PAGE_SIZE);
-		newpdir = (pd_entry_t)(pa | X86_PG_V | X86_PG_RW | X86_PG_A |
-		    X86_PG_M | PG_PS | pg_g | pg_nx);
-		pde_store(pde, newpdir);
-	}
-	virtual_avail2 = end;
-	return (start);
-}
-#endif
 
 /*
  * grow the number of kernel page table entries, if needed
