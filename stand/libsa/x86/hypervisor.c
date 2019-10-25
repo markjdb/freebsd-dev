@@ -1,5 +1,5 @@
 /*-
- * Copyright (C) 2008 David Xu <davidxu@freebsd.org>
+ * Copyright (c) 2013-2019 Juniper Networks, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -7,9 +7,9 @@
  * are met:
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 2. Neither the name of the author nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -22,21 +22,31 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
-#include <sys/syscall.h>
-#include <machine/asm.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-#define	RSYSCALL_ERR(x)	ENTRY(__CONCAT(x, _err)); \
-			mov __CONCAT($SYS_,x),%rax; \
-			KERNCALL; \
-			ret; \
-			END(__CONCAT(x, _err));
+#include <stand.h>
+#include <machine/cpufunc.h>
+#include <machine/specialreg.h>
 
-#define KERNCALL	movq %rcx, %r10; syscall
+const char *
+x86_hypervisor(void)
+{
+	static union {
+		struct {
+			u_int high;
+			char name[13];
+		} hv;
+		u_int regs[4];
+	} u;
 
-RSYSCALL_ERR(_umtx_op)
-
-	.section .note.GNU-stack,"",%progbits
+	/* Return NULL when no hypervisor is present. */
+	do_cpuid(1, u.regs);
+	if ((u.regs[2] & CPUID2_HV) == 0)
+		return (NULL);
+	/* Return the hypervisor's identification. */
+	do_cpuid(0x40000000, u.regs);
+	return (u.hv.name);
+}

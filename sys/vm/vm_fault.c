@@ -154,11 +154,13 @@ static inline void
 release_page(struct faultstate *fs)
 {
 
-	vm_page_xunbusy(fs->m);
-	vm_page_lock(fs->m);
-	vm_page_deactivate(fs->m);
-	vm_page_unlock(fs->m);
-	fs->m = NULL;
+	if (fs->m != NULL) {
+		vm_page_xunbusy(fs->m);
+		vm_page_lock(fs->m);
+		vm_page_deactivate(fs->m);
+		vm_page_unlock(fs->m);
+		fs->m = NULL;
+	}
 }
 
 static inline void
@@ -637,8 +639,10 @@ vm_fault_lock_vnode(struct faultstate *fs)
 	if (fs->object->type != OBJT_VNODE)
 		return (KERN_SUCCESS);
 	vp = fs->object->handle;
-	if (vp == fs->vp)
+	if (vp == fs->vp) {
+		ASSERT_VOP_LOCKED(vp, "saved vnode is not locked");
 		return (KERN_SUCCESS);
+	}
 
 	/*
 	 * Perform an unlock in case the desired vnode changed while

@@ -216,8 +216,10 @@ vm_page_init_cache_zones(void *dummy __unused)
 {
 	struct vm_domain *vmd;
 	struct vm_pgcache *pgcache;
-	int domain, pool;
+	int domain, maxcache, pool;
 
+	maxcache = 0;
+	TUNABLE_INT_FETCH("vm.pgcache_zone_max", &maxcache);
 	for (domain = 0; domain < vm_ndomains; domain++) {
 		vmd = VM_DOMAIN(domain);
 
@@ -237,7 +239,7 @@ vm_page_init_cache_zones(void *dummy __unused)
 			    sizeof(struct vm_page), NULL, NULL, NULL, NULL,
 			    vm_page_zone_import, vm_page_zone_release, pgcache,
 			    UMA_ZONE_MAXBUCKET | UMA_ZONE_VM);
-			(void)uma_zone_set_maxcache(pgcache->zone, 0);
+			(void)uma_zone_set_maxcache(pgcache->zone, maxcache);
 		}
 	}
 }
@@ -900,9 +902,11 @@ vm_page_busy_acquire(vm_page_t m, int allocflags)
 		    (allocflags & VM_ALLOC_SBUSY) != 0, locked);
 		if (locked)
 			VM_OBJECT_WLOCK(obj);
-		MPASS(m->object == obj || m->object == NULL);
 		if ((allocflags & VM_ALLOC_WAITFAIL) != 0)
 			return (FALSE);
+		KASSERT(m->object == obj || m->object == NULL,
+		    ("vm_page_busy_acquire: page %p does not belong to %p",
+		    m, obj));
 	}
 }
 
