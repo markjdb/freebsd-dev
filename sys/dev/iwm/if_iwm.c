@@ -934,7 +934,7 @@ iwm_alloc_rx_ring(struct iwm_softc *sc, struct iwm_rx_ring *ring)
 	ring->cur = 0;
 
 	/* Allocate RX descriptors (256-byte aligned). */
-	size = IWM_RX_RING_COUNT * sizeof(uint32_t);
+	size = IWM_RX_RING_COUNT * sizeof(uint64_t);
 	error = iwm_dma_contig_alloc(sc->sc_dmat, &ring->desc_dma, size, 256);
 	if (error != 0) {
 		device_printf(sc->sc_dev,
@@ -952,6 +952,17 @@ iwm_alloc_rx_ring(struct iwm_softc *sc, struct iwm_rx_ring *ring)
 		goto fail;
 	}
 	ring->stat = ring->stat_dma.vaddr;
+
+	size = IWM_RX_RING_COUNT * sizeof(uint32_t);
+	error = iwm_dma_contig_alloc(sc->sc_dmat, &ring->used_desc_dma, size,
+	    256);
+	if (error != 0) {
+		device_printf(sc->sc_dev,
+		    "could not allocate RX ring DMA memory\n");
+		goto fail;
+	}
+	/* XXX something needs to go here */
+	//ring->desc = ring->desc_dma.vaddr;
 
         /* Create RX buffer DMA tag. */
         error = bus_dma_tag_create(sc->sc_dmat, 1, 0,
@@ -975,7 +986,7 @@ iwm_alloc_rx_ring(struct iwm_softc *sc, struct iwm_rx_ring *ring)
 	/*
 	 * Allocate and map RX buffers.
 	 */
-	for (i = 0; i < IWM_RX_RING_COUNT; i++) {
+	for (i = 0; i < IWM_RX_RING_COUNT - 1; i++) {
 		struct iwm_rx_data *data = &ring->data[i];
 		error = bus_dmamap_create(ring->data_dmat, 0, &data->map);
 		if (error != 0) {
@@ -1017,6 +1028,7 @@ iwm_free_rx_ring(struct iwm_softc *sc, struct iwm_rx_ring *ring)
 
 	iwm_dma_contig_free(&ring->desc_dma);
 	iwm_dma_contig_free(&ring->stat_dma);
+	iwm_dma_contig_free(&ring->used_desc_dma);
 
 	for (i = 0; i < IWM_RX_RING_COUNT; i++) {
 		struct iwm_rx_data *data = &ring->data[i];
@@ -1377,17 +1389,52 @@ iwm_mvm_nic_config(struct iwm_softc *sc)
 static int
 iwm_nic_rx_init(struct iwm_softc *sc)
 {
-	/*
-	 * Initialize RX ring.  This is from the iwn driver.
-	 */
-	memset(sc->rxq.stat, 0, sizeof(*sc->rxq.stat));
 
+#if 0
 	/* Stop Rx DMA */
 	iwm_pcie_rx_stop(sc);
+#endif
 
 	if (!iwm_nic_lock(sc))
 		return EBUSY;
 
+#if 1
+	iwm_write_prph(sc, IWM_RFH_RXF_DMA_CFG, 0);
+
+	iwm_write_prph(sc, IWM_RFH_RXF_RXQ_ACTIVE, 0);
+
+	printf("%lx\n", sc->rxq.desc_dma.paddr);
+	iwm_write_prph64(sc, IWM_RFH_Q0_FRBDCB_BA_LSB, sc->rxq.desc_dma.paddr);
+	printf("%lx\n", sc->rxq.used_desc_dma.paddr);
+	iwm_write_prph64(sc, IWM_RFH_Q0_URBDCB_BA_LSB, sc->rxq.used_desc_dma.paddr);
+	printf("%lx\n", sc->rxq.stat_dma.paddr);
+	iwm_write_prph64(sc, IWM_RFH_Q0_URBD_STTS_WPTR_LSB, sc->rxq.stat_dma.paddr);
+
+	iwm_write_prph(sc, IWM_RFH_Q0_FRBDCB_WIDX, 0);
+	iwm_write_prph(sc, IWM_RFH_Q0_FRBDCB_RIDX, 0);
+	iwm_write_prph(sc, IWM_RFH_Q0_URBDCB_WIDX, 0);
+
+	iwm_write_prph(sc, IWM_RFH_RXF_DMA_CFG,
+	    IWM_RFH_DMA_EN_ENABLE_VAL |
+	    IWM_RFH_RXF_DMA_RB_SIZE_4K |
+	    IWM_RFH_RXF_DMA_MIN_RB_4_8 |
+	    IWM_RFH_RXF_DMA_DROP_TOO_LARGE_MASK |
+	    IWM_RFH_RXF_DMA_RBDCB_SIZE_512);
+	printf("DMA_CFG: %#x\n", iwm_read_prph(sc, IWM_RFH_RXF_DMA_CFG));
+
+	iwm_write_prph(sc, IWM_RFH_GEN_CFG,
+	    IWM_RFH_GEN_CFG_RFH_DMA_SNOOP |
+	    0 /* queue 0 */ |
+	    IWM_RFH_GEN_CFG_SERVICE_DMA_SNOOP |
+	    IWM_RFH_GEN_CFG_RB_CHUNK_SIZE_64);
+	printf("DMACFG: %#x\n", iwm_read_prph(sc, IWM_RFH_RXF_DMA_CFG));
+
+	iwm_write_prph(sc, IWM_RFH_RXF_RXQ_ACTIVE, 0x00010001);
+
+	iwm_nic_unlock(sc);
+
+	IWM_WRITE_1(sc, IWM_CSR_INT_COALESCING, IWM_HOST_INT_TIMEOUT_DEF);
+#else
 	/* reset and flush pointers */
 	IWM_WRITE(sc, IWM_FH_MEM_RCSR_CHNL0_RBDCB_WPTR, 0);
 	IWM_WRITE(sc, IWM_FH_MEM_RCSR_CHNL0_FLUSH_RB_REQ, 0);
@@ -1425,15 +1472,10 @@ iwm_nic_rx_init(struct iwm_softc *sc)
 	if (sc->cfg->host_interrupt_operation_mode)
 		IWM_SETBITS(sc, IWM_CSR_INT_COALESCING, IWM_HOST_INT_OPER_MODE);
 
-	/*
-	 * Thus sayeth el jefe (iwlwifi) via a comment:
-	 *
-	 * This value should initially be 0 (before preparing any
-	 * RBs), should be 8 after preparing the first 8 RBs (for example)
-	 */
-	IWM_WRITE(sc, IWM_FH_RSCSR_CHNL0_WPTR, 8);
-
 	iwm_nic_unlock(sc);
+#endif
+
+	//IWM_WRITE(sc, IWM_RFH_Q0_FRBDCB_WIDX_TRG, 8);
 
 	return 0;
 }
@@ -1479,6 +1521,7 @@ iwm_nic_init(struct iwm_softc *sc)
 	int error;
 
 	iwm_apm_init(sc);
+
 	if (sc->cfg->device_family == IWM_DEVICE_FAMILY_7000)
 		iwm_set_pwr(sc);
 
@@ -2831,8 +2874,8 @@ iwm_mvm_load_ucode_wait_alive(struct iwm_softc *sc,
 				iwm_nic_unlock(sc);
 			}
 			device_printf(sc->sc_dev,
-			    "SecBoot CPU1 Status: 0x%x, CPU2 Status: 0x%x\n",
-			    a, b);
+			    "SecBoot CPU1 Status: 0x%x, CPU2 Status: 0x%x, error %d\n",
+			    a, b, error);
 		}
 		sc->cur_ucode = old_type;
 		return error;
@@ -3026,7 +3069,7 @@ iwm_rx_addbuf(struct iwm_softc *sc, int size, int idx)
 
 	/* Update RX descriptor. */
 	KASSERT((seg.ds_addr & 255) == 0, ("seg.ds_addr not aligned"));
-	ring->desc[idx] = htole32(seg.ds_addr >> 8);
+	ring->desc[idx] = htole64(seg.ds_addr | (idx + 1));
 	bus_dmamap_sync(ring->desc_dma.tag, ring->desc_dma.map,
 	    BUS_DMASYNC_PREWRITE);
 
@@ -5423,6 +5466,8 @@ iwm_notif_intr(struct iwm_softc *sc)
 
 	hw = le16toh(sc->rxq.stat->closed_rb_num) & 0xfff;
 
+	printf("%s %d\n", __func__, hw);
+
 	/*
 	 * Process responses
 	 */
@@ -5447,7 +5492,7 @@ iwm_notif_intr(struct iwm_softc *sc)
 	 * the write by 8??
 	 */
 	hw = (hw == 0) ? IWM_RX_RING_COUNT - 1 : hw - 1;
-	IWM_WRITE(sc, IWM_FH_RSCSR_CHNL0_WPTR, rounddown2(hw, 8));
+	IWM_WRITE(sc, IWM_RFH_Q0_FRBDCB_WIDX_TRG, rounddown2(hw, 8));
 }
 
 static void
@@ -5498,6 +5543,8 @@ iwm_intr(void *arg)
 	if (r1 == 0 && r2 == 0) {
 		goto out_ena;
 	}
+
+	printf("%s %x\n", __func__, r1);
 
 	IWM_WRITE(sc, IWM_CSR_INT, r1 | ~sc->sc_intmask);
 
@@ -5551,6 +5598,10 @@ iwm_intr(void *arg)
 		goto out;
 	}
 
+	if (r1 & IWM_CSR_INT_BIT_ALIVE) {
+		IWM_WRITE(sc, IWM_RFH_Q0_FRBDCB_WIDX_TRG, 8);
+	}
+
 	/* firmware chunk loaded */
 	if (r1 & IWM_CSR_INT_BIT_FH_TX) {
 		IWM_WRITE(sc, IWM_CSR_FH_INT_STATUS, IWM_CSR_FH_INT_TX_MASK);
@@ -5600,6 +5651,7 @@ iwm_intr(void *arg)
 	rv = 1;
 
  out_ena:
+	printf("restoring interrupt mask %x\n", sc->sc_intmask);
 	iwm_restore_interrupts(sc);
  out:
 	IWM_UNLOCK(sc);
@@ -5766,7 +5818,7 @@ iwm_attach(device_t dev)
 
 	sc->sc_dev = dev;
 	sc->sc_attached = 1;
-        sc->sc_debug = (sc->sc_debug | IWM_DEBUG_RESET | IWM_DEBUG_INTR | IWM_DEBUG_FW | IWM_DEBUG_FATAL | IWM_DEBUG_CMD);
+        sc->sc_debug = (sc->sc_debug | IWM_DEBUG_ANY);
 	IWM_LOCK_INIT(sc);
 	mbufq_init(&sc->sc_snd, ifqmaxlen);
 	callout_init_mtx(&sc->sc_watchdog_to, &sc->sc_mtx, 0);
