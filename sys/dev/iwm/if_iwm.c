@@ -330,8 +330,8 @@ static int	iwm_get_noise(struct iwm_softc *,
 		    const struct iwm_mvm_statistics_rx_non_phy *);
 static void	iwm_mvm_handle_rx_statistics(struct iwm_softc *,
 		    struct iwm_rx_packet *);
-static boolean_t iwm_mvm_rx_rx_mpdu(struct iwm_softc *, struct mbuf *,
-				    uint32_t, boolean_t);
+static bool	iwm_mvm_rx_rx_mpdu(struct iwm_softc *, struct mbuf *,
+				    uint32_t, bool);
 static int	iwm_mvm_rx_tx_cmd_single(struct iwm_softc *,
                                          struct iwm_rx_packet *,
 				         struct iwm_node *);
@@ -961,8 +961,7 @@ iwm_alloc_rx_ring(struct iwm_softc *sc, struct iwm_rx_ring *ring)
 		    "could not allocate RX ring DMA memory\n");
 		goto fail;
 	}
-	/* XXX something needs to go here */
-	//ring->desc = ring->desc_dma.vaddr;
+	ring->bd32 = ring->used_desc_dma.vaddr;
 
         /* Create RX buffer DMA tag. */
         error = bus_dma_tag_create(sc->sc_dmat, 1, 0,
@@ -986,7 +985,7 @@ iwm_alloc_rx_ring(struct iwm_softc *sc, struct iwm_rx_ring *ring)
 	/*
 	 * Allocate and map RX buffers.
 	 */
-	for (i = 0; i < IWM_RX_RING_COUNT - 1; i++) {
+	for (i = 0; i < IWM_RX_RING_COUNT; i++) {
 		struct iwm_rx_data *data = &ring->data[i];
 		error = bus_dmamap_create(ring->data_dmat, 0, &data->map);
 		if (error != 0) {
@@ -1327,12 +1326,14 @@ iwm_stop_device(struct iwm_softc *sc)
 	/* Stop the device, and put it in low power state */
 	iwm_apm_stop(sc);
 
+	/* stop and reset the on-board processor */
+	IWM_SETBITS(sc, IWM_CSR_RESET, IWM_CSR_RESET_REG_FLAG_SW_RESET);
+	DELAY(5000);
+
 	/* Upon stop, the APM issues an interrupt if HW RF kill is set.
 	 * Clean again the interrupt here
 	 */
 	iwm_disable_interrupts(sc);
-	/* stop and reset the on-board processor */
-	IWM_WRITE(sc, IWM_CSR_RESET, IWM_CSR_RESET_REG_FLAG_SW_RESET);
 
 	/*
 	 * Even if we stop the HW, we still want the RF kill
@@ -1340,6 +1341,8 @@ iwm_stop_device(struct iwm_softc *sc)
 	 */
 	iwm_enable_rfkill_int(sc);
 	iwm_check_rfkill(sc);
+
+	iwm_prepare_card_hw(sc);
 }
 
 /* iwlwifi: mvm/ops.c */
@@ -1411,11 +1414,8 @@ iwm_nic_rx_init(struct iwm_softc *sc)
 
 	iwm_write_prph(sc, IWM_RFH_RXF_RXQ_ACTIVE, 0);
 
-	printf("%lx\n", sc->rxq.desc_dma.paddr);
 	iwm_write_prph64(sc, IWM_RFH_Q0_FRBDCB_BA_LSB, sc->rxq.desc_dma.paddr);
-	printf("%lx\n", sc->rxq.used_desc_dma.paddr);
 	iwm_write_prph64(sc, IWM_RFH_Q0_URBDCB_BA_LSB, sc->rxq.used_desc_dma.paddr);
-	printf("%lx\n", sc->rxq.stat_dma.paddr);
 	iwm_write_prph64(sc, IWM_RFH_Q0_URBD_STTS_WPTR_LSB, sc->rxq.stat_dma.paddr);
 
 	iwm_write_prph(sc, IWM_RFH_Q0_FRBDCB_WIDX, 0);
@@ -1428,14 +1428,12 @@ iwm_nic_rx_init(struct iwm_softc *sc)
 	    IWM_RFH_RXF_DMA_MIN_RB_4_8 |
 	    IWM_RFH_RXF_DMA_DROP_TOO_LARGE_MASK |
 	    IWM_RFH_RXF_DMA_RBDCB_SIZE_512);
-	printf("DMA_CFG: %#x\n", iwm_read_prph(sc, IWM_RFH_RXF_DMA_CFG));
 
 	iwm_write_prph(sc, IWM_RFH_GEN_CFG,
 	    IWM_RFH_GEN_CFG_RFH_DMA_SNOOP |
 	    0 /* queue 0 */ |
 	    IWM_RFH_GEN_CFG_SERVICE_DMA_SNOOP |
 	    IWM_RFH_GEN_CFG_RB_CHUNK_SIZE_64);
-	printf("DMACFG: %#x\n", iwm_read_prph(sc, IWM_RFH_RXF_DMA_CFG));
 
 	iwm_write_prph(sc, IWM_RFH_RXF_RXQ_ACTIVE, 0x00010001);
 
@@ -1483,7 +1481,7 @@ iwm_nic_rx_init(struct iwm_softc *sc)
 	iwm_nic_unlock(sc);
 #endif
 
-	//IWM_WRITE(sc, IWM_RFH_Q0_FRBDCB_WIDX_TRG, 8);
+	IWM_WRITE(sc, IWM_RFH_Q0_FRBDCB_WIDX_TRG, 8);
 
 	return 0;
 }
@@ -1506,6 +1504,9 @@ iwm_nic_tx_init(struct iwm_softc *sc)
 	for (qid = 0; qid < nitems(sc->txq); qid++) {
 		struct iwm_tx_ring *txq = &sc->txq[qid];
 
+		if (qid >= 10)
+			continue;
+
 		/* Set physical address of TX ring (256-byte aligned). */
 		IWM_WRITE(sc, IWM_FH_MEM_CBBC_QUEUE(qid),
 		    txq->desc_dma.paddr >> 8);
@@ -1516,8 +1517,9 @@ iwm_nic_tx_init(struct iwm_softc *sc)
 		    (unsigned long) (txq->desc_dma.paddr >> 8));
 	}
 
-	iwm_write_prph(sc, IWM_SCD_GP_CTRL, IWM_SCD_GP_CTRL_AUTO_ACTIVE_MODE);
-	iwm_set_bits_prph(sc, IWM_SCD_GP_CTRL, IWM_SCD_GP_CTRL_ENABLE_31_QUEUES);
+	iwm_set_bits_prph(sc, IWM_SCD_GP_CTRL,
+	    IWM_SCD_GP_CTRL_AUTO_ACTIVE_MODE |
+	    IWM_SCD_GP_CTRL_ENABLE_31_QUEUES);
 
 	iwm_nic_unlock(sc);
 
@@ -1566,6 +1568,8 @@ iwm_enable_txq(struct iwm_softc *sc, int sta_id, int qid, int fifo)
 	IWM_WRITE(sc, IWM_HBUS_TARG_WRPTR, qid << 8 | 0);
 
 	if (qid == IWM_MVM_CMD_QUEUE) {
+		iwm_write_prph(sc, IWM_SCD_EN_CTRL, 0);
+
 		/* unactivate before configuration */
 		iwm_write_prph(sc, IWM_SCD_QUEUE_STATUS_BITS(qid),
 		    (0 << IWM_SCD_QUEUE_STTS_REG_POS_ACTIVE)
@@ -1603,6 +1607,8 @@ iwm_enable_txq(struct iwm_softc *sc, int sta_id, int qid, int fifo)
 		    (fifo << IWM_SCD_QUEUE_STTS_REG_POS_TXF) |
 		    (1 << IWM_SCD_QUEUE_STTS_REG_POS_WSL) |
 		    IWM_SCD_QUEUE_STTS_REG_MSK);
+
+		iwm_write_prph(sc, IWM_SCD_EN_CTRL, (1 << qid));
 	} else {
 		struct iwm_scd_txq_cfg_cmd cmd;
 		int error;
@@ -1612,10 +1618,11 @@ iwm_enable_txq(struct iwm_softc *sc, int sta_id, int qid, int fifo)
 		memset(&cmd, 0, sizeof(cmd));
 		cmd.scd_queue = qid;
 		cmd.enable = 1;
+		cmd.window = IWM_FRAME_LIMIT;
 		cmd.sta_id = sta_id;
 		cmd.tx_fifo = fifo;
 		cmd.aggregate = 0;
-		cmd.window = IWM_FRAME_LIMIT;
+		cmd.tid = 8;
 
 		error = iwm_mvm_send_cmd_pdu(sc, IWM_SCD_QUEUE_CFG, IWM_CMD_SYNC,
 		    sizeof(cmd), &cmd);
@@ -1628,9 +1635,6 @@ iwm_enable_txq(struct iwm_softc *sc, int sta_id, int qid, int fifo)
 		if (!iwm_nic_lock(sc))
 			return EBUSY;
 	}
-
-	iwm_write_prph(sc, IWM_SCD_EN_CTRL,
-	    iwm_read_prph(sc, IWM_SCD_EN_CTRL) | qid);
 
 	iwm_nic_unlock(sc);
 
@@ -3176,23 +3180,49 @@ iwm_mvm_handle_rx_statistics(struct iwm_softc *sc, struct iwm_rx_packet *pkt)
  *
  * Handles the actual data of the Rx packet from the fw
  */
-static boolean_t
+static bool
 iwm_mvm_rx_rx_mpdu(struct iwm_softc *sc, struct mbuf *m, uint32_t offset,
-	boolean_t stolen)
+    bool stolen)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211vap *vap = TAILQ_FIRST(&ic->ic_vaps);
 	struct ieee80211_frame *wh;
 	struct ieee80211_node *ni;
 	struct ieee80211_rx_stats rxs;
-	struct iwm_rx_phy_info *phy_info;
-	struct iwm_rx_mpdu_res_start *rx_res;
-	struct iwm_rx_packet *pkt = mtodoff(m, struct iwm_rx_packet *, offset);
-	uint32_t len;
-	uint32_t rx_pkt_status;
-	int rssi;
+	//struct iwm_rx_phy_info *phy_info;
+	struct iwm_rx_mpdu_desc *desc;
+	struct iwm_rx_packet *pkt;
+	int energy_a, energy_b, rssi;
+	uint32_t hdrlen, len, rate_n_flags;
+	uint16_t phy_info;
+	uint8_t channel;
 
-	phy_info = &sc->sc_last_phy_info;
+	pkt = mtodo(m, offset); 
+	desc = (void *)pkt->data;
+	wh = mtodo(m, sizeof(*desc));
+
+	if (!(desc->status & htole16(IWM_RX_MPDU_RES_STATUS_CRC_OK)) ||
+	    !(desc->status & htole16(IWM_RX_MPDU_RES_STATUS_OVERRUN_OK))) {
+		IWM_DPRINTF(sc, IWM_DEBUG_RECV,
+		    "Bad CRC or FIFO: 0x%08X.\n", desc->status);
+		goto fail;
+	}
+
+	channel = desc->v1.channel;
+	energy_a = desc->v1.energy_a;
+	energy_b = desc->v1.energy_b;
+	len = le16toh(desc->mpdu_len);
+	phy_info = le16toh(desc->phy_info);
+	rate_n_flags = desc->v1.rate_n_flags;
+
+	m->m_data = pkt->data + sizeof(*desc);
+	m->m_pkthdr.len = m->m_len = len;
+
+	if ((desc->mac_flags2 & 0x20)) {
+		hdrlen = ieee80211_anyhdrsize(wh);
+		memmove(mtodo(m, hdrlen), mtodo(m, hdrlen + 2), len - hdrlen - 2);
+	}
+#if 0
 	rx_res = (struct iwm_rx_mpdu_res_start *)pkt->data;
 	wh = (struct ieee80211_frame *)(pkt->data + sizeof(*rx_res));
 	len = le16toh(rx_res->byte_count);
@@ -3204,15 +3234,15 @@ iwm_mvm_rx_rx_mpdu(struct iwm_softc *sc, struct mbuf *m, uint32_t offset,
 		    phy_info->cfg_phy_cnt);
 		goto fail;
 	}
+#endif
 
-	if (!(rx_pkt_status & IWM_RX_MPDU_RES_STATUS_CRC_OK) ||
-	    !(rx_pkt_status & IWM_RX_MPDU_RES_STATUS_OVERRUN_OK)) {
-		IWM_DPRINTF(sc, IWM_DEBUG_RECV,
-		    "Bad CRC or FIFO: 0x%08X.\n", rx_pkt_status);
-		goto fail;
-	}
-
+#if 0
 	rssi = iwm_mvm_get_signal_strength(sc, phy_info);
+#else
+	energy_a = energy_a ? -energy_a : -256;
+	energy_b = energy_b ? -energy_b : -256;
+	rssi = max(energy_a, energy_b);
+#endif
 
 	/* Map it to relative value */
 	rssi = rssi - sc->sc_noise;
@@ -3224,19 +3254,19 @@ iwm_mvm_rx_rx_mpdu(struct iwm_softc *sc, struct mbuf *m, uint32_t offset,
 		goto fail;
 	}
 
-	m->m_data = pkt->data + sizeof(*rx_res);
-	m->m_pkthdr.len = m->m_len = len;
-
 	IWM_DPRINTF(sc, IWM_DEBUG_RECV,
 	    "%s: rssi=%d, noise=%d\n", __func__, rssi, sc->sc_noise);
 
 	ni = ieee80211_find_rxnode(ic, (struct ieee80211_frame_min *)wh);
-
+	if (ni)
+		printf("found node\n");
+#if 0
 	IWM_DPRINTF(sc, IWM_DEBUG_RECV,
 	    "%s: phy_info: channel=%d, flags=0x%08x\n",
 	    __func__,
-	    le16toh(phy_info->channel),
+	    channel,
 	    le16toh(phy_info->phy_flags));
+#endif
 
 	/*
 	 * Populate an RX state struct with the provided information.
@@ -3244,8 +3274,8 @@ iwm_mvm_rx_rx_mpdu(struct iwm_softc *sc, struct mbuf *m, uint32_t offset,
 	bzero(&rxs, sizeof(rxs));
 	rxs.r_flags |= IEEE80211_R_IEEE | IEEE80211_R_FREQ;
 	rxs.r_flags |= IEEE80211_R_NF | IEEE80211_R_RSSI;
-	rxs.c_ieee = le16toh(phy_info->channel);
-	if (le16toh(phy_info->phy_flags & IWM_RX_RES_PHY_FLAGS_BAND_24)) {
+	rxs.c_ieee = channel;
+	if (channel <= 14) {
 		rxs.c_freq = ieee80211_ieee2mhz(rxs.c_ieee, IEEE80211_CHAN_2GHZ);
 	} else {
 		rxs.c_freq = ieee80211_ieee2mhz(rxs.c_ieee, IEEE80211_CHAN_5GHZ);
@@ -3264,15 +3294,15 @@ iwm_mvm_rx_rx_mpdu(struct iwm_softc *sc, struct mbuf *m, uint32_t offset,
 		struct iwm_rx_radiotap_header *tap = &sc->sc_rxtap;
 
 		tap->wr_flags = 0;
-		if (phy_info->phy_flags & htole16(IWM_PHY_INFO_FLAG_SHPREAMBLE))
+		if (phy_info & (1 << 7))
 			tap->wr_flags |= IEEE80211_RADIOTAP_F_SHORTPRE;
 		tap->wr_chan_freq = htole16(rxs.c_freq);
 		/* XXX only if ic->ic_curchan->ic_ieee == rxs.c_ieee */
 		tap->wr_chan_flags = htole16(ic->ic_curchan->ic_flags);
 		tap->wr_dbm_antsignal = (int8_t)rssi;
 		tap->wr_dbm_antnoise = (int8_t)sc->sc_noise;
-		tap->wr_tsft = phy_info->system_timestamp;
-		switch (phy_info->rate) {
+		tap->wr_tsft = desc->v1.gp2_on_air_rise;
+		switch ((rate_n_flags & 0xff)) {
 		/* CCK rates. */
 		case  10: tap->wr_rate =   2; break;
 		case  20: tap->wr_rate =   4; break;
@@ -3303,11 +3333,11 @@ iwm_mvm_rx_rx_mpdu(struct iwm_softc *sc, struct mbuf *m, uint32_t offset,
 	}
 	IWM_LOCK(sc);
 
-	return TRUE;
+	return true;
 
 fail:
 	counter_u64_add(ic->ic_ierrors, 1);
-	return FALSE;
+	return false;
 }
 
 static int
@@ -3419,11 +3449,11 @@ iwm_mvm_rx_tx_cmd(struct iwm_softc *sc, struct iwm_rx_packet *pkt)
 
 	ieee80211_tx_complete(&in->in_ni, m, status);
 
-	if (--ring->queued < IWM_TX_RING_LOMARK) {
+	if (--ring->queued < IWM_TX_RING_LOMARK &&
+	    (sc->qfullmsk & (1 << ring->qid)) != 0) {
 		sc->qfullmsk &= ~(1 << ring->qid);
-		if (sc->qfullmsk == 0) {
+		if (sc->qfullmsk == 0)
 			iwm_start(sc);
-		}
 	}
 }
 
@@ -3550,7 +3580,7 @@ iwm_tx_fill_cmd(struct iwm_softc *sc, struct iwm_node *in,
 	    (m->m_flags & M_EAPOL) != 0) {
 		ridx = iwm_tx_rateidx_global_lookup(sc, tp->mgmtrate);
 		IWM_DPRINTF(sc, IWM_DEBUG_TXRATE,
-		    "%s: MGT (%d)\n", __func__, tp->mgmtrate);
+		    "%s: MGT (%d) ridx %d\n", __func__, tp->mgmtrate, ridx);
 	} else if (IEEE80211_IS_MULTICAST(wh->i_addr1)) {
 		ridx = iwm_tx_rateidx_global_lookup(sc, tp->mcastrate);
 		IWM_DPRINTF(sc, IWM_DEBUG_TXRATE,
@@ -3584,7 +3614,7 @@ iwm_tx_fill_cmd(struct iwm_softc *sc, struct iwm_node *in,
 	    );
 
 	/* XXX TODO: hard-coded TX antenna? */
-	rate_flags = 1 << IWM_RATE_MCS_ANT_POS;
+	rate_flags = IWM_RATE_MCS_ANT_B_MSK;
 	if (IWM_RIDX_IS_CCK(ridx))
 		rate_flags |= IWM_RATE_MCS_CCK_MSK;
 	tx->rate_n_flags = htole32(rate_flags | rinfo->plcp);
@@ -3621,7 +3651,6 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 	tid = 0;
 	ring = &sc->txq[ac];
 	desc = &ring->desc[ring->cur];
-	memset(desc, 0, sizeof(*desc));
 	data = &ring->data[ring->cur];
 
 	/* Fill out iwm_tx_cmd to send to the firmware */
@@ -3641,6 +3670,7 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 		/* Retrieve key for TX && do software encryption. */
 		k = ieee80211_crypto_encap(ni, m);
 		if (k == NULL) {
+			device_printf(sc->sc_dev, "crypto_encap failed\n");
 			m_freem(m);
 			return (ENOBUFS);
 		}
@@ -3660,24 +3690,22 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 		ieee80211_radiotap_tx(vap, m);
 	}
 
-
-	totlen = m->m_pkthdr.len;
-
 	flags = 0;
+	totlen = m->m_pkthdr.len;
 	if (!IEEE80211_IS_MULTICAST(wh->i_addr1)) {
 		flags |= IWM_TX_CMD_FLG_ACK;
 	}
 
-	if (type == IEEE80211_FC0_TYPE_DATA
-	    && (totlen + IEEE80211_CRC_LEN > vap->iv_rtsthreshold)
-	    && !IEEE80211_IS_MULTICAST(wh->i_addr1)) {
+	if (type == IEEE80211_FC0_TYPE_DATA &&
+	    totlen + IEEE80211_CRC_LEN > vap->iv_rtsthreshold &&
+	    !IEEE80211_IS_MULTICAST(wh->i_addr1)) {
 		flags |= IWM_TX_CMD_FLG_PROT_REQUIRE;
 	}
 
 	if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
-	    type != IEEE80211_FC0_TYPE_DATA)
-		tx->sta_id = sc->sc_aux_sta.sta_id;
-	else
+	    type != IEEE80211_FC0_TYPE_DATA) {
+		tx->sta_id = 0;//sc->sc_aux_sta.sta_id;
+	} else
 		tx->sta_id = IWM_STATION_ID;
 
 	if (type == IEEE80211_FC0_TYPE_MGT) {
@@ -3714,7 +3742,7 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 	tx->dram_msb_ptr = iwm_get_dma_hi_addr(data->scratch_paddr);
 
 	/* Copy 802.11 header in TX command. */
-	memcpy(((uint8_t *)tx) + sizeof(*tx), wh, hdrlen);
+	memcpy((uint8_t *)tx + sizeof(*tx), wh, hdrlen);
 
 	flags |= IWM_TX_CMD_FLG_BT_DIS | IWM_TX_CMD_FLG_SEQ_CTL;
 
@@ -3768,6 +3796,7 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 	    );
 
 	/* Fill TX descriptor. */
+	memset(desc, 0, sizeof(*desc));
 	desc->num_tbs = 2 + nsegs;
 
 	desc->tbs[0].lo = htole32(data->cmd_paddr);
@@ -5169,9 +5198,8 @@ iwm_handle_rxb(struct iwm_softc *sc, struct mbuf *m)
 		 * they at least seem harmless, so just ignore them for now
 		 */
 		if ((pkt->hdr.code == 0 && (qid & ~0x80) == 0 && idx == 0) ||
-		    pkt->len_n_flags == htole32(IWM_FH_RSCSR_FRAME_INVALID)) {
+		    pkt->len_n_flags == htole32(IWM_FH_RSCSR_FRAME_INVALID))
 			break;
-		}
 
 		IWM_DPRINTF(sc, IWM_DEBUG_INTR,
 		    "rx packet qid=%d idx=%d type=%x\n",
@@ -5468,21 +5496,20 @@ iwm_handle_rxb(struct iwm_softc *sc, struct mbuf *m)
 static void
 iwm_notif_intr(struct iwm_softc *sc)
 {
-	uint16_t hw;
+	uint16_t hw, vid;
 
 	bus_dmamap_sync(sc->rxq.stat_dma.tag, sc->rxq.stat_dma.map,
 	    BUS_DMASYNC_POSTREAD);
 
 	hw = le16toh(sc->rxq.stat->closed_rb_num) & 0xfff;
 
-	printf("%s %d\n", __func__, hw);
-
 	/*
 	 * Process responses
 	 */
 	while (sc->rxq.cur != hw) {
 		struct iwm_rx_ring *ring = &sc->rxq;
-		struct iwm_rx_data *data = &ring->data[ring->cur];
+		vid = ring->bd32[ring->cur] & 0xfff;
+		struct iwm_rx_data *data = &ring->data[vid - 1];
 
 		bus_dmamap_sync(ring->data_dmat, data->map,
 		    BUS_DMASYNC_POSTREAD);
@@ -5552,8 +5579,6 @@ iwm_intr(void *arg)
 	if (r1 == 0 && r2 == 0) {
 		goto out_ena;
 	}
-
-	printf("%s %x\n", __func__, r1);
 
 	IWM_WRITE(sc, IWM_CSR_INT, r1 | ~sc->sc_intmask);
 
@@ -5660,7 +5685,6 @@ iwm_intr(void *arg)
 	rv = 1;
 
  out_ena:
-	printf("restoring interrupt mask %x\n", sc->sc_intmask);
 	iwm_restore_interrupts(sc);
  out:
 	IWM_UNLOCK(sc);

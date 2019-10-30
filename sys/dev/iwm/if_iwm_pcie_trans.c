@@ -346,6 +346,8 @@ iwm_enable_rfkill_int(struct iwm_softc *sc)
 {
 	sc->sc_intmask = IWM_CSR_INT_BIT_RF_KILL;
 	IWM_WRITE(sc, IWM_CSR_INT_MASK, sc->sc_intmask);
+	IWM_SETBITS(sc, IWM_CSR_GP_CNTRL,
+	    IWM_CSR_GP_CNTRL_REG_FLAG_RFKILL_WAKE_L1A_EN);
 }
 
 int
@@ -404,7 +406,9 @@ iwm_prepare_card_hw(struct iwm_softc *sc)
 	if (iwm_set_hw_ready(sc))
 		goto out;
 
-	DELAY(100);
+	IWM_SETBITS(sc, IWM_CSR_DBG_LINK_PWR_MGMT_REG,
+	    IWM_CSR_RESET_LINK_PWR_MGMT_DISABLED);
+	DELAY(1000);
 
 	/* If HW is not ready, prepare the conditions to check again */
 	IWM_SETBITS(sc, IWM_CSR_HW_IF_CONFIG_REG,
@@ -521,7 +525,7 @@ iwm_apm_init(struct iwm_softc *sc)
 	    IWM_CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY,
 	    IWM_CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY, 25000)) {
 		device_printf(sc->sc_dev,
-		    "timeout waiting for clock stabilization\n");
+		    "timeout waiting for clock stabilization %x\n", IWM_READ(sc, IWM_CSR_GP_CNTRL));
 		error = ETIMEDOUT;
 		goto out;
 	}
@@ -590,6 +594,16 @@ iwm_apm_init(struct iwm_softc *sc)
 void
 iwm_apm_stop(struct iwm_softc *sc)
 {
+	IWM_SETBITS(sc, IWM_CSR_DBG_LINK_PWR_MGMT_REG,
+	    IWM_CSR_RESET_LINK_PWR_MGMT_DISABLED);
+	IWM_SETBITS(sc, IWM_CSR_HW_IF_CONFIG_REG,
+	    IWM_CSR_HW_IF_CONFIG_REG_PREPARE |
+	    IWM_CSR_HW_IF_CONFIG_REG_ENABLE_PME);
+	DELAY(1000);
+	IWM_CLRBITS(sc, IWM_CSR_DBG_LINK_PWR_MGMT_REG,
+	    IWM_CSR_RESET_LINK_PWR_MGMT_DISABLED);
+	DELAY(5000);
+
 	/* stop device's busmaster DMA activity */
 	IWM_SETBITS(sc, IWM_CSR_RESET, IWM_CSR_RESET_REG_FLAG_STOP_MASTER);
 
@@ -597,6 +611,14 @@ iwm_apm_stop(struct iwm_softc *sc)
 	    IWM_CSR_RESET_REG_FLAG_MASTER_DISABLED,
 	    IWM_CSR_RESET_REG_FLAG_MASTER_DISABLED, 100))
 		device_printf(sc->sc_dev, "timeout waiting for master\n");
+
+	/*
+	 * Clear "initialization complete" bit to move adapter from
+	 * D0A* (powered-up Active) --> D0U* (Uninitialized) state.
+	 */
+	IWM_CLRBITS(sc, IWM_CSR_GP_CNTRL,
+	    IWM_CSR_GP_CNTRL_REG_FLAG_INIT_DONE);
+
 	IWM_DPRINTF(sc, IWM_DEBUG_TRANS, "%s: iwm apm stop\n", __func__);
 }
 
@@ -611,10 +633,12 @@ iwm_start_hw(struct iwm_softc *sc)
 
 	/* Reset the entire device */
 	IWM_WRITE(sc, IWM_CSR_RESET, IWM_CSR_RESET_REG_FLAG_SW_RESET);
-	DELAY(10);
+	DELAY(5000);
 
 	if ((error = iwm_apm_init(sc)) != 0)
 		return error;
+
+	iwm_write_prph(sc, IWM_UREG_CHICK, IWM_UREG_CHICK_MSI_ENABLE);
 
 	iwm_enable_rfkill_int(sc);
 	iwm_check_rfkill(sc);
@@ -639,7 +663,6 @@ iwm_pcie_rx_stop(struct iwm_softc *sc)
 		iwm_write_prph(sc, IWM_RFH_RXF_DMA_CFG, 0);
 		ret = iwm_poll_prph(sc, IWM_RFH_GEN_STATUS, IWM_RXF_DMA_IDLE,
 		    IWM_RXF_DMA_IDLE, 1000);
-		printf("polling returned %d\n", ret);
 #if 0
 		ret = iwm_poll_prph_bit(sc, IWM_RFH_GEN_STATUS,
 		    IWM_RXF_DMA_IDLE, IWM_RXF_DMA_IDLE, 1000);

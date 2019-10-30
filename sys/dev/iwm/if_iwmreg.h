@@ -289,7 +289,7 @@
 #define IWM_CSR_GP_CNTRL_REG_VAL_MAC_ACCESS_EN           (0x00000001)
 
 #define IWM_CSR_GP_CNTRL_REG_MSK_POWER_SAVE_TYPE         (0x07000000)
-#define IWM_CSR_GP_CNTRL_REG_FLAG_MAC_POWER_SAVE         (0x04000000)
+#define IWM_CSR_GP_CNTRL_REG_FLAG_RFKILL_WAKE_L1A_EN     (0x04000000)
 #define IWM_CSR_GP_CNTRL_REG_FLAG_HW_RF_KILL_SW          (0x08000000)
 
 
@@ -647,7 +647,12 @@ enum iwm_ucode_tlv_api {
 	IWM_UCODE_TLV_API_WIFI_MCC_UPDATE	= 9,
 	IWM_UCODE_TLV_API_LQ_SS_PARAMS		= 18,
 
-	IWM_NUM_UCODE_TLV_API = 32
+	IWM_UCODE_TLV_API_ADAPTIVE_DWELL	= 32,
+	IWM_UCODE_TLV_API_ADAPTIVE_DWELL_V2	= 42,
+
+	IWM_UCODE_TLV_API_SCAN_EXT_CHAN_VER	= 58,
+
+	IWM_NUM_UCODE_TLV_API = 128
 };
 
 #define IWM_UCODE_TLV_API_BITS \
@@ -738,6 +743,7 @@ enum iwm_ucode_tlv_capa {
 	IWM_UCODE_TLV_CAPA_GSCAN_SUPPORT		= 31,
 	IWM_UCODE_TLV_CAPA_NAN_SUPPORT			= 34,
 	IWM_UCODE_TLV_CAPA_UMAC_UPLOAD			= 35,
+	IWM_UCODE_TLV_CAPA_CDB_SUPPORT			= 40,
 	IWM_UCODE_TLV_CAPA_EXTENDED_DTS_MEASURE		= 64,
 	IWM_UCODE_TLV_CAPA_SHORT_PM_TIMEOUTS		= 65,
 	IWM_UCODE_TLV_CAPA_BT_MPLUT_SUPPORT		= 67,
@@ -1857,6 +1863,8 @@ enum {
 
 	IWM_MFUART_LOAD_NOTIFICATION = 0xb1,
 
+	IWM_RSS_CONFIG_CMD = 0xb3,
+
 	/* Power - new power table command */
 	IWM_MAC_PM_POWER_TABLE = 0xa9,
 
@@ -2839,6 +2847,50 @@ enum iwm_mvm_rx_status {
 	IWM_RX_MPDU_RES_STATUS_FILTERING_MSK		= (0xc00000),
 	IWM_RX_MPDU_RES_STATUS2_FILTERING_MSK		= (0xc0000000),
 };
+
+struct iwm_rx_mpdu_desc_v1 {
+	union {
+		uint32_t rss_hash;
+		uint32_t phy_data2;
+	};
+	union {
+		uint32_t filter_match;
+		uint32_t phy_data3;
+	};
+	uint32_t rate_n_flags;
+	uint8_t energy_a;
+	uint8_t energy_b;
+	uint8_t channel;
+	uint8_t mac_context;
+	uint32_t gp2_on_air_rise;
+	union {
+		uint64_t tsf_on_air_rise;
+
+		struct {
+			uint32_t phy_data0;
+			uint32_t phy_data1;
+		};
+	};
+} __packed;
+
+struct iwm_rx_mpdu_desc {
+	uint16_t mpdu_len;
+	uint8_t mac_flags1;
+	uint8_t mac_flags2;
+	uint8_t amsdu_info;
+	uint16_t phy_info;
+	uint8_t mac_phy_idx;
+	uint16_t raw_csum;
+	union {
+		uint16_t l3l4_flags;
+		uint16_t phy_data4;
+	};
+	uint16_t status;
+	uint8_t hash_filter;
+	uint8_t sta_id_flags;
+	uint32_t reorder_data;
+	struct iwm_rx_mpdu_desc_v1 v1;
+} __packed;
 
 /**
  * struct iwm_radio_version_notif - information on the radio version
@@ -4402,8 +4454,7 @@ struct iwm_tx_cmd {
 	uint8_t initial_rate_index;
 	uint8_t reserved2;
 	uint8_t key[16];
-	uint16_t next_frame_flags;
-	uint16_t reserved3;
+	uint32_t reserved3;
 	uint32_t life_time;
 	uint32_t dram_lsb_ptr;
 	uint8_t dram_msb_ptr;
@@ -4411,7 +4462,7 @@ struct iwm_tx_cmd {
 	uint8_t data_retry_limit;
 	uint8_t tid_tspec;
 	uint16_t pm_frame_timeout;
-	uint16_t driver_txop;
+	uint16_t reserved4;
 	uint8_t payload[0];
 	struct ieee80211_frame hdr[0];
 } __packed; /* IWM_TX_CMD_API_S_VER_3 */
@@ -4652,6 +4703,8 @@ struct iwm_mvm_tx_resp {
 	uint8_t tlc_info;
 	uint8_t ra_tid;
 	uint16_t frame_ctrl;
+	uint16_t tx_queue;
+	uint16_t reserved2;
 
 	struct iwm_agg_tx_status status;
 } __packed; /* IWM_TX_RSP_API_S_VER_3 */
@@ -5354,18 +5407,23 @@ struct iwm_scan_req_umac {
 	uint32_t uid;
 	uint32_t ooc_priority;
 	/* SCAN_GENERAL_PARAMS_API_S_VER_1 */
-	uint32_t general_flags;
-	uint8_t extended_dwell;
+	uint16_t general_flags;
+	uint8_t reserved;
+	uint8_t scan_start_mac_id;
 	uint8_t active_dwell;
 	uint8_t passive_dwell;
 	uint8_t fragmented_dwell;
-	uint32_t max_out_time;
-	uint32_t suspend_time;
+	uint8_t adwell_default_n_aps;
+	uint8_t adwell_default_n_aps_social;
+	uint8_t reserved2;
+	uint16_t adwell_max_budget;
+	uint32_t max_out_time[2];
+	uint32_t suspend_time[2];
 	uint32_t scan_priority;
 	/* SCAN_CHANNEL_PARAMS_API_S_VER_1 */
 	uint8_t channel_flags;
 	uint8_t n_channels;
-	uint16_t reserved;
+	uint16_t reserved3;
 	uint8_t data[];
 } __packed; /* SCAN_REQUEST_CMD_UMAC_API_S_VER_1 */
 
@@ -5729,10 +5787,14 @@ struct iwm_mvm_add_sta_cmd {
 	uint8_t remove_immediate_ba_tid;
 	uint16_t add_immediate_ba_ssn;
 	uint16_t sleep_tx_count;
-	uint16_t sleep_state_flags;
+	uint8_t sleep_state_flags;
+	uint8_t station_type;
 	uint16_t assoc_id;
 	uint16_t beamform_flags;
 	uint32_t tfd_queue_msk;
+	uint16_t rx_ba_window;
+	uint8_t sp_length;
+	uint8_t uapsd_acs;
 } __packed; /* ADD_STA_CMD_API_S_VER_7 */
 
 /**

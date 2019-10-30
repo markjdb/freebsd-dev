@@ -327,6 +327,7 @@ iwm_mvm_add_int_sta_common(struct iwm_softc *sc, struct iwm_int_sta *sta,
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.sta_id = sta->sta_id;
 	cmd.mac_id_n_color = htole32(IWM_FW_CMD_ID_AND_COLOR(mac_id, color));
+	cmd.station_type = 4;
 
 	cmd.tfd_queue_msk = htole32(sta->tfd_queue_msk);
 	cmd.tid_disable_tx = htole16(0xffff);
@@ -337,8 +338,10 @@ iwm_mvm_add_int_sta_common(struct iwm_softc *sc, struct iwm_int_sta *sta,
 	ret = iwm_mvm_send_cmd_pdu_status(sc, IWM_ADD_STA,
 					  iwm_mvm_add_sta_cmd_size(sc),
 					  &cmd, &status);
-	if (ret)
+	if (ret) {
+		device_printf(sc->sc_dev, "%s: %d\n", __func__, ret);
 		return ret;
+	}
 
 	switch (status & IWM_ADD_STA_STATUS_MASK) {
 	case IWM_ADD_STA_SUCCESS:
@@ -362,7 +365,7 @@ iwm_mvm_add_aux_sta(struct iwm_softc *sc)
 	sc->sc_aux_sta.tfd_queue_msk = (1 << IWM_MVM_AUX_QUEUE);
 
 	/* Map Aux queue to fifo - needs to happen before adding Aux station */
-	ret = iwm_enable_txq(sc, 0, IWM_MVM_AUX_QUEUE, IWM_MVM_TX_FIFO_MCAST);
+	ret = iwm_enable_txq(sc, IWM_AUX_STA_ID, IWM_MVM_AUX_QUEUE, IWM_MVM_TX_FIFO_MCAST);
 	if (ret)
 		return ret;
 

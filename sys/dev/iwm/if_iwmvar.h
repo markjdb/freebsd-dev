@@ -316,6 +316,7 @@ struct iwm_rx_ring {
 	struct iwm_dma_info	buf_dma;
 	struct iwm_dma_info	used_desc_dma;
 	uint64_t		*desc;
+	uint32_t		*bd32;
 	struct iwm_rb_status	*stat;
 	struct iwm_rx_data	data[IWM_RX_RING_COUNT];
 	bus_dmamap_t		spare_map;	/* for iwm_rx_addbuf() */

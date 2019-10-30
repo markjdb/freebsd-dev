@@ -611,14 +611,23 @@ iwm_mvm_umac_scan(struct iwm_softc *sc)
 	hcmd.data[0] = (void *)req;
 
 	IWM_DPRINTF(sc, IWM_DEBUG_SCAN, "Handling ieee80211 scan request\n");
+	if (fw_has_api(&sc->sc_fw.ucode_capa, IWM_UCODE_TLV_API_ADAPTIVE_DWELL))
+		IWM_DPRINTF(sc, IWM_DEBUG_SCAN, "adaptive dwell\n");
+	if (fw_has_api(&sc->sc_fw.ucode_capa, IWM_UCODE_TLV_API_SCAN_EXT_CHAN_VER))
+		IWM_DPRINTF(sc, IWM_DEBUG_SCAN, "ext_chan\n");
+	if (fw_has_capa(&sc->sc_fw.ucode_capa, IWM_UCODE_TLV_CAPA_CDB_SUPPORT))
+		IWM_DPRINTF(sc, IWM_DEBUG_SCAN, "cbd support\n");
 
 	/* These timings correspond to iwlwifi's UNASSOC scan. */
 	req->active_dwell = 10;
 	req->passive_dwell = 110;
 	req->fragmented_dwell = 44;
-	req->extended_dwell = 90;
-	req->max_out_time = 0;
-	req->suspend_time = 0;
+	//req->extended_dwell = 90;
+	//req->max_out_time = 0;
+	//req->suspend_time = 0;
+	req->adwell_default_n_aps_social = 10;
+	req->adwell_default_n_aps = 2;
+	req->adwell_max_budget = 300;
 
 	req->scan_priority = htole32(IWM_SCAN_PRIORITY_HIGH);
 	req->ooc_priority = htole32(IWM_SCAN_PRIORITY_HIGH);
