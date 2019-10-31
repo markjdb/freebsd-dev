@@ -4703,8 +4703,6 @@ struct iwm_mvm_tx_resp {
 	uint8_t tlc_info;
 	uint8_t ra_tid;
 	uint16_t frame_ctrl;
-	uint16_t tx_queue;
-	uint16_t reserved2;
 
 	struct iwm_agg_tx_status status;
 } __packed; /* IWM_TX_RSP_API_S_VER_3 */

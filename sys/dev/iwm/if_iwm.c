@@ -334,7 +334,7 @@ static bool	iwm_mvm_rx_rx_mpdu(struct iwm_softc *, struct mbuf *,
 				    uint32_t, bool);
 static int	iwm_mvm_rx_tx_cmd_single(struct iwm_softc *,
                                          struct iwm_rx_packet *,
-				         struct iwm_node *);
+				         struct iwm_node *, int);
 static void	iwm_mvm_rx_tx_cmd(struct iwm_softc *, struct iwm_rx_packet *);
 static void	iwm_cmd_done(struct iwm_softc *, struct iwm_rx_packet *);
 #if 0
@@ -3342,7 +3342,7 @@ fail:
 
 static int
 iwm_mvm_rx_tx_cmd_single(struct iwm_softc *sc, struct iwm_rx_packet *pkt,
-	struct iwm_node *in)
+	struct iwm_node *in, int idx)
 {
 	struct iwm_mvm_tx_resp *tx_resp = (void *)pkt->data;
 	struct ieee80211_ratectl_tx_status *txs = &sc->sc_txs;
@@ -3356,9 +3356,10 @@ iwm_mvm_rx_tx_cmd_single(struct iwm_softc *sc, struct iwm_rx_packet *pkt,
 	KASSERT(tx_resp->frame_count == 1, ("too many frames"));
 
 	/* Update rate control statistics. */
-	IWM_DPRINTF(sc, IWM_DEBUG_XMIT, "%s: status=0x%04x, seq=%d, fc=%d, btc=%d, frts=%d, ff=%d, irate=%08x, wmt=%d\n",
+	IWM_DPRINTF(sc, IWM_DEBUG_XMIT, "%s: status=0x%04x, idx=%d, seq=%d, fc=%d, btc=%d, frts=%d, ff=%d, irate=%08x, wmt=%d\n",
 	    __func__,
 	    (int) le16toh(tx_resp->status.status),
+	    idx,
 	    (int) le16toh(tx_resp->status.sequence),
 	    tx_resp->frame_count,
 	    tx_resp->bt_kill_count,
@@ -3435,7 +3436,7 @@ iwm_mvm_rx_tx_cmd(struct iwm_softc *sc, struct iwm_rx_packet *pkt)
 
 	sc->sc_tx_timer = 0;
 
-	status = iwm_mvm_rx_tx_cmd_single(sc, pkt, in);
+	status = iwm_mvm_rx_tx_cmd_single(sc, pkt, in, idx);
 
 	/* Unmap and free mbuf. */
 	bus_dmamap_sync(ring->data_dmat, txd->map, BUS_DMASYNC_POSTWRITE);
@@ -3622,7 +3623,7 @@ iwm_tx_fill_cmd(struct iwm_softc *sc, struct iwm_node *in,
 	return rinfo;
 }
 
-#define TB0_SIZE 16
+#define TB0_SIZE 20
 static int
 iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 {
@@ -3676,6 +3677,7 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 		}
 		/* 802.11 header may have moved. */
 		wh = mtod(m, struct ieee80211_frame *);
+		printf("protected %d %d\n", hdrlen, ieee80211_anyhdrsize(wh));
 	}
 
 	if (ieee80211_radiotap_active_vap(vap)) {
@@ -3726,12 +3728,13 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 	if (hdrlen & 3) {
 		/* First segment length must be a multiple of 4. */
 		flags |= IWM_TX_CMD_FLG_MH_PAD;
+		tx->next_frame_len |= (1 << 13);
 		pad = 4 - (hdrlen & 3);
 	} else
 		pad = 0;
 
-	tx->driver_txop = 0;
-	tx->next_frame_len = 0;
+	//tx->driver_txop = 0;
+	//tx->next_frame_len = 0;
 
 	tx->len = htole16(totlen);
 	tx->tid_tspec = tid;
@@ -3788,8 +3791,8 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 	KASSERT(data->in != NULL, ("node is NULL"));
 
 	IWM_DPRINTF(sc, IWM_DEBUG_XMIT,
-	    "sending data: qid=%d idx=%d len=%d nsegs=%d txflags=0x%08x rate_n_flags=0x%08x rateidx=%u\n",
-	    ring->qid, ring->cur, totlen, nsegs,
+	    "sending data: qid=%d idx=%d len=%d hdrlen=%d mlen=%d nsegs=%d txflags=0x%08x rate_n_flags=0x%08x rateidx=%u\n",
+	    ring->qid, ring->cur, totlen, hdrlen, m_length(m, NULL), nsegs,
 	    le32toh(tx->tx_flags),
 	    le32toh(tx->rate_n_flags),
 	    tx->initial_rate_index
@@ -3800,20 +3803,24 @@ iwm_tx(struct iwm_softc *sc, struct mbuf *m, struct ieee80211_node *ni, int ac)
 	desc->num_tbs = 2 + nsegs;
 
 	desc->tbs[0].lo = htole32(data->cmd_paddr);
-	desc->tbs[0].hi_n_len = htole16(iwm_get_dma_hi_addr(data->cmd_paddr)) |
-	    (TB0_SIZE << 4);
+	desc->tbs[0].hi_n_len = htole16(iwm_get_dma_hi_addr(data->cmd_paddr) |
+	    (TB0_SIZE << 4));
 	desc->tbs[1].lo = htole32(data->cmd_paddr + TB0_SIZE);
-	desc->tbs[1].hi_n_len = htole16(iwm_get_dma_hi_addr(data->cmd_paddr)) |
-	    ((sizeof(struct iwm_cmd_header) + sizeof(*tx)
-	      + hdrlen + pad - TB0_SIZE) << 4);
+	desc->tbs[1].hi_n_len = htole16(iwm_get_dma_hi_addr(data->cmd_paddr) |
+	    ((sizeof(struct iwm_cmd_header) + sizeof(*tx) +
+	    hdrlen + pad - TB0_SIZE) << 4));
+
+	printf("seg info %d idx=%d addr=%x len=%d\n", 0, ring->cur, desc->tbs[0].lo, desc->tbs[0].hi_n_len >> 4);
+	printf("seg info %d idx=%d addr=%x len=%d\n", 1, ring->cur, desc->tbs[1].lo, desc->tbs[1].hi_n_len >> 4);
 
 	/* Other DMA segments are for data payload. */
 	for (i = 0; i < nsegs; i++) {
 		seg = &segs[i];
-		desc->tbs[i+2].lo = htole32(seg->ds_addr);
-		desc->tbs[i+2].hi_n_len = \
-		    htole16(iwm_get_dma_hi_addr(seg->ds_addr))
-		    | ((seg->ds_len) << 4);
+		printf("seg info %d idx=%d addr=%lx len=%ld\n", i + 2, ring->cur, seg->ds_addr, seg->ds_len);
+		desc->tbs[i + 2].lo = htole32(seg->ds_addr);
+		desc->tbs[i + 2].hi_n_len =
+		    htole16(iwm_get_dma_hi_addr(seg->ds_addr)) |
+		    (seg->ds_len << 4);
 	}
 
 	bus_dmamap_sync(ring->data_dmat, data->map,
