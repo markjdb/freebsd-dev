@@ -414,28 +414,26 @@ pmclog_loop(void *arg)
 	mtx_lock(&pmc_kthread_mtx);
 
 	for (;;) {
-
 		/* check if we've been asked to exit */
 		if ((po->po_flags & PMC_PO_OWNS_LOGFILE) == 0)
 			break;
 
-		if (lb == NULL) { /* look for a fresh buffer to write */
-			mtx_lock_spin(&po->po_mtx);
-			if ((lb = TAILQ_FIRST(&po->po_logbuffers)) == NULL) {
-				mtx_unlock_spin(&po->po_mtx);
-
-				/* No more buffers and shutdown required. */
-				if (po->po_flags & PMC_PO_SHUTDOWN)
-					break;
-
-				(void) msleep(po, &pmc_kthread_mtx, PWAIT,
-				    "pmcloop", 250);
-				continue;
-			}
-
-			TAILQ_REMOVE(&po->po_logbuffers, lb, plb_next);
+		/* look for a fresh buffer to write */
+		mtx_lock_spin(&po->po_mtx);
+		if ((lb = TAILQ_FIRST(&po->po_logbuffers)) == NULL) {
 			mtx_unlock_spin(&po->po_mtx);
+
+			/* No more buffers and shutdown required. */
+			if (po->po_flags & PMC_PO_SHUTDOWN)
+				break;
+
+			(void)msleep(po, &pmc_kthread_mtx, PWAIT, "pmcloop",
+			    250);
+			continue;
 		}
+
+		TAILQ_REMOVE(&po->po_logbuffers, lb, plb_next);
+		mtx_unlock_spin(&po->po_mtx);
 
 		mtx_unlock(&pmc_kthread_mtx);
 
