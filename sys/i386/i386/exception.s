@@ -175,7 +175,7 @@ alltraps_with_regs_pushed:
 	FAKE_MCOUNT(TF_EIP(%esp))
 calltrap:
 	pushl	%esp
-	movl	$trap,%eax
+	movl	$trap_check,%eax
 	call	*%eax
 	add	$4, %esp
 
@@ -317,7 +317,7 @@ dbg_user:
 	movl	$handle_ibrs_entry,%eax
 	call	*%eax
 	pushl	%esp
-	movl	$trap,%eax
+	movl	$trap_check,%eax
 	call	*%eax
 	add	$4, %esp
 	movl	$T_RESERVED, TF_TRAPNO(%esp)

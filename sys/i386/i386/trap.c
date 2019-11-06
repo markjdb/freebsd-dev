@@ -110,6 +110,7 @@ PMC_SOFT_DEFINE( , , page_fault, write);
 #endif
 
 void trap(struct trapframe *frame);
+void trap_check(struct trapframe *frame);
 void syscall(struct trapframe *frame);
 
 static int trap_pfault(struct trapframe *, bool, vm_offset_t, int *, int *);
@@ -185,6 +186,21 @@ SYSCTL_INT(_machdep, OID_AUTO, uprintf_signal, CTLFLAG_RW,
     "Print debugging information on trap signal to ctty");
 
 /*
+ * Ensure that we ignore any DTrace-induced faults. This function cannot
+ * be instrumented, so it cannot generate such faults itself.
+ */
+void
+trap_check(struct trapframe *frame)
+{
+#ifdef KDTRACE_HOOKS
+	if (dtrace_trap_func != NULL &&
+	    (*dtrace_trap_func)(frame, frame->tf_trapno))
+		return;
+#endif
+	trap(frame);
+}
+
+/*
  * Exception, fault, and trap interface to the FreeBSD kernel.
  * This common code is called from assembly language IDT gate entry
  * routines that prepare a suitable stack frame, and restore this
@@ -252,19 +268,6 @@ trap(struct trapframe *frame)
 		mca_intr();
 		return;
 	}
-
-#ifdef KDTRACE_HOOKS
-	/*
-	 * A trap can occur while DTrace executes a probe. Before
-	 * executing the probe, DTrace blocks re-scheduling and sets
-	 * a flag in its per-cpu flags to indicate that it doesn't
-	 * want to fault. On returning from the probe, the no-fault
-	 * flag is cleared and finally re-scheduling is enabled.
-	 */
-	if ((type == T_PROTFLT || type == T_PAGEFLT) &&
-	    dtrace_trap_func != NULL && (*dtrace_trap_func)(frame, type))
-		return;
-#endif
 
 	/*
 	 * We must not allow context switches until %cr2 is read.
