@@ -2815,9 +2815,20 @@ iwm_mvm_load_ucode_wait_alive(struct iwm_softc *sc,
 
 	/*
 	 * Some things may run in the background now, but we
-	 * just wait for the ALIVE notification here.
+	 * just wait for the ALIVE notification here.  Also allocate paging
+	 * memory while the driver lock is dropped.
 	 */
 	IWM_UNLOCK(sc);
+	if (fw->paging_mem_size) {
+		error = iwm_save_fw_paging(sc, fw);
+		if (error) {
+			device_printf(sc->sc_dev,
+			    "%s: failed to save the FW paging image\n",
+			    __func__);
+			return error;
+		}
+	}
+
 	error = iwm_wait_notification(sc->sc_notif_wait, &alive_wait,
 				      IWM_MVM_UCODE_ALIVE_TIMEOUT);
 	IWM_LOCK(sc);
@@ -2852,14 +2863,6 @@ iwm_mvm_load_ucode_wait_alive(struct iwm_softc *sc,
 	 * included in the IWM_UCODE_INIT image.
 	 */
 	if (fw->paging_mem_size) {
-		error = iwm_save_fw_paging(sc, fw);
-		if (error) {
-			device_printf(sc->sc_dev,
-			    "%s: failed to save the FW paging image\n",
-			    __func__);
-			return error;
-		}
-
 		error = iwm_send_paging_cmd(sc, fw);
 		if (error) {
 			device_printf(sc->sc_dev,
