@@ -402,9 +402,6 @@ pmclog_loop(void *arg)
 	    ("[pmclog,%d] proc mismatch po=%p po/kt=%p curproc=%p", __LINE__,
 		po, po->po_kthread, curthread->td_proc));
 
-	lb = NULL;
-
-
 	/*
 	 * Loop waiting for I/O requests to be added to the owner
 	 * struct's queue.  The loop is exited when the log file
@@ -419,23 +416,21 @@ pmclog_loop(void *arg)
 		if ((po->po_flags & PMC_PO_OWNS_LOGFILE) == 0)
 			break;
 
-		if (lb == NULL) { /* look for a fresh buffer to write */
-			mtx_lock_spin(&po->po_mtx);
-			if ((lb = TAILQ_FIRST(&po->po_logbuffers)) == NULL) {
-				mtx_unlock_spin(&po->po_mtx);
-
-				/* No more buffers and shutdown required. */
-				if (po->po_flags & PMC_PO_SHUTDOWN)
-					break;
-
-				(void) msleep(po, &pmc_kthread_mtx, PWAIT,
-				    "pmcloop", 250);
-				continue;
-			}
-
-			TAILQ_REMOVE(&po->po_logbuffers, lb, plb_next);
+		/* look for a fresh buffer to write */
+		mtx_lock_spin(&po->po_mtx);
+		if ((lb = TAILQ_FIRST(&po->po_logbuffers)) == NULL) {
 			mtx_unlock_spin(&po->po_mtx);
+
+			/* No more buffers and shutdown required. */
+			if (po->po_flags & PMC_PO_SHUTDOWN)
+				break;
+
+			(void)msleep(po, &pmc_kthread_mtx, PWAIT, "pmcloop",
+			    250);
+			continue;
 		}
+		TAILQ_REMOVE(&po->po_logbuffers, lb, plb_next);
+		mtx_unlock_spin(&po->po_mtx);
 
 		mtx_unlock(&pmc_kthread_mtx);
 
