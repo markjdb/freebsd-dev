@@ -693,7 +693,6 @@ pmclog_configure_log(struct pmc_mdep *md, struct pmc_owner *po, int logfd)
 {
 	struct proc *p;
 	struct timespec ts;
-	uint64_t tsc;
 	int error;
 
 	sx_assert(&pmc_sx, SA_XLOCKED);
@@ -722,7 +721,6 @@ pmclog_configure_log(struct pmc_mdep *md, struct pmc_owner *po, int logfd)
 	p->p_flag |= P_HWPMC;
 	PROC_UNLOCK(p);
 	nanotime(&ts);
-	tsc = pmc_rdtsc();
 	/* create a log initialization entry */
 	PMCLOG_RESERVE_WITH_ERROR(po, INITIALIZE,
 	    sizeof(struct pmclog_initialize));
