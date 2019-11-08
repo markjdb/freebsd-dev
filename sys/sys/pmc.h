@@ -880,8 +880,11 @@ struct pmc_owner  {
 };
 
 #define	PMC_PO_OWNS_LOGFILE		0x00000001 /* has a log file */
-#define	PMC_PO_SHUTDOWN			0x00000010 /* in the process of shutdown */
-#define	PMC_PO_INITIAL_MAPPINGS_DONE	0x00000020
+#define	PMC_PO_SHUTDOWN			0x00000010 /* shutting down */
+#define	PMC_PO_INITIAL_MAPPINGS_DONE	0x00000020 /*
+						    * kernel mappings have been
+						    * logged
+						    */
 
 /*
  * struct pmc_hw -- describe the state of the PMC hardware

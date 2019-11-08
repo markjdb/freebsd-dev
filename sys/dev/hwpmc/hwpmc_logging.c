@@ -483,7 +483,7 @@ pmclog_loop(void *arg)
 
 	wakeup_one(po->po_kthread);
 	po->po_kthread = NULL;
-
+	po->po_flags &= ~PMC_PO_SHUTDOWN;
 	mtx_unlock(&pmc_kthread_mtx);
 
 	/* return the current I/O buffer to the global pool */
@@ -661,7 +661,7 @@ pmclog_stop_kthread(struct pmc_owner *po)
 {
 
 	mtx_lock(&pmc_kthread_mtx);
-	po->po_flags &= ~PMC_PO_OWNS_LOGFILE;
+	po->po_flags &= ~(PMC_PO_OWNS_LOGFILE | PMC_PO_INITIAL_MAPPINGS_DONE);
 	if (po->po_kthread != NULL) {
 		PROC_LOCK(po->po_kthread);
 		kern_psignal(po->po_kthread, SIGHUP);
@@ -885,23 +885,24 @@ pmclog_close(struct pmc_owner *po)
 
 	PMCDBG1(LOG,CLO,1, "po=%p", po);
 
-	pmclog_process_closelog(po);
-
 	mtx_lock(&pmc_kthread_mtx);
-	/*
-	 * Initiate shutdown: no new data queued,
-	 * thread will close file on last block.
-	 */
-	po->po_flags |= PMC_PO_SHUTDOWN;
-	/* give time for all to see */
-	DELAY(50);
-	
-	/*
-	 * Schedule the current buffer.
-	 */
-	pmclog_schedule_all(po);
-	wakeup_one(po);
+	if ((po->po_flags & PMC_PO_OWNS_LOGFILE) != 0) {
+		pmclog_process_closelog(po);
 
+		/*
+		 * Initiate shutdown: no new data queued,
+		 * thread will close file on last block.
+		 */
+		po->po_flags |= PMC_PO_SHUTDOWN;
+		/* give time for all to see */
+		DELAY(50);
+
+		/*
+		 * Schedule the current buffer.
+		 */
+		pmclog_schedule_all(po);
+		wakeup_one(po);
+	}
 	mtx_unlock(&pmc_kthread_mtx);
 
 	return (0);
