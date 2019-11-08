@@ -402,6 +402,8 @@ pmclog_loop(void *arg)
 	    ("[pmclog,%d] proc mismatch po=%p po/kt=%p curproc=%p", __LINE__,
 		po, po->po_kthread, curthread->td_proc));
 
+	lb = NULL;
+
 	/*
 	 * Loop waiting for I/O requests to be added to the owner
 	 * struct's queue.  The loop is exited when the log file
@@ -411,7 +413,6 @@ pmclog_loop(void *arg)
 	mtx_lock(&pmc_kthread_mtx);
 
 	for (;;) {
-
 		/* check if we've been asked to exit */
 		if ((po->po_flags & PMC_PO_OWNS_LOGFILE) == 0)
 			break;
