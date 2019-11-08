@@ -91,6 +91,7 @@ MLINKS+= \
 	pmc_capabilities.3 pmc_pmcinfo.3 \
 	pmc_capabilities.3 pmc_cpuinfo.3 \
 	pmc_capabilities.3 pmc_width.3 \
+	pmc_configure_logfile.3 pmc_close_logfile.3 \
 	pmc_configure_logfile.3 pmc_flush_logfile.3 \
 	pmc_configure_logfile.3 pmc_writelog.3 \
 	pmc_disable.3 pmc_enable.3 \
