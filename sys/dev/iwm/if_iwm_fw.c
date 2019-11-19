@@ -257,12 +257,16 @@ iwm_alloc_fw_paging_mem(struct iwm_softc *sc, const struct iwm_fw_img *image)
 		    sc->num_of_paging_blk,
 		    sc->num_of_pages_in_last_blk);
 
+	/* XXX */
+	IWM_UNLOCK(sc);
+
 	/* allocate block of 4Kbytes for paging CSS */
 	error = iwm_dma_contig_alloc(sc->sc_dmat,
 	    &sc->fw_paging_db[blk_idx].fw_paging_block, IWM_FW_PAGING_SIZE,
 	    4096);
 	if (error) {
 		/* free all the previous pages since we failed */
+		IWM_LOCK(sc);
 		iwm_free_fw_paging(sc);
 		return ENOMEM;
 	}
@@ -284,6 +288,7 @@ iwm_alloc_fw_paging_mem(struct iwm_softc *sc, const struct iwm_fw_img *image)
 		    IWM_PAGING_BLOCK_SIZE, 4096);
 		if (error) {
 			/* free all the previous pages since we failed */
+			IWM_LOCK(sc);
 			iwm_free_fw_paging(sc);
 			return ENOMEM;
 		}
@@ -293,6 +298,7 @@ iwm_alloc_fw_paging_mem(struct iwm_softc *sc, const struct iwm_fw_img *image)
 		IWM_DPRINTF(sc, IWM_DEBUG_FW,
 			    "Paging: allocated 32K bytes for firmware paging.\n");
 	}
+	IWM_LOCK(sc);
 
 	return 0;
 }
