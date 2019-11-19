@@ -196,11 +196,12 @@ struct iwm_nvm_data {
 	int n_hw_addrs;
 	uint8_t hw_addr[IEEE80211_ADDR_LEN];
 
-	int sku_cap_band_24GHz_enable;
-	int sku_cap_band_52GHz_enable;
-	int sku_cap_11n_enable;
-	int sku_cap_amt_enable;
-	int sku_cap_ipan_enable;
+	bool sku_cap_band_24GHz_enable;
+	bool sku_cap_band_52GHz_enable;
+	bool sku_cap_11n_enable;
+	bool sku_cap_amt_enable;
+	bool sku_cap_ipan_enable;
+	bool sku_cap_mimo_disabled;
 
 	uint8_t radio_cfg_type;
 	uint8_t radio_cfg_step;
