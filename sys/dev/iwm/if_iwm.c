@@ -2058,8 +2058,10 @@ iwm_add_channel_band(struct iwm_softc *sc, struct ieee80211_channel chans[],
 		}
 
 		nflags = iwm_eeprom_channel_flags(ch_flags);
+#if 0
 		if (sc->nvm_data->sku_cap_11n_enable)
 			nflags |= IEEE80211_CHAN_HT;
+#endif
 		error = ieee80211_add_channel(chans, maxchans, nchans,
 		    ieee, 0, 0, nflags, bands);
 		if (error != 0)
@@ -2086,6 +2088,8 @@ iwm_init_channel_map(struct ieee80211com *ic, int maxchans, int *nchans,
 	/* 1-13: 11b/g channels. */
 	setbit(bands, IEEE80211_MODE_11B);
 	setbit(bands, IEEE80211_MODE_11G);
+	if (sc->nvm_data->sku_cap_11n_enable)
+		setbit(bands, IEEE80211_MODE_11NG);
 	iwm_add_channel_band(sc, chans, maxchans, nchans, 0,
 	    IWM_NUM_2GHZ_CHANNELS - 1, bands);
 
@@ -2101,6 +2105,8 @@ iwm_init_channel_map(struct ieee80211com *ic, int maxchans, int *nchans,
 			ch_num = nitems(iwm_nvm_channels_8000);
 		memset(bands, 0, sizeof(bands));
 		setbit(bands, IEEE80211_MODE_11A);
+		if (sc->nvm_data->sku_cap_11n_enable)
+			setbit(bands, IEEE80211_MODE_11NA);
 		iwm_add_channel_band(sc, chans, maxchans, nchans,
 		    IWM_NUM_2GHZ_CHANNELS, ch_num, bands);
 	}
