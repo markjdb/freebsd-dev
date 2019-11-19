@@ -1,7 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
- *
- * Copyright (c) 2012 - 2013 Tony Finch <dot@dotat.at>
+ * Copyright (c) 2019 Kyle Evans <kevans@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,31 +22,42 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
  */
 
-#include <sys/stat.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-#include <ctype.h>
-#include <err.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
-/* portability stubs */
+#include <lua.h>
+#include "lauxlib.h"
+#include "lposix.h"
 
-#define fbinmode(fp) (fp)
+/*
+ * Minimal implementation of luaposix needed for internal FreeBSD bits.
+ */
 
-#define replace(old,new) rename(old,new)
-
-static FILE *
-mktempmode(char *tmp, int mode)
+static int
+lua_getpid(lua_State *L)
 {
-	int fd = mkstemp(tmp);
-	if (fd < 0) return (NULL);
-	fchmod(fd, mode & (S_IRWXU|S_IRWXG|S_IRWXO));
-	return (fdopen(fd, "wb"));
+	int n;
+
+	n = lua_gettop(L);
+	luaL_argcheck(L, n == 0, 1, "too many arguments");
+	lua_pushinteger(L, getpid());
+	return 1;
+}
+
+#define REG_SIMPLE(n)	{ #n, lua_ ## n }
+static const struct luaL_Reg unistdlib[] = {
+	REG_SIMPLE(getpid),
+	{ NULL, NULL },
+};
+#undef REG_SIMPLE
+
+int
+luaopen_posix_unistd(lua_State *L)
+{
+	luaL_newlib(L, unistdlib);
+	return 1;
 }
