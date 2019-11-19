@@ -2058,6 +2058,8 @@ iwm_add_channel_band(struct iwm_softc *sc, struct ieee80211_channel chans[],
 		}
 
 		nflags = iwm_eeprom_channel_flags(ch_flags);
+		if (sc->nvm_data->sku_cap_11n_enable)
+			nflags |= IEEE80211_CHAN_HT;
 		error = ieee80211_add_channel(chans, maxchans, nchans,
 		    ieee, 0, 0, nflags, bands);
 		if (error != 0)
@@ -6286,6 +6288,7 @@ iwm_preinit(void *arg)
 	struct iwm_softc *sc = arg;
 	device_t dev = sc->sc_dev;
 	struct ieee80211com *ic = &sc->sc_ic;
+	uint8_t chains;
 	int error;
 
 	IWM_DPRINTF(sc, IWM_DEBUG_RESET | IWM_DEBUG_TRACE,
@@ -6317,6 +6320,20 @@ iwm_preinit(void *arg)
 
 	iwm_init_channel_map(ic, IEEE80211_CHAN_MAX, &ic->ic_nchans,
 	    ic->ic_channels);
+
+	ic->ic_htcaps = IEEE80211_HTC_HT |
+	    IEEE80211_HTCAP_SMPS_OFF |
+	    IEEE80211_HTCAP_CHWIDTH40;
+	chains = iwm_mvm_get_valid_rx_ant(sc);
+	ic->ic_rxstream =
+	    ((chains >> 0) & 1) +
+	    ((chains >> 1) & 1) +
+	    ((chains >> 2) & 1);
+	chains = iwm_mvm_get_valid_tx_ant(sc);
+	ic->ic_txstream =
+	    ((chains >> 0) & 1) +
+	    ((chains >> 1) & 1) +
+	    ((chains >> 2) & 1);
 
 	/*
 	 * At this point we've committed - if we fail to do setup,
