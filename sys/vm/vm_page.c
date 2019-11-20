@@ -3173,7 +3173,6 @@ vm_waitpfault(struct domainset *dset, int timo)
 static struct vm_pagequeue *
 vm_page_pagequeue(vm_page_t m)
 {
-
 	uint8_t queue;
 
 	if ((queue = atomic_load_8(&m->queue)) == PQ_NONE)
