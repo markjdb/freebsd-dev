@@ -1556,6 +1556,8 @@ pmap_pinit(pmap_t pmap)
 	pmap->pm_root.rt_root = 0;
 	bzero(&pmap->pm_stats, sizeof(pmap->pm_stats));
 	pmap->pm_cookie = COOKIE_FROM(-1, INT_MAX);
+	/* XXX Temporarily disable deferred ASID allocation. */
+	pmap_alloc_asid(pmap);
 
 	return (1);
 }
@@ -2062,12 +2064,13 @@ reclaim_pv_chunk(pmap_t locked_pmap, struct rwlock **lockp)
 				if ((tpte & ATTR_SW_WIRED) != 0)
 					continue;
 				tpte = pmap_load_clear(pte);
-				pmap_invalidate_page(pmap, va);
 				m = PHYS_TO_VM_PAGE(tpte & ~ATTR_MASK);
 				if (pmap_pte_dirty(tpte))
 					vm_page_dirty(m);
-				if ((tpte & ATTR_AF) != 0)
+				if ((tpte & ATTR_AF) != 0) {
+					pmap_invalidate_page(pmap, va);
 					vm_page_aflag_set(m, PGA_REFERENCED);
+				}
 				CHANGE_PV_LIST_LOCK_TO_VM_PAGE(lockp, m);
 				TAILQ_REMOVE(&m->md.pv_list, pv, pv_next);
 				m->md.pv_gen++;
