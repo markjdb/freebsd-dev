@@ -238,6 +238,7 @@ struct vm_domain {
 	struct mtx_padalign vmd_free_mtx;
 	struct mtx_padalign vmd_pageout_mtx;
 	struct vm_pgcache {
+		char name[32];
 		int domain;
 		int pool;
 		uma_zone_t zone;

@@ -213,21 +213,24 @@ vm_page_init_cache_zones(void *dummy __unused)
 	maxcache *= mp_ncpus;
 	for (domain = 0; domain < vm_ndomains; domain++) {
 		vmd = VM_DOMAIN(domain);
+
+		/*
+		 * Limit each pool's zone to 0.1% of the pages in the
+		 * domain.
+		 */
+		cache = maxcache != 0 ? maxcache :
+		    vmd->vmd_page_count / 1000;
+
 		for (pool = 0; pool < VM_NFREEPOOL; pool++) {
 			pgcache = &vmd->vmd_pgcache[pool];
+			(void)snprintf(pgcache->name, sizeof(pgcache->name),
+			    "vm pgcache dom %d pool %d", domain, pool);
 			pgcache->domain = domain;
 			pgcache->pool = pool;
-			pgcache->zone = uma_zcache_create("vm pgcache",
+			pgcache->zone = uma_zcache_create(pgcache->name,
 			    PAGE_SIZE, NULL, NULL, NULL, NULL,
 			    vm_page_zone_import, vm_page_zone_release, pgcache,
 			    UMA_ZONE_VM);
-
-			/*
-			 * Limit each pool's zone to 0.1% of the pages in the
-			 * domain.
-			 */
-			cache = maxcache != 0 ? maxcache :
-			    vmd->vmd_page_count / 1000;
 			uma_zone_set_maxcache(pgcache->zone, cache);
 		}
 	}
