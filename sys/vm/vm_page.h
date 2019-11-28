@@ -904,18 +904,18 @@ vm_page_undirty(vm_page_t m)
 /*
  *	vm_page_queue:
  *
- *	Return the index of the queue containing m.  This index is guaranteed
- *	not to change while the page lock is held.
+ *	Return the index of the queue containing m.
  */
 static inline uint8_t
 vm_page_queue(vm_page_t m)
 {
+	vm_page_astate_t as;
 
 	vm_page_assert_locked(m);
 
-	if ((m->a.flags & PGA_DEQUEUE) != 0)
+	as = vm_page_astate_load(m);
+	if ((as.flags & PGA_DEQUEUE) != 0)
 		return (PQ_NONE);
-	atomic_thread_fence_acq();
 	return (m->a.queue);
 }
 
