@@ -468,11 +468,28 @@ vm_object_allocate_anon(vm_pindex_t size)
 void
 vm_object_reference(vm_object_t object)
 {
+	struct vnode *vp;
+	u_int old;
+
 	if (object == NULL)
 		return;
-	VM_OBJECT_RLOCK(object);
-	vm_object_reference_locked(object);
-	VM_OBJECT_RUNLOCK(object);
+
+	/*
+	 * Many places assume exclusive access to objects with a single
+	 * ref. vm_object_collapse() in particular will directly mainpulate
+	 * references for objects in this state.  vnode objects only need
+	 * the lock for the first ref to reference the vnode.
+	 */
+	if (!refcount_acquire_if_gt(&object->ref_count,
+	    object->type == OBJT_VNODE ? 0 : 1)) {
+		VM_OBJECT_RLOCK(object);
+		old = refcount_acquire(&object->ref_count);
+		if (object->type == OBJT_VNODE && old == 0) {
+			vp = object->handle;
+			vref(vp);
+		}
+		VM_OBJECT_RUNLOCK(object);
+	}
 }
 
 /*
@@ -486,10 +503,11 @@ void
 vm_object_reference_locked(vm_object_t object)
 {
 	struct vnode *vp;
+	u_int old;
 
 	VM_OBJECT_ASSERT_LOCKED(object);
-	refcount_acquire(&object->ref_count);
-	if (object->type == OBJT_VNODE) {
+	old = refcount_acquire(&object->ref_count);
+	if (object->type == OBJT_VNODE && old == 0) {
 		vp = object->handle;
 		vref(vp);
 	}
@@ -507,11 +525,10 @@ vm_object_vndeallocate(vm_object_t object)
 	    ("vm_object_vndeallocate: not a vnode object"));
 	KASSERT(vp != NULL, ("vm_object_vndeallocate: missing vp"));
 
-	if (refcount_release(&object->ref_count) &&
-	    !umtx_shm_vnobj_persistent)
+	if (!umtx_shm_vnobj_persistent)
 		umtx_shm_object_terminated(object);
 
-	VM_OBJECT_RUNLOCK(object);
+	VM_OBJECT_WUNLOCK(object);
 	/* vrele may need the vnode lock. */
 	vrele(vp);
 }
@@ -530,16 +547,10 @@ vm_object_vndeallocate(vm_object_t object)
 void
 vm_object_deallocate(vm_object_t object)
 {
-	vm_object_t temp;
-	bool released;
+	vm_object_t robject, temp;
+	bool last, released;
 
 	while (object != NULL) {
-		VM_OBJECT_RLOCK(object);
-		if (object->type == OBJT_VNODE) {
-			vm_object_vndeallocate(object);
-			return;
-		}
-
 		/*
 		 * If the reference count goes to 0 we start calling
 		 * vm_object_terminate() on the object chain.  A ref count
@@ -551,7 +562,6 @@ vm_object_deallocate(vm_object_t object)
 			released = refcount_release_if_gt(&object->ref_count, 1);
 		else
 			released = refcount_release_if_gt(&object->ref_count, 2);
-		VM_OBJECT_RUNLOCK(object);
 		if (released)
 			return;
 
@@ -559,25 +569,30 @@ vm_object_deallocate(vm_object_t object)
 		KASSERT(object->ref_count != 0,
 			("vm_object_deallocate: object deallocated too many times: %d", object->type));
 
-		refcount_release(&object->ref_count);
+		last = refcount_release(&object->ref_count);
+		if (object->type == OBJT_VNODE) {
+			if (last)
+				vm_object_vndeallocate(object);
+			else
+				VM_OBJECT_WUNLOCK(object);
+			return;
+		}
 		if (object->ref_count > 1) {
 			VM_OBJECT_WUNLOCK(object);
 			return;
 		} else if (object->ref_count == 1) {
 			if (object->shadow_count == 0 &&
-			    object->handle == NULL &&
 			    (object->flags & OBJ_ANON) != 0) {
 				vm_object_set_flag(object, OBJ_ONEMAPPING);
-			} else if ((object->shadow_count == 1) &&
-			    (object->handle == NULL) &&
-			    (object->flags & OBJ_ANON) != 0) {
-				vm_object_t robject;
-
+			} else if (object->shadow_count == 1) {
+				KASSERT((object->flags & OBJ_ANON) != 0,
+				    ("obj %p with shadow_count > 0 is not anon",
+				    object));
 				robject = LIST_FIRST(&object->shadow_head);
 				KASSERT(robject != NULL,
-				    ("vm_object_deallocate: ref_count: %d, shadow_count: %d",
-					 object->ref_count,
-					 object->shadow_count));
+				    ("vm_object_deallocate: ref_count: %d, "
+				    "shadow_count: %d", object->ref_count,
+				    object->shadow_count));
 				KASSERT((robject->flags & OBJ_TMPFS_NODE) == 0,
 				    ("shadowed tmpfs v_object %p", object));
 				if (!VM_OBJECT_TRYWLOCK(robject)) {
@@ -602,8 +617,7 @@ vm_object_deallocate(vm_object_t object)
 				 * deallocating its shadow.
 				 */
 				if ((robject->flags &
-				    (OBJ_DEAD | OBJ_ANON)) == OBJ_ANON &&
-				    robject->handle == NULL) {
+				    (OBJ_DEAD | OBJ_ANON)) == OBJ_ANON) {
 
 					refcount_acquire(&robject->ref_count);
 retry:
@@ -632,7 +646,7 @@ retry:
 						VM_OBJECT_WUNLOCK(object);
 
 					if (robject->ref_count == 1) {
-						robject->ref_count--;
+						refcount_release(&robject->ref_count);
 						object = robject;
 						goto doterm;
 					}
@@ -1302,7 +1316,7 @@ vm_object_shadow(
 	 * will be collapsed later.
 	 */
 	if (source != NULL && source->ref_count == 1 &&
-	    source->handle == NULL && (source->flags & OBJ_ANON) != 0)
+	    (source->flags & OBJ_ANON) != 0)
 		return;
 
 	/*
@@ -1499,6 +1513,8 @@ vm_object_collapse_scan_wait(vm_object_t object, vm_page_t p, vm_page_t next,
 		return (next);
 	/* The page is only NULL when rename fails. */
 	if (p == NULL) {
+		VM_OBJECT_WUNLOCK(object);
+		VM_OBJECT_WUNLOCK(backing_object);
 		vm_radix_wait();
 	} else {
 		if (p->object == object)
@@ -1751,10 +1767,8 @@ vm_object_collapse(vm_object_t object)
 		if ((backing_object->flags & OBJ_ANON) == 0)
 			break;
 		VM_OBJECT_WLOCK(backing_object);
-		if (backing_object->handle != NULL ||
-		    (backing_object->flags & OBJ_DEAD) != 0 ||
-		    object->handle != NULL ||
-		    (object->flags & OBJ_DEAD) != 0) {
+		if ((backing_object->flags & OBJ_DEAD) != 0 ||
+		    (object->flags & (OBJ_DEAD | OBJ_ANON)) != OBJ_ANON) {
 			VM_OBJECT_WUNLOCK(backing_object);
 			break;
 		}
@@ -1841,7 +1855,7 @@ vm_object_collapse(vm_object_t object)
 			    backing_object));
 			vm_object_pip_wakeup(backing_object);
 			backing_object->type = OBJT_DEAD;
-			backing_object->ref_count = 0;
+			refcount_release(&backing_object->ref_count);
 			VM_OBJECT_WUNLOCK(backing_object);
 			vm_object_destroy(backing_object);
 
@@ -2549,8 +2563,7 @@ DB_SHOW_COMMAND(vmochk, vm_object_check)
 	 * and none have zero ref counts.
 	 */
 	TAILQ_FOREACH(object, &vm_object_list, object_list) {
-		if (object->handle == NULL &&
-		    (object->type == OBJT_DEFAULT || object->type == OBJT_SWAP)) {
+		if ((object->flags & OBJ_ANON) != 0) {
 			if (object->ref_count == 0) {
 				db_printf("vmochk: internal obj has zero ref count: %ld\n",
 					(long)object->size);
