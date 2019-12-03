@@ -1195,8 +1195,10 @@ vm_pageout_scan_active(struct vm_domain *vmd, int page_shortage)
 	vm_object_t object;
 	vm_page_t m, marker;
 	struct vm_pagequeue *pq;
+	vm_page_astate_t old, new;
 	long min_scan;
-	int act_delta, max_scan, scan_tick;
+	int act_delta, max_scan, ps_delta, refs, scan_tick;
+	uint8_t nqueue;
 
 	marker = &vmd->vmd_markers[PQ_ACTIVE];
 	pq = &vmd->vmd_pagequeues[PQ_ACTIVE];
@@ -1279,6 +1281,14 @@ act_scan:
 			 */
 			continue;
 
+		/* Deferred free of swap space. */
+		if ((m->a.flags & PGA_SWAP_FREE) != 0 &&
+		    VM_OBJECT_TRYWLOCK(object)) {
+			if (m->object == object)
+				vm_pager_page_unswapped(m);
+			VM_OBJECT_WUNLOCK(object);
+		}
+
 		/*
 		 * Check to see "how much" the page has been used.
 		 *
@@ -1298,71 +1308,92 @@ act_scan:
 		 *    This race delays the detection of a new reference.  At
 		 *    worst, we will deactivate and reactivate the page.
 		 */
-		if (object->ref_count != 0)
-			act_delta = pmap_ts_referenced(m);
-		else
-			act_delta = 0;
-		if ((m->a.flags & PGA_REFERENCED) != 0) {
-			vm_page_aflag_clear(m, PGA_REFERENCED);
-			act_delta++;
-		}
+		refs = object->ref_count != 0 ? pmap_ts_referenced(m) : 0;
 
-		/* Deferred free of swap space. */
-		if ((m->a.flags & PGA_SWAP_FREE) != 0 &&
-		    VM_OBJECT_TRYWLOCK(object)) {
-			if (m->object == object)
-				vm_pager_page_unswapped(m);
-			VM_OBJECT_WUNLOCK(object);
-		}
+		old = vm_page_astate_load(m);
+		do {
+			if (old.queue == PQ_NONE ||
+			    (old.flags & PGA_DEQUEUE) != 0) {
+				/*
+				 * Something has moved the page out of the
+				 * page queues.  Don't touch it.
+				 */
+				break;
+			}
 
-		/*
-		 * Advance or decay the act_count based on recent usage.
-		 */
-		if (act_delta != 0) {
-			m->a.act_count += ACT_ADVANCE + act_delta;
-			if (m->a.act_count > ACT_MAX)
-				m->a.act_count = ACT_MAX;
-		} else
-			m->a.act_count -= min(m->a.act_count, ACT_DECLINE);
+			new = old;
+			act_delta = refs;
+			if ((old.flags & PGA_REFERENCED) != 0) {
+				new.flags &= ~PGA_REFERENCED;
+				act_delta++;
+			}
 
-		if (m->a.act_count == 0) {
 			/*
-			 * When not short for inactive pages, let dirty pages go
-			 * through the inactive queue before moving to the
-			 * laundry queues.  This gives them some extra time to
-			 * be reactivated, potentially avoiding an expensive
-			 * pageout.  However, during a page shortage, the
-			 * inactive queue is necessarily small, and so dirty
-			 * pages would only spend a trivial amount of time in
-			 * the inactive queue.  Therefore, we might as well
-			 * place them directly in the laundry queue to reduce
-			 * queuing overhead.
+			 * Advance or decay the act_count based on recent usage.
 			 */
-			if (page_shortage <= 0) {
-				vm_page_swapqueue(m, PQ_ACTIVE, PQ_INACTIVE);
+			if (act_delta != 0) {
+				new.act_count += ACT_ADVANCE + act_delta;
+				if (new.act_count > ACT_MAX)
+					new.act_count = ACT_MAX;
+			} else {
+				new.act_count -= min(new.act_count,
+				    ACT_DECLINE);
+			}
+
+			if (new.act_count > 0) {
+				/*
+				 * Adjust the activation count and keep the page
+				 * in the active queue.  The count might be left
+				 * unchanged if it is saturated.  The page may
+				 * have been moved to a different queue since we
+				 * started the scan, in which case we move it
+				 * back.
+				 */
+				ps_delta = 0;
+				if (old.queue != PQ_ACTIVE) {
+					old.queue = PQ_ACTIVE;
+					old.flags |= PGA_REQUEUE;
+				}
 			} else {
 				/*
+				 * When not short for inactive pages, let dirty
+				 * pages go through the inactive queue before
+				 * moving to the laundry queue.  This gives them
+				 * some extra time to be reactivated,
+				 * potentially avoiding an expensive pageout.
+				 * However, during a page shortage, the inactive
+				 * queue is necessarily small, and so dirty
+				 * pages would only spend a trivial amount of
+				 * time in the inactive queue.  Therefore, we
+				 * might as well place them directly in the
+				 * laundry queue to reduce queuing overhead.
+				 *
 				 * Calling vm_page_test_dirty() here would
 				 * require acquisition of the object's write
 				 * lock.  However, during a page shortage,
-				 * directing dirty pages into the laundry
-				 * queue is only an optimization and not a
+				 * directing dirty pages into the laundry queue
+				 * is only an optimization and not a
 				 * requirement.  Therefore, we simply rely on
-				 * the opportunistic updates to the page's
-				 * dirty field by the pmap.
+				 * the opportunistic updates to the page's dirty
+				 * field by the pmap.
 				 */
-				if (m->dirty == 0) {
-					vm_page_swapqueue(m, PQ_ACTIVE,
-					    PQ_INACTIVE);
-					page_shortage -=
-					    act_scan_laundry_weight;
+				if (page_shortage <= 0) {
+					nqueue = PQ_INACTIVE;
+					ps_delta = 0;
+				} else if (m->dirty == 0) {
+					nqueue = PQ_INACTIVE;
+					ps_delta = act_scan_laundry_weight;
 				} else {
-					vm_page_swapqueue(m, PQ_ACTIVE,
-					    PQ_LAUNDRY);
-					page_shortage--;
+					nqueue = PQ_LAUNDRY;
+					ps_delta = 1;
 				}
+
+				new.flags |= PGA_REQUEUE;
+				new.queue = nqueue;
 			}
-		}
+		} while (!vm_page_pqstate_commit(m, &old, new));
+
+		page_shortage -= ps_delta;
 	}
 	if (mtx != NULL) {
 		mtx_unlock(mtx);

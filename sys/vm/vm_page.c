@@ -3437,7 +3437,7 @@ vm_page_pqstate_commit_request(vm_page_t m, vm_page_astate_t *old,
  * A generic queue state update function.  This handles more cases than the
  * specialized functions above.
  */
-static bool
+bool
 vm_page_pqstate_commit(vm_page_t m, vm_page_astate_t *old, vm_page_astate_t new)
 {
 
