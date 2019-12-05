@@ -1293,9 +1293,7 @@ next_page:
 			vm_page_busy_sleep(tm, "madvpo", false);
   			goto relookup;
 		}
-		vm_page_lock(tm);
 		vm_page_advise(tm, advice);
-		vm_page_unlock(tm);
 		vm_page_xunbusy(tm);
 		vm_object_madvise_freespace(tobject, advice, tm->pindex, 1);
 next_pindex:
