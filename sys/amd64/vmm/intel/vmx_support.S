@@ -315,7 +315,7 @@ END(vmx_enter_guest)
  * %rdi = interrupt handler entry point
  *
  * Calling sequence described in the "Instruction Set Reference" for the "INT"
- * instruction in Intel SDM, Vol 2.
+ * instruction in Intel SDM, Vol 2.  Interrupts must be disabled.
  */
 ENTRY(vmx_call_isr)
 	VENTER
@@ -325,7 +325,6 @@ ENTRY(vmx_call_isr)
 	pushq	%r11				/* %rsp */
 	pushfq					/* %rflags */
 	pushq	$KERNEL_CS			/* %cs */
-	cli					/* disable interrupts */
 	callq	*%rdi				/* push %rip and call isr */
 	VLEAVE
 	ret

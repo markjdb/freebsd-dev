@@ -907,6 +907,7 @@ vmx_trigger_hostintr(int vector)
 
 	gd = &idt[vector];
 
+	KASSERT((read_rflags() & PSL_I) == 0, ("interrupts enabled"));
 	KASSERT(vector >= 32 && vector <= 255, ("vmx_trigger_hostintr: "
 	    "invalid vector %d", vector));
 	KASSERT(gd->gd_p == 1, ("gate descriptor for vector %d not present",
@@ -2192,6 +2193,33 @@ vmx_handle_apic_access(struct vmx *vmx, int vcpuid, struct vm_exit *vmexit)
 	return (UNHANDLED);
 }
 
+/*
+ * If the NMI-exiting VM execution control is set to '1' then an NMI in
+ * non-root operation causes a VM-exit. NMI blocking is in effect so it is
+ * sufficient to simply vector to the NMI handler via a software interrupt.
+ * However, this must be done before maskable interrupts are enabled
+ * otherwise the "iret" issued by an interrupt handler will incorrectly
+ * clear NMI blocking.
+ */
+static void
+vmx_exit_handle_nmi(struct vmx *vmx, int vcpuid, struct vm_exit *vmexit)
+{
+	uint32_t intr_info;
+
+	KASSERT((read_rflags() & PSL_I) == 0, ("interrupts enabled"));
+
+	intr_info = vmcs_read(VMCS_EXIT_INTR_INFO);
+	KASSERT((intr_info & VMCS_INTR_VALID) != 0,
+	    ("VM exit interruption info invalid: %#x", intr_info));
+
+	if ((intr_info & VMCS_INTR_T_MASK) == VMCS_INTR_T_NMI) {
+		KASSERT((intr_info & 0xff) == IDT_NMI, ("VM exit due "
+		    "to NMI has invalid vector: %#x", intr_info));
+		VCPU_CTR0(vmx->vm, vcpuid, "Vectoring to NMI handler");
+		__asm __volatile("int $2");
+	}
+}
+
 static enum task_switch_reason
 vmx_task_switch_reason(uint64_t qual)
 {
@@ -2265,6 +2293,7 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 	uint64_t exitintinfo, qual, gpa;
 	bool retu;
 
+	KASSERT((read_rflags() & PSL_I) == 0, ("interrupts enabled"));
 	CTASSERT((PINBASED_CTLS_ONE_SETTING & PINBASED_VIRTUAL_NMI) != 0);
 	CTASSERT((PINBASED_CTLS_ONE_SETTING & PINBASED_NMI_EXITING) != 0);
 
@@ -2286,9 +2315,16 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 	 */
 	if (__predict_false(reason == EXIT_REASON_MCE_DURING_ENTRY)) {
 		VCPU_CTR0(vmx->vm, vcpu, "Handling MCE during VM-entry");
+		enable_intr();
 		__asm __volatile("int $18");
 		return (1);
 	}
+
+	/*
+	 * Handle NMIs before enabling interrupts.
+	 */
+	if (reason == EXIT_REASON_EXCEPTION)
+		vmx_exit_handle_nmi(vmx, vcpu, vmexit);
 
 	/*
 	 * VM exits that can be triggered during event delivery need to
@@ -2339,6 +2375,47 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 			vmcs_write(VMCS_ENTRY_INST_LENGTH, vmexit->inst_length);
 		}
 	}
+
+	/*
+	 * Handle external interrupts before enabling interrupts, else
+	 * preemption may defer interrupt handling indefinitely.
+	 */
+	if (reason == EXIT_REASON_EXT_INTR) {
+		/*
+		 * External interrupts serve only to cause VM exits and allow
+		 * the host interrupt handler to run.
+		 *
+		 * If this external interrupt triggers a virtual interrupt
+		 * to a VM, then that state will be recorded by the
+		 * host interrupt handler in the VM's softc. We will inject
+		 * this virtual interrupt during the subsequent VM enter.
+		 */
+		intr_info = vmcs_read(VMCS_EXIT_INTR_INFO);
+		SDT_PROBE4(vmm, vmx, exit, interrupt,
+		    vmx, vcpu, vmexit, intr_info);
+
+		/*
+		 * XXX: Ignore this exit if VMCS_INTR_VALID is not set.
+		 * This appears to be a bug in VMware Fusion?
+		 */
+		if (!(intr_info & VMCS_INTR_VALID)) {
+			enable_intr();
+			return (1);
+		}
+		KASSERT((intr_info & VMCS_INTR_VALID) != 0 &&
+		    (intr_info & VMCS_INTR_T_MASK) == VMCS_INTR_T_HWINTR,
+		    ("VM exit interruption info invalid: %#x", intr_info));
+		vmx_trigger_hostintr(intr_info & 0xff);
+		enable_intr();
+
+		/*
+		 * This is special. We want to treat this as an 'handled'
+		 * VM-exit but not increment the instruction pointer.
+		 */
+		vmm_stat_incr(vmx->vm, vcpu, VMEXIT_EXTINT, 1);
+		return (1);
+	}
+	enable_intr();
 
 	switch (reason) {
 	case EXIT_REASON_TASK_SWITCH:
@@ -2468,37 +2545,6 @@ vmx_exit_process(struct vmx *vmx, int vcpu, struct vm_exit *vmexit)
 		vmm_stat_incr(vmx->vm, vcpu, VMEXIT_INTR_WINDOW, 1);
 		SDT_PROBE3(vmm, vmx, exit, intrwindow, vmx, vcpu, vmexit);
 		vmx_clear_int_window_exiting(vmx, vcpu);
-		return (1);
-	case EXIT_REASON_EXT_INTR:
-		/*
-		 * External interrupts serve only to cause VM exits and allow
-		 * the host interrupt handler to run.
-		 *
-		 * If this external interrupt triggers a virtual interrupt
-		 * to a VM, then that state will be recorded by the
-		 * host interrupt handler in the VM's softc. We will inject
-		 * this virtual interrupt during the subsequent VM enter.
-		 */
-		intr_info = vmcs_read(VMCS_EXIT_INTR_INFO);
-		SDT_PROBE4(vmm, vmx, exit, interrupt,
-		    vmx, vcpu, vmexit, intr_info);
-
-		/*
-		 * XXX: Ignore this exit if VMCS_INTR_VALID is not set.
-		 * This appears to be a bug in VMware Fusion?
-		 */
-		if (!(intr_info & VMCS_INTR_VALID))
-			return (1);
-		KASSERT((intr_info & VMCS_INTR_VALID) != 0 &&
-		    (intr_info & VMCS_INTR_T_MASK) == VMCS_INTR_T_HWINTR,
-		    ("VM exit interruption info invalid: %#x", intr_info));
-		vmx_trigger_hostintr(intr_info & 0xff);
-
-		/*
-		 * This is special. We want to treat this as an 'handled'
-		 * VM-exit but not increment the instruction pointer.
-		 */
-		vmm_stat_incr(vmx->vm, vcpu, VMEXIT_EXTINT, 1);
 		return (1);
 	case EXIT_REASON_NMI_WINDOW:
 		SDT_PROBE3(vmm, vmx, exit, nmiwindow, vmx, vcpu, vmexit);
@@ -2752,9 +2798,12 @@ static __inline void
 vmx_exit_inst_error(struct vmxctx *vmxctx, int rc, struct vm_exit *vmexit)
 {
 
+	KASSERT((read_rflags() & PSL_I) == 0, ("interrupts enabled"));
 	KASSERT(vmxctx->inst_fail_status != VM_SUCCESS,
 	    ("vmx_exit_inst_error: invalid inst_fail_status %d",
 	    vmxctx->inst_fail_status));
+
+	enable_intr();
 
 	vmexit->inst_length = 0;
 	vmexit->exitcode = VM_EXITCODE_VMX;
@@ -2771,36 +2820,6 @@ vmx_exit_inst_error(struct vmxctx *vmxctx, int rc, struct vm_exit *vmexit)
 		break;
 	default:
 		panic("vm_exit_inst_error: vmx_enter_guest returned %d", rc);
-	}
-}
-
-/*
- * If the NMI-exiting VM execution control is set to '1' then an NMI in
- * non-root operation causes a VM-exit. NMI blocking is in effect so it is
- * sufficient to simply vector to the NMI handler via a software interrupt.
- * However, this must be done before maskable interrupts are enabled
- * otherwise the "iret" issued by an interrupt handler will incorrectly
- * clear NMI blocking.
- */
-static __inline void
-vmx_exit_handle_nmi(struct vmx *vmx, int vcpuid, struct vm_exit *vmexit)
-{
-	uint32_t intr_info;
-
-	KASSERT((read_rflags() & PSL_I) == 0, ("interrupts enabled"));
-
-	if (vmexit->u.vmx.exit_reason != EXIT_REASON_EXCEPTION)
-		return;
-
-	intr_info = vmcs_read(VMCS_EXIT_INTR_INFO);
-	KASSERT((intr_info & VMCS_INTR_VALID) != 0,
-	    ("VM exit interruption info invalid: %#x", intr_info));
-
-	if ((intr_info & VMCS_INTR_T_MASK) == VMCS_INTR_T_NMI) {
-		KASSERT((intr_info & 0xff) == IDT_NMI, ("VM exit due "
-		    "to NMI has invalid vector: %#x", intr_info));
-		VCPU_CTR0(vmx->vm, vcpuid, "Vectoring to NMI handler");
-		__asm __volatile("int $2");
 	}
 }
 
@@ -3020,14 +3039,10 @@ vmx_run(void *arg, int vcpu, register_t rip, pmap_t pmap,
 		/* Update 'nextrip' */
 		vmx->state[vcpu].nextrip = rip;
 
-		if (rc == VMX_GUEST_VMEXIT) {
-			vmx_exit_handle_nmi(vmx, vcpu, vmexit);
-			enable_intr();
+		if (rc == VMX_GUEST_VMEXIT)
 			handled = vmx_exit_process(vmx, vcpu, vmexit);
-		} else {
-			enable_intr();
+		else
 			vmx_exit_inst_error(vmxctx, rc, vmexit);
-		}
 		launched = 1;
 		vmx_exit_trace(vmx, vcpu, rip, exit_reason, handled);
 		rip = vmexit->rip;
