@@ -244,7 +244,7 @@ struct tdq {
 	volatile short	tdq_switchcnt;		/* Switches this tick. */
 	volatile short	tdq_oldswitchcnt;	/* Switches last tick. */
 	u_char		tdq_lowpri;		/* Lowest priority thread. */
-	u_char		tdq_ipipending;		/* IPI pending. */
+	u_char		tdq_owepreempt;		/* Remote preemption pending. */
 	u_char		tdq_idx;		/* Current insert index. */
 	u_char		tdq_ridx;		/* Current removal index. */
 	int		tdq_id;			/* cpuid. */
@@ -705,7 +705,7 @@ cpu_search(const struct cpu_group *cg, struct cpu_search *low,
 		if (match & CPU_SEARCH_HIGHEST)
 			hgroup.cs_cpu = -1;
 		if (child) {			/* Handle child CPU group. */
-			CPU_NAND(&cpumask, &child->cg_mask);
+			CPU_ANDNOT(&cpumask, &child->cg_mask);
 			switch (match) {
 			case CPU_SEARCH_LOWEST:
 				load = cpu_search_lowest(child, &lgroup);
@@ -1073,7 +1073,7 @@ tdq_notify(struct tdq *tdq, struct thread *td)
 	int pri;
 	int cpu;
 
-	if (tdq->tdq_ipipending)
+	if (tdq->tdq_owepreempt)
 		return;
 	cpu = td_get_sched(td)->ts_cpu;
 	pri = td->td_priority;
@@ -1096,7 +1096,12 @@ tdq_notify(struct tdq *tdq, struct thread *td)
 		if (!tdq->tdq_cpu_idle || cpu_idle_wakeup(cpu))
 			return;
 	}
-	tdq->tdq_ipipending = 1;
+
+	/*
+	 * The run queues have been updated, so any switch on the remote CPU
+	 * will satisfy the preemption request.
+	 */
+	tdq->tdq_owepreempt = 1;
 	ipi_cpu(cpu, IPI_PREEMPT);
 }
 
@@ -2079,8 +2084,10 @@ sched_switch(struct thread *td, struct thread *newtd, int flags)
 	    (flags & SW_PREEMPT) != 0;
 	td->td_flags &= ~(TDF_NEEDRESCHED | TDF_SLICEEND);
 	td->td_owepreempt = 0;
+	tdq->tdq_owepreempt = 0;
 	if (!TD_IS_IDLETHREAD(td))
 		tdq->tdq_switchcnt++;
+
 	/*
 	 * The lock pointer in an idle thread should never change.  Reset it
 	 * to CAN_RUN as well.
@@ -2386,7 +2393,6 @@ sched_preempt(struct thread *td)
 	thread_lock(td);
 	tdq = TDQ_SELF();
 	TDQ_LOCK_ASSERT(tdq, MA_OWNED);
-	tdq->tdq_ipipending = 0;
 	if (td->td_priority > tdq->tdq_lowpri) {
 		int flags;
 
@@ -2397,6 +2403,8 @@ sched_preempt(struct thread *td)
 			mi_switch(flags | SWT_REMOTEWAKEIDLE, NULL);
 		else
 			mi_switch(flags | SWT_REMOTEPREEMPT, NULL);
+	} else {
+		tdq->tdq_owepreempt = 0;
 	}
 	thread_unlock(td);
 }
