@@ -1,8 +1,12 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * Copyright (c) 2003 Jake Burkholder.
- * All rights reserved.
+ * Copyright (c) 2019 Brandon Bergren <bdragon@FreeBSD.org>
+ * Copyright (c) 2015-2018 The FreeBSD Foundation. All rights reserved.
+ *
+ * Part of this software was developed by
+ * Konstantin Belousov <kib@FreeBSD.org>
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -16,7 +20,7 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -25,65 +29,32 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
+ * $FreeBSD$
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#ifndef __POWERPC_IFUNC_H
+#define	__POWERPC_IFUNC_H
 
-#include <sys/param.h>
-#include <sys/systm.h>
-#include <sys/kernel.h>
-#include <sys/module.h>
-#include <sys/bus.h>
-#include <sys/cons.h>
-#include <sys/kbio.h>
-#include <sys/consio.h>
-#include <sys/sysctl.h>
+#include <sys/types.h>
 
-#include <dev/syscons/syscons.h>
+#define	DEFINE_IFUNC(qual, ret_type, name, args)			\
+    static ret_type (*name##_resolver(void))args __used;		\
+    qual ret_type name args __attribute__((ifunc(#name "_resolver")));	\
+    static ret_type (*name##_resolver(void))args
 
-static sc_softc_t sc_softcs[8];
+#define	DEFINE_UIFUNC(qual, ret_type, name, args)			\
+    static ret_type (*name##_resolver(register_t, register_t,		\
+	register_t, register_t, register_t, register_t, register_t,	\
+	register_t))args __used;					\
+    qual ret_type name args __attribute__((ifunc(#name "_resolver")));	\
+    static ret_type (*name##_resolver(					\
+	register_t cpu_features,					\
+	register_t cpu_features2,					\
+	register_t arg3 __unused,					\
+	register_t arg4 __unused,					\
+	register_t arg5 __unused,					\
+	register_t arg6 __unused,					\
+	register_t arg7 __unused,					\
+	register_t arg8 __unused))args
 
-int
-sc_get_cons_priority(int *unit, int *flags)
-{
-
-	*unit = 0;
-	*flags = 0;
-	return (CN_INTERNAL);
-}
-
-int
-sc_max_unit(void)
-{
-	return (1);
-}
-
-sc_softc_t *
-sc_get_softc(int unit, int flags)
-{
-	sc_softc_t *sc;
-
-	if (unit < 0)
-		return (NULL);
-	sc = &sc_softcs[unit];
-	sc->unit = unit;
-	if ((sc->flags & SC_INIT_DONE) == 0) {
-		sc->kbd = NULL;
-		sc->adapter = -1;
-		sc->cursor_char = SC_CURSOR_CHAR;
-		sc->mouse_char = SC_MOUSE_CHAR;
-	}
-	return (sc);
-}
-
-void
-sc_get_bios_values(bios_values_t *values)
-{
-}
-
-int
-sc_tone(int hz)
-{
-	return (0);
-}
+#endif
