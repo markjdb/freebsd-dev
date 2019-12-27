@@ -41,6 +41,8 @@
 #include <sys/fcntl.h>
 #include <sys/sysent.h>
 #include <sys/imgact_elf.h>
+#include <sys/jail.h>
+#include <sys/smp.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/signalvar.h>
@@ -57,13 +59,14 @@
 #include <machine/reg.h>
 #include <machine/md_var.h>
 
+#include <powerpc/powerpc/elf_common.c>
+
 #ifdef __powerpc64__
 #include <compat/freebsd32/freebsd32_proto.h>
 #include <compat/freebsd32/freebsd32_util.h>
 
 extern const char *freebsd32_syscallnames[];
 static void ppc32_fixlimit(struct rlimit *rl, int which);
-static void ppc32_runtime_resolve(void);
 
 static SYSCTL_NODE(_compat, OID_AUTO, ppc32, CTLFLAG_RW, 0, "32-bit mode");
 
@@ -75,6 +78,8 @@ SYSCTL_ULONG(_compat_ppc32, OID_AUTO, maxdsiz, CTLFLAG_RWTUN, &ppc32_maxdsiz,
 u_long ppc32_maxssiz = PPC32_MAXSSIZ;
 SYSCTL_ULONG(_compat_ppc32, OID_AUTO, maxssiz, CTLFLAG_RWTUN, &ppc32_maxssiz,
              0, "");
+#else
+static void ppc32_runtime_resolve(void);
 #endif
 
 struct sysentvec elf32_freebsd_sysvec = {
@@ -88,7 +93,7 @@ struct sysentvec elf32_freebsd_sysvec = {
 	.sv_errtbl	= NULL,
 	.sv_transtrap	= NULL,
 	.sv_fixup	= __elfN(freebsd_fixup),
-	.sv_copyout_auxargs = __elfN(freebsd_copyout_auxargs),
+	.sv_copyout_auxargs = __elfN(powerpc_copyout_auxargs),
 	.sv_sendsig	= sendsig,
 	.sv_sigcode	= sigcode32,
 	.sv_szsigcode	= &szsigcode32,
