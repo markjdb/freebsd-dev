@@ -4010,7 +4010,7 @@ vm_page_mvqueue(vm_page_t m, const uint8_t nqueue, const uint16_t nflag)
 	KASSERT(nflag == PGA_REQUEUE || nflag == PGA_REQUEUE_HEAD,
 	    ("%s: invalid flags %x", __func__, nflag));
 
-	if ((m->oflags & VPO_UNMANAGED) != 0)
+	if ((m->oflags & VPO_UNMANAGED) != 0 || vm_page_wired(m))
 		return;
 
 	old = vm_page_astate_load(m);
@@ -4018,6 +4018,7 @@ vm_page_mvqueue(vm_page_t m, const uint8_t nqueue, const uint16_t nflag)
 		if ((old.flags & PGA_DEQUEUE) != 0)
 			break;
 		new = old;
+		new.flags &= ~PGA_QUEUE_OP_MASK;
 		if (nqueue == PQ_ACTIVE)
 			new.act_count = max(old.act_count, ACT_INIT);
 		if (old.queue == nqueue) {
