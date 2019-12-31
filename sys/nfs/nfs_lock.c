@@ -89,6 +89,7 @@ nfslock_open(struct cdev *dev, int oflags, int devtype, struct thread *td)
 {
 	int error;
 
+	gone_in(13, "uses Giant; replace with NFSLOCKD/nfslockd.ko");
 	error = priv_check(td, PRIV_NFS_LOCKD);
 	if (error)
 		return (error);

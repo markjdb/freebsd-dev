@@ -1612,6 +1612,7 @@ getconfigent(void)
 	int v6bind;
 #endif
 	int i;
+	size_t unsz;
 
 #ifdef IPSEC
 	policy = NULL;
@@ -1629,12 +1630,10 @@ more:
 			for (p = cp + 2; p && *p && isspace(*p); p++)
 				;
 			if (*p == '\0') {
-				if (policy)
-					free(policy);
+				free(policy);
 				policy = NULL;
 			} else if (ipsec_get_policylen(p) >= 0) {
-				if (policy)
-					free(policy);
+				free(policy);
 				policy = newstr(p);
 			} else {
 				syslog(LOG_ERR,
@@ -1648,8 +1647,11 @@ more:
 			continue;
 		break;
 	}
-	if (cp == NULL)
-		return ((struct servtab *)0);
+	if (cp == NULL) {
+		free(policy);
+		return (NULL);
+	}
+
 	/*
 	 * clear the static buffer, since some fields (se_ctrladdr,
 	 * for example) don't get initialized here.
@@ -1831,16 +1833,18 @@ more:
 		break;
 #endif
 	case AF_UNIX:
-		if (strlen(sep->se_service) >= sizeof(sep->se_ctrladdr_un.sun_path)) {
-			syslog(LOG_ERR, 
+#define	SUN_PATH_MAXSIZE	sizeof(sep->se_ctrladdr_un.sun_path)
+		memset(&sep->se_ctrladdr, 0, sizeof(sep->se_ctrladdr));
+		sep->se_ctrladdr_un.sun_family = sep->se_family;
+		if ((unsz = strlcpy(sep->se_ctrladdr_un.sun_path,
+		    sep->se_service, SUN_PATH_MAXSIZE) >= SUN_PATH_MAXSIZE)) {
+			syslog(LOG_ERR,
 			    "domain socket pathname too long for service %s",
 			    sep->se_service);
 			goto more;
 		}
-		memset(&sep->se_ctrladdr, 0, sizeof(sep->se_ctrladdr));
-		sep->se_ctrladdr_un.sun_family = sep->se_family;
-		sep->se_ctrladdr_un.sun_len = strlen(sep->se_service);
-		strcpy(sep->se_ctrladdr_un.sun_path, sep->se_service);
+		sep->se_ctrladdr_un.sun_len = unsz;
+#undef SUN_PATH_MAXSIZE
 		sep->se_ctrladdr_size = SUN_LEN(&sep->se_ctrladdr_un);
 	}
 	arg = sskip(&cp);
@@ -1969,6 +1973,7 @@ more:
 		LIST_INIT(&sep->se_conn[i]);
 #ifdef IPSEC
 	sep->se_policy = policy ? newstr(policy) : NULL;
+	free(policy);
 #endif
 	return (sep);
 }
@@ -2207,7 +2212,7 @@ cpmip(const struct servtab *sep, int ctrl)
 	   (sep->se_family == AF_INET || sep->se_family == AF_INET6) &&
 	    getpeername(ctrl, (struct sockaddr *)&rss, &rssLen) == 0 ) {
 		time_t t = time(NULL);
-		int hv = 0xABC3D20F;
+		unsigned int hv = 0xABC3D20F;
 		int i;
 		int cnt = 0;
 		CHash *chBest = NULL;
@@ -2494,11 +2499,15 @@ resize_conn(struct servtab *sep, int maxpip)
 static void
 free_connlist(struct servtab *sep)
 {
-	struct conninfo *conn;
+	struct conninfo *conn, *conn_temp;
 	int i, j;
 
 	for (i = 0; i < PERIPSIZE; ++i) {
-		while ((conn = LIST_FIRST(&sep->se_conn[i])) != NULL) {
+		LIST_FOREACH_SAFE(conn, &sep->se_conn[i], co_link, conn_temp) {
+			if (conn == NULL) {
+				LIST_REMOVE(conn, co_link);
+				continue;
+			}
 			for (j = 0; j < conn->co_numchild; ++j)
 				free_proc(conn->co_proc[j]);
 			conn->co_numchild = 0;
@@ -2554,7 +2563,8 @@ free_proc(struct procinfo *proc)
 static int
 hashval(char *p, int len)
 {
-	int i, hv = 0xABC3D20F;
+	unsigned int hv = 0xABC3D20F;
+	int i;
 
 	for (i = 0; i < len; ++i, ++p)
 		hv = (hv << 5) ^ (hv >> 23) ^ *p;
