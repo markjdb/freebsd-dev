@@ -62,6 +62,8 @@ LOCALBASE?=	/usr/local
 .if defined(CROSS_TOOLCHAIN)
 .if exists(${LOCALBASE}/share/toolchains/${CROSS_TOOLCHAIN}.mk)
 .include "${LOCALBASE}/share/toolchains/${CROSS_TOOLCHAIN}.mk"
+.elif exists(/usr/share/toolchains/${CROSS_TOOLCHAIN}.mk)
+.include "/usr/share/toolchains/${CROSS_TOOLCHAIN}.mk"
 .elif exists(${CROSS_TOOLCHAIN})
 .include "${CROSS_TOOLCHAIN}"
 .else
@@ -2786,7 +2788,7 @@ libraries: .MAKE .PHONY
 #
 _prereq_libs= lib/libcompiler_rt
 .if ${MK_SSP} != "no"
-_prereq_libs+= gnu/lib/libssp/libssp_nonshared
+_prereq_libs+= lib/libssp_nonshared
 .endif
 
 # These dependencies are not automatically generated:
@@ -2798,7 +2800,6 @@ _startup_libs=	lib/csu
 .if ${MK_BSD_CRTBEGIN} == "no"
 _startup_libs+=	gnu/lib/csu
 .endif
-_startup_libs+=	lib/libcompiler_rt
 _startup_libs+=	lib/libc
 _startup_libs+=	lib/libc_nonshared
 .if ${MK_LIBCPLUSPLUS} != "no"
