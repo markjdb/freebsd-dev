@@ -787,8 +787,8 @@ free_dbg(void **addrp, struct malloc_type *mtp)
  *
  *	This routine may not block.
  */
-void
-free(void *addr, struct malloc_type *mtp)
+static __always_inline void
+free1(void *addr, struct malloc_type *mtp, const bool domain)
 {
 	uma_zone_t zone;
 	uma_slab_t slab;
@@ -812,7 +812,10 @@ free(void *addr, struct malloc_type *mtp)
 #ifdef INVARIANTS
 		free_save_type(addr, mtp, size);
 #endif
-		uma_zfree_arg(zone, addr, slab);
+		if (domain)
+			uma_zfree_domain(zone, addr, slab);
+		else
+			uma_zfree_arg(zone, addr, slab);
 	} else {
 		size = malloc_large_size(slab);
 		free_large(addr, size);
@@ -821,37 +824,17 @@ free(void *addr, struct malloc_type *mtp)
 }
 
 void
+free(void *addr, struct malloc_type *mtp)
+{
+
+	free1(addr, mtp, false);
+}
+
+void
 free_domain(void *addr, struct malloc_type *mtp)
 {
-	uma_zone_t zone;
-	uma_slab_t slab;
-	u_long size;
 
-#ifdef MALLOC_DEBUG
-	if (free_dbg(&addr, mtp) != 0)
-		return;
-#endif
-
-	/* free(NULL, ...) does nothing */
-	if (addr == NULL)
-		return;
-
-	vtozoneslab((vm_offset_t)addr & (~UMA_SLAB_MASK), &zone, &slab);
-	if (slab == NULL)
-		panic("free_domain: address %p(%p) has not been allocated.\n",
-		    addr, (void *)((u_long)addr & (~UMA_SLAB_MASK)));
-
-	if (__predict_true(!malloc_large_slab(slab))) {
-		size = zone->uz_size;
-#ifdef INVARIANTS
-		free_save_type(addr, mtp, size);
-#endif
-		uma_zfree_domain(zone, addr, slab);
-	} else {
-		size = malloc_large_size(slab);
-		free_large(addr, size);
-	}
-	malloc_type_freed(mtp, size);
+	free1(addr, mtp, true);
 }
 
 /*
