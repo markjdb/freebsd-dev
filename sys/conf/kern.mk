@@ -131,6 +131,7 @@ INLINE_LIMIT?=	8000
 CFLAGS += -mgeneral-regs-only
 # Reserve x18 for pcpu data
 CFLAGS += -ffixed-x18
+CFLAGS+= -march=armv8.2a
 INLINE_LIMIT?=	8000
 .endif
 
