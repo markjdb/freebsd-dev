@@ -126,6 +126,19 @@ ATOMIC(clear,    clr, mov)
 ATOMIC(set,      set, mov)
 ATOMIC(subtract, add, neg)
 
+#define	ATOMIC_FCMPSET(w)						\
+	int atomic_fcmpset_##w(volatile uint##w##_t *p,			\
+	    uint##w##_t *cmpval, uint##w##_t newval);			\
+	int atomic_fcmpset_acq_##w(volatile uint##w##_t *p,		\
+	    uint##w##_t *cmpval, uint##w##_t newval);			\
+	int atomic_fcmpset_rel_##w(volatile uint##w##_t *p,		\
+	    uint##w##_t *cmpval, uint##w##_t newval)
+
+ATOMIC_FCMPSET(8);
+ATOMIC_FCMPSET(16);
+ATOMIC_FCMPSET(32);
+ATOMIC_FCMPSET(64);
+#if 0
 #define	ATOMIC_FCMPSET(bar, a, l)					\
 static __inline int							\
 atomic_fcmpset_##bar##8(volatile uint8_t *p, uint8_t *cmpval,		\
@@ -218,6 +231,7 @@ ATOMIC_FCMPSET(acq_, a, )
 ATOMIC_FCMPSET(rel_,  ,l)
 
 #undef ATOMIC_FCMPSET
+#endif
 
 #define	ATOMIC_CMPSET(bar, a, l)					\
 static __inline int							\
