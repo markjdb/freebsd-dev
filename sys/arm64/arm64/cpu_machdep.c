@@ -48,7 +48,7 @@ lseimpl(void)
 	    ID_AA64ISAR0_Atomic_IMPL);
 }
 
-#define	_ATOMIC_FCMPSET_IMPL(w, bar, s, a, l)				\
+#define	_ATOMIC_FCMPSET_IMPL(w, q, bar, s, a, l)			\
 static int								\
 atomic_fcmpset_##bar##w##_llsc(volatile uint##w##_t *p,			\
     uint##w##_t *cmpval, uint##w##_t newval)				\
@@ -59,10 +59,10 @@ atomic_fcmpset_##bar##w##_llsc(volatile uint##w##_t *p,			\
 	_cmpval = *cmpval;						\
 	__asm __volatile(						\
 	    "1: mov	%w1, #1\n"					\
-	    "   ld"#a"xr"#s" %w0, [%2]\n"				\
-	    "   cmp	%w0, %w3\n"					\
+	    "   ld"#a"xr"#s" %"#q"0, [%2]\n"				\
+	    "   cmp	%"#q"0, %"#q"3\n"				\
 	    "   b.ne	2f\n"						\
-	    "	st"#l"xr"#s" %w1, %w4, [%2]\n"				\
+	    "	st"#l"xr"#s" %w1, %"#q"4, [%2]\n"			\
 	    "2:"							\
 	    : "=&r" (tmp), "=&r" (res)					\
 	    : "r" (p), "r" (_cmpval), "r" (newval)			\
@@ -80,9 +80,11 @@ atomic_fcmpset_##bar##w##_lse(volatile uint##w##_t *p,			\
 									\
 	_cmpval = tmp = *cmpval;					\
 	__asm __volatile(						\
-	    "cas"#a#l#s" %w1, %w4, [%3]\n"				\
-	    "cmp	%w1, %w2\n"					\
+	    ".arch_extension lse\n"					\
+	    "cas"#a#l#s" %"#q"1, %"#q"4, [%3]\n"			\
+	    "cmp	%"#q"1, %"#q"2\n"				\
 	    "cset	%w0, eq\n"					\
+	    ".arch_extension nolse\n"					\
 	    : "=r" (res), "+&r" (tmp)					\
 	    : "r" (_cmpval), "r" (p), "r" (newval)			\
 	    : "cc", "memory");						\
@@ -100,15 +102,15 @@ DEFINE_IFUNC(, int, atomic_fcmpset_##bar##w,				\
 		return (atomic_fcmpset_##bar##w##_llsc);		\
 }
 
-#define	ATOMIC_FCMPSET(w, s)						\
-	_ATOMIC_FCMPSET_IMPL(w, , s, ,)					\
+#define	ATOMIC_FCMPSET(w, q, s)						\
+	_ATOMIC_FCMPSET_IMPL(w, q, , s, ,)				\
 	_ATOMIC_FCMPSET_IFUNC(w, )					\
-	_ATOMIC_FCMPSET_IMPL(w, acq_, s, a,)				\
+	_ATOMIC_FCMPSET_IMPL(w, q, acq_, s, a,)				\
 	_ATOMIC_FCMPSET_IFUNC(w, acq_)					\
-	_ATOMIC_FCMPSET_IMPL(w, rel_, s, , l)				\
+	_ATOMIC_FCMPSET_IMPL(w, q, rel_, s, , l)			\
 	_ATOMIC_FCMPSET_IFUNC(w, rel_)
 
-ATOMIC_FCMPSET(8, b)
-ATOMIC_FCMPSET(16, h)
-ATOMIC_FCMPSET(32,)
-ATOMIC_FCMPSET(64,)
+ATOMIC_FCMPSET(8, w, b)
+ATOMIC_FCMPSET(16, w, h)
+ATOMIC_FCMPSET(32, w,)
+ATOMIC_FCMPSET(64, ,)
