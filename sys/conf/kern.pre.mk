@@ -168,9 +168,9 @@ LDFLAGS+=	-z common-page-size=4096
 .else
 LDFLAGS+=	-z notext -z ifunc-noplt
 .endif
-.if ${MACHINE_CPUARCH} == "aarch64"
-LDFLAGS+=	-z ifunc-noplt
 .endif
+.if ${MACHINE_CPUARCH} == "aarch64"
+LDFLAGS+=	-z notext -z ifunc-noplt
 .endif
 
 .if ${MACHINE_CPUARCH} == "riscv"
