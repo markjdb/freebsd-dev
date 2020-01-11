@@ -59,6 +59,7 @@
 
 #include <sys/atomic_common.h>
 
+#if 0
 #define	ATOMIC_OP(op, asm_op, bar, a, l)				\
 static __inline void							\
 atomic_##op##_##bar##8(volatile uint8_t *p, uint8_t val)		\
@@ -137,6 +138,32 @@ ATOMIC(add,      add)
 ATOMIC(clear,    bic)
 ATOMIC(set,      orr)
 ATOMIC(subtract, sub)
+#endif
+
+#define	_ATOMIC_OP(op, w)						\
+	void atomic_##op##_##w(volatile uint##w##_t *p, uint##w##_t val); \
+	void atomic_##op##_acq_##w(volatile uint##w##_t *p, uint##w##_t val); \
+	void atomic_##op##_rel_##w(volatile uint##w##_t *p, uint##w##_t val); \
+
+_ATOMIC_OP(add, 8);
+_ATOMIC_OP(add, 16);
+_ATOMIC_OP(add, 32);
+_ATOMIC_OP(add, 64);
+
+_ATOMIC_OP(clear, 8);
+_ATOMIC_OP(clear, 16);
+_ATOMIC_OP(clear, 32);
+_ATOMIC_OP(clear, 64);
+
+_ATOMIC_OP(set, 8);
+_ATOMIC_OP(set, 16);
+_ATOMIC_OP(set, 32);
+_ATOMIC_OP(set, 64);
+
+_ATOMIC_OP(subtract, 8);
+_ATOMIC_OP(subtract, 16);
+_ATOMIC_OP(subtract, 32);
+_ATOMIC_OP(subtract, 64);
 
 #define	ATOMIC_FCMPSET(w)						\
 	int atomic_fcmpset_##w(volatile uint##w##_t *p,			\
@@ -150,6 +177,20 @@ ATOMIC_FCMPSET(8);
 ATOMIC_FCMPSET(16);
 ATOMIC_FCMPSET(32);
 ATOMIC_FCMPSET(64);
+
+#define	ATOMIC_CMPSET(w)						\
+	int atomic_cmpset_##w(volatile uint##w##_t *p,			\
+	    uint##w##_t cmpval, uint##w##_t newval);			\
+	int atomic_cmpset_acq_##w(volatile uint##w##_t *p,		\
+	    uint##w##_t cmpval, uint##w##_t newval);			\
+	int atomic_cmpset_rel_##w(volatile uint##w##_t *p,		\
+	    uint##w##_t cmpval, uint##w##_t newval)
+
+ATOMIC_CMPSET(8);
+ATOMIC_CMPSET(16);
+ATOMIC_CMPSET(32);
+ATOMIC_CMPSET(64);
+
 #if 0
 #define	ATOMIC_FCMPSET(bar, a, l)					\
 static __inline int							\
@@ -253,7 +294,6 @@ ATOMIC_FCMPSET(acq_, a, )
 ATOMIC_FCMPSET(rel_,  ,l)
 
 #undef ATOMIC_FCMPSET
-#endif
 
 #define	ATOMIC_CMPSET(bar, a, l)					\
 static __inline int							\
@@ -351,7 +391,6 @@ atomic_cmpset_##bar##64(volatile uint64_t *p, uint64_t cmpval,		\
 ATOMIC_CMPSET(    ,  , )
 ATOMIC_CMPSET(acq_, a, )
 ATOMIC_CMPSET(rel_,  ,l)
-
 static __inline uint32_t
 atomic_fetchadd_32(volatile uint32_t *p, uint32_t val)
 {
@@ -389,6 +428,10 @@ atomic_fetchadd_64(volatile uint64_t *p, uint64_t val)
 
 	return (ret);
 }
+#endif
+
+uint32_t atomic_fetchadd_32(volatile uint32_t *p, uint32_t val);
+uint64_t atomic_fetchadd_64(volatile uint64_t *p, uint64_t val);
 
 static __inline uint32_t
 atomic_readandclear_32(volatile uint32_t *p)
