@@ -96,7 +96,6 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_extern.h>
 
 extern void	uma_startup1(vm_offset_t);
-extern void	vm_radix_reserve_kva(void);
 
 long physmem;
 
@@ -143,10 +142,6 @@ vm_mem_init(void *dummy)
 	vm_map_startup();
 	kmem_init(virtual_avail, virtual_end);
 
-#ifndef	UMA_MD_SMALL_ALLOC
-	/* Set up radix zone to use noobj_alloc. */
-	vm_radix_reserve_kva();
-#endif
 	kmem_init_zero_region();
 	pmap_init();
 	vm_pager_init();

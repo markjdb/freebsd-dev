@@ -2565,7 +2565,11 @@ uma_startup1(vm_offset_t virtual_avail)
 	hashzone = uma_zcreate("UMA Hash",
 	    sizeof(struct slabhead *) * UMA_HASH_SIZE_INIT,
 	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, UMA_ZFLAG_INTERNAL);
+
+	bucket_init();
 }
+
+extern void	vm_radix_reserve_kva(void);
 
 /*
  * Advertise the availability of normal kva allocations and switch to
@@ -2576,14 +2580,20 @@ void
 uma_startup2(void)
 {
 
-#ifndef PMAP_HAS_DMAP
-	(void)vm_map_insert(kernel_map, NULL, 0, bootstart,
-	    bootmem - bootstart, VM_PROT_RW, VM_PROT_RW, MAP_NOFAULT);
+	if (!PMAP_HAS_DMAP) {
+		vm_map_lock(kernel_map);
+		(void)vm_map_insert(kernel_map, NULL, 0, bootstart, bootmem,
+		    VM_PROT_RW, VM_PROT_RW, MAP_NOFAULT);
+		vm_map_unlock(kernel_map);
+	}
+
+#ifndef UMA_MD_SMALL_ALLOC
+	/* Set up radix zone to use noobj_alloc. */
+	vm_radix_reserve_kva();
 #endif
 
 	booted = BOOT_KVA;
 	zone_foreach_unlocked(zone_kva_available, NULL);
-	bucket_init();
 	bucket_enable();
 }
 
