@@ -69,6 +69,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sbuf.h>
 #include <sys/signalvar.h>
 #include <sys/kdb.h>
+#include <sys/smr.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
 #include <sys/syscallsubr.h>
@@ -98,6 +99,7 @@ MALLOC_DEFINE(M_FILECAPS, "filecaps", "descriptor capabilities");
 
 MALLOC_DECLARE(M_FADVISE);
 
+static __read_mostly smr_t file_smr;
 static __read_mostly uma_zone_t file_zone;
 static __read_mostly uma_zone_t filedesc0_zone;
 
@@ -133,10 +135,6 @@ static void	filecaps_free_finish(u_long *ioctls);
  * filedesc are updated to point to those.  This is repeated every time
  * the process runs out of file descriptors (provided it hasn't hit its
  * resource limit).
- *
- * Since threads may hold references to individual descriptor table
- * entries, the tables are never freed.  Instead, they are placed on a
- * linked list and freed only when the struct filedesc is released.
  */
 #define NDFILE		20
 #define NDSLOTSIZE	sizeof(NDSLOTTYPE)
@@ -1761,7 +1759,8 @@ fdgrowtable(struct filedesc *fdp, int nfd)
 	 * fd_files poiner. Otherwise fget_unlocked() may see inconsistent
 	 * data.
 	 */
-	atomic_store_rel_ptr((volatile void *)&fdp->fd_files, (uintptr_t)ntable);
+	atomic_store_rel_ptr((volatile void *)&fdp->fd_files,
+	    (uintptr_t)ntable);
 
 	/*
 	 * Do not free the old file table, as some threads may still
@@ -1930,7 +1929,7 @@ falloc_noinstall(struct thread *td, struct file **resultfp)
 		}
 		return (ENFILE);
 	}
-	fp = uma_zalloc(file_zone, M_WAITOK);
+	fp = uma_zalloc_smr(file_zone, M_WAITOK);
 	bzero(fp, sizeof(*fp));
 	refcount_init(&fp->f_count, 1);
 	fp->f_cred = crhold(td->td_ucred);
@@ -2697,20 +2696,23 @@ fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 #ifdef CAPABILITIES
 	seqc_t seq;
 	cap_rights_t haverights;
-	int error;
 #endif
+	int error;
 
 	fdt = fdp->fd_files;
 	if (__predict_false((u_int)fd >= fdt->fdt_nfiles))
 		return (EBADF);
+
 	/*
 	 * Fetch the descriptor locklessly.  We avoid fdrop() races by
 	 * never raising a refcount above 0.  To accomplish this we have
 	 * to use a cmpset loop rather than an atomic_add.  The descriptor
 	 * must be re-verified once we acquire a reference to be certain
 	 * that the identity is still correct and we did not lose a race
-	 * due to preemption.
+	 * with a concurrent close of the descriptor.
 	 */
+	error = EBADF;
+	smr_enter(file_smr);
 	for (;;) {
 #ifdef CAPABILITIES
 		seq = seqc_read(fd_seqc(fdt, fd));
@@ -2722,15 +2724,10 @@ fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 #else
 		fp = fdt->fdt_ofiles[fd].fde_file;
 #endif
-		if (fp == NULL)
-			return (EBADF);
-#ifdef CAPABILITIES
-		error = cap_check(&haverights, needrightsp);
-		if (error != 0)
-			return (error);
-#endif
+		if (__predict_false(fp == NULL))
+			break;
 		count = fp->f_count;
-	retry:
+retry:
 		if (count == 0) {
 			/*
 			 * Force a reload. Other thread could reallocate the
@@ -2742,7 +2739,7 @@ fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 			continue;
 		}
 		if (__predict_false(count + 1 < count))
-			return (EBADF);
+			break;
 
 		/*
 		 * Use an acquire barrier to force re-reading of fdt so it is
@@ -2752,21 +2749,33 @@ fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 		    &count, count + 1) == 0))
 			goto retry;
 		fdt = fdp->fd_files;
-#ifdef	CAPABILITIES
-		if (seqc_consistent_nomb(fd_seqc(fdt, fd), seq))
-#else
-		if (fp == fdt->fdt_ofiles[fd].fde_file)
-#endif
+#ifdef CAPABILITIES
+		if (seqc_consistent_nomb(fd_seqc(fdt, fd), seq)) {
+			error = 0;
 			break;
+		}
+#else
+		if (fp == fdt->fdt_ofiles[fd].fde_file) {
+			error = 0;
+			break;
+		}
+#endif
 		fdrop(fp, curthread);
 	}
-	*fpp = fp;
-	if (seqp != NULL) {
+	smr_exit(file_smr);
+	if (error == 0) {
 #ifdef CAPABILITIES
-		*seqp = seq;
+		error = cap_check(&haverights, needrightsp);
+		if (error != 0) {
+			fdrop(fp, curthread);
+			return (error);
+		}
+		if (seqp != NULL)
+			*seqp = seq;
 #endif
+		*fpp = fp;
 	}
-	return (0);
+	return (error);
 }
 
 /*
@@ -3024,7 +3033,7 @@ _fdrop(struct file *fp, struct thread *td)
 	atomic_subtract_int(&openfiles, 1);
 	crfree(fp->f_cred);
 	free(fp->f_advice, M_FADVISE);
-	uma_zfree(file_zone, fp);
+	uma_zfree_smr(file_zone, fp);
 
 	return (error);
 }
@@ -4100,7 +4109,8 @@ filelistinit(void *dummy)
 {
 
 	file_zone = uma_zcreate("Files", sizeof(struct file), NULL, NULL,
-	    NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_NOFREE);
+	    NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_SMR);
+	file_smr = uma_zone_get_smr(file_zone);
 	filedesc0_zone = uma_zcreate("filedesc0", sizeof(struct filedesc0),
 	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
 	mtx_init(&sigio_lock, "sigio lock", NULL, MTX_DEF);
