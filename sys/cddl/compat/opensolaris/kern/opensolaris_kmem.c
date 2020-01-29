@@ -238,14 +238,14 @@ void
 kmem_cache_reap_soon(kmem_cache_t *cache)
 {
 #ifndef KMEM_DEBUG
-	uma_zone_reclaim(cache->kc_zone, UMA_RECLAIM_DRAIN);
+	uma_zone_reclaim(cache->kc_zone, UMA_ANYDOMAIN, UMA_RECLAIM_DRAIN);
 #endif
 }
 
 void
 kmem_reap(void)
 {
-	uma_reclaim(UMA_RECLAIM_TRIM);
+	uma_reclaim(UMA_ANYDOMAIN, UMA_RECLAIM_TRIM);
 }
 #else
 void

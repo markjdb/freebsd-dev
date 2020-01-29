@@ -464,8 +464,8 @@ typedef void (*uma_free)(void *item, vm_size_t size, uint8_t pflag);
 #define	UMA_RECLAIM_DRAIN	1	/* release bucket cache */
 #define	UMA_RECLAIM_DRAIN_CPU	2	/* release bucket and per-CPU caches */
 #define	UMA_RECLAIM_TRIM	3	/* trim bucket cache to WSS */
-void uma_reclaim(int req);
-void uma_zone_reclaim(uma_zone_t, int req);
+void uma_reclaim(int domain, int req);
+void uma_zone_reclaim(uma_zone_t, int domain, int req);
 
 /*
  * Sets the alignment mask to be used for all zones requesting cache

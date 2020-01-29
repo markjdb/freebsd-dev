@@ -1972,7 +1972,7 @@ vm_pageout_lowmem(void)
 		 * We do this explicitly after the caches have been
 		 * drained above.
 		 */
-		uma_reclaim(UMA_RECLAIM_TRIM);
+		uma_reclaim(UMA_ANYDOMAIN, UMA_RECLAIM_TRIM);
 		ret = true;
 		break;
 	}

@@ -1449,7 +1449,7 @@ vnlru_proc(void)
 		done = vlrureclaim(reclaim_nc_src, trigger, target);
 		mtx_unlock(&vnode_list_mtx);
 		if (onumvnodes > desiredvnodes && numvnodes <= desiredvnodes)
-			uma_reclaim(UMA_RECLAIM_DRAIN);
+			uma_reclaim(UMA_ANYDOMAIN, UMA_RECLAIM_DRAIN);
 		if (done == 0) {
 			if (force == 0 || force == 1) {
 				force = 2;
