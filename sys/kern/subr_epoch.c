@@ -785,11 +785,8 @@ void
 epoch_drain_callbacks(epoch_t epoch)
 {
 	epoch_record_t er;
-	struct thread *td;
-	int was_bound;
-	int old_pinned;
-	int old_cpu;
 	int cpu;
+	bool pending;
 
 	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
 	    "epoch_drain_callbacks() may sleep!");
@@ -803,44 +800,18 @@ epoch_drain_callbacks(epoch_t epoch)
 #endif
 	DROP_GIANT();
 
-	sx_xlock(&epoch->e_drain_sx);
-	mtx_lock(&epoch->e_drain_mtx);
-
-	td = curthread;
-	thread_lock(td);
-	old_cpu = PCPU_GET(cpuid);
-	old_pinned = td->td_pinned;
-	was_bound = sched_is_bound(td);
-	sched_unbind(td);
-	td->td_pinned = 0;
-
-	CPU_FOREACH(cpu)
-		epoch->e_drain_count++;
-	CPU_FOREACH(cpu) {
-		er = zpcpu_get_cpu(epoch->e_pcpu_record, cpu);
-		sched_bind(td, cpu);
-		epoch_call(epoch, &epoch_drain_cb, &er->er_drain_ctx);
-	}
-
-	/* restore CPU binding, if any */
-	if (was_bound != 0) {
-		sched_bind(td, old_cpu);
-	} else {
-		/* get thread back to initial CPU, if any */
-		if (old_pinned != 0)
-			sched_bind(td, old_cpu);
-		sched_unbind(td);
-	}
-	/* restore pinned after bind */
-	td->td_pinned = old_pinned;
-
-	thread_unlock(td);
-
-	while (epoch->e_drain_count != 0)
-		msleep(epoch, &epoch->e_drain_mtx, PZERO, "EDRAIN", 0);
-
-	mtx_unlock(&epoch->e_drain_mtx);
-	sx_xunlock(&epoch->e_drain_sx);
+	pending = false;
+	do {
+		CPU_FOREACH(cpu) {
+			er = zpcpu_get_cpu(epoch->e_pcpu_record, cpu);
+			if (er->er_record.n_pending > 0) {
+				pending = true;
+				GROUPTASK_ENQUEUE(DPCPU_ID_PTR(cpu,
+				    epoch_cb_task));
+			}
+		}
+		pause("edrain", 1);
+	} while (pending);
 
 	PICKUP_GIANT();
 }
