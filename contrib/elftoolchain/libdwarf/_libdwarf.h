@@ -194,7 +194,7 @@ struct _Dwarf_LineInfo {
 	Dwarf_Small	li_defstmt;	/* Default value of is_stmt. */
 	int8_t		li_lbase;    	/* Line base for special opcode. */
 	Dwarf_Small	li_lrange;    	/* Line range for special opcode. */
-	Dwarf_Small	li_opbase;	/* Fisrt std opcode number. */
+	Dwarf_Small	li_opbase;	/* First std opcode number. */
 	Dwarf_Small	*li_oplen;	/* Array of std opcode len. */
 	char		**li_incdirs;	/* Array of include dirs. */
 	Dwarf_Unsigned	li_inclen;	/* Length of inc dir array. */
