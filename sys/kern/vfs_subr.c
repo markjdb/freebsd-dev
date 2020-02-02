@@ -3046,6 +3046,19 @@ vrefact(struct vnode *vp)
 #endif
 }
 
+void
+vrefactn(struct vnode *vp, u_int n)
+{
+
+	CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
+#ifdef INVARIANTS
+	int old = atomic_fetchadd_int(&vp->v_usecount, n);
+	VNASSERT(old > 0, vp, ("%s: wrong use count %d", __func__, old));
+#else
+	atomic_add_int(&vp->v_usecount, n);
+#endif
+}
+
 /*
  * Return reference count of a vnode.
  *
@@ -5372,12 +5385,6 @@ vop_unlock_pre(void *ap)
 }
 
 void
-vop_unlock_post(void *ap, int rc)
-{
-	return;
-}
-
-void
 vop_need_inactive_pre(void *ap)
 {
 	struct vop_need_inactive_args *a = ap;
@@ -5943,23 +5950,6 @@ vfs_read_dirent(struct vop_readdir_args *ap, struct dirent *dp, off_t off)
 }
 
 /*
- * Mark for update the access time of the file if the filesystem
- * supports VOP_MARKATIME.  This functionality is used by execve and
- * mmap, so we want to avoid the I/O implied by directly setting
- * va_atime for the sake of efficiency.
- */
-void
-vfs_mark_atime(struct vnode *vp, struct ucred *cred)
-{
-	struct mount *mp;
-
-	mp = vp->v_mount;
-	ASSERT_VOP_LOCKED(vp, "vfs_mark_atime");
-	if (mp != NULL && (mp->mnt_flag & (MNT_NOATIME | MNT_RDONLY)) == 0)
-		(void)VOP_MARKATIME(vp);
-}
-
-/*
  * The purpose of this routine is to remove granularity from accmode_t,
  * reducing it into standard unix access bits - VEXEC, VREAD, VWRITE,
  * VADMIN and VAPPEND.
@@ -6386,4 +6376,16 @@ __mnt_vnode_markerfree_lazy(struct vnode **mvp, struct mount *mp)
 	TAILQ_REMOVE(&mp->mnt_lazyvnodelist, *mvp, v_lazylist);
 	mtx_unlock(&mp->mnt_listmtx);
 	mnt_vnode_markerfree_lazy(mvp, mp);
+}
+
+int
+vn_dir_check_exec(struct vnode *vp, struct componentname *cnp)
+{
+
+	if ((cnp->cn_flags & NOEXECCHECK) != 0) {
+		cnp->cn_flags &= ~NOEXECCHECK;
+		return (0);
+	}
+
+	return (VOP_ACCESS(vp, VEXEC, cnp->cn_cred, cnp->cn_thread));
 }
