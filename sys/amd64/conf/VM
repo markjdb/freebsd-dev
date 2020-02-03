@@ -84,7 +84,7 @@ options 	MALLOC_DEBUG_MAXZONES=8	# Separate malloc(9) zones
 options		ALT_BREAK_TO_DEBUGGER
 
 # Make an SMP-capable kernel by default
-options 	SMP			# Symmetric MultiProcessor Kernel
+#options 	SMP			# Symmetric MultiProcessor Kernel
 
 # CPU frequency control
 #device		cpufreq
