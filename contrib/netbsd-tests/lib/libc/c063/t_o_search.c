@@ -1,4 +1,4 @@
-/*	$NetBSD: t_o_search.c,v 1.5 2017/01/10 22:25:01 christos Exp $ */
+/*	$NetBSD: t_o_search.c,v 1.9 2020/02/06 12:18:06 martin Exp $ */
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -29,7 +29,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: t_o_search.c,v 1.5 2017/01/10 22:25:01 christos Exp $");
+__RCSID("$NetBSD: t_o_search.c,v 1.9 2020/02/06 12:18:06 martin Exp $");
 
 #include <atf-c.h>
 
@@ -258,13 +258,10 @@ ATF_TC_BODY(o_search_notdir, tc)
 	int fd;
 
 	ATF_REQUIRE(mkdir(DIR, 0755) == 0);
-#ifndef __FreeBSD__
-	ATF_REQUIRE((dfd = open(FILE, O_CREAT|O_RDWR|O_SEARCH, 0644)) != -1);
-#else
 	ATF_REQUIRE((dfd = open(FILE, O_CREAT|O_SEARCH, 0644)) != -1);
-#endif
 	ATF_REQUIRE((fd = openat(dfd, BASEFILE, O_RDWR, 0)) == -1);
 	ATF_REQUIRE(errno == ENOTDIR);
+	ATF_REQUIRE(close(dfd) == 0);
 }
 
 #ifdef USE_O_SEARCH
