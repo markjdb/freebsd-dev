@@ -71,7 +71,13 @@ struct vm_pagequeue {
 	struct pglist	pq_pl;
 	int		pq_cnt;
 	const char	* const pq_name;
+
 	uint64_t	pq_pdpages;
+	uint64_t	pd_xbusy;
+	uint64_t	pd_deferred;
+	uint64_t	pd_wired;
+	uint64_t	pd_reactivated;
+	uint64_t	pd_requeued;
 } __aligned(CACHE_LINE_SIZE);
 
 #ifndef VM_BATCHQUEUE_SIZE

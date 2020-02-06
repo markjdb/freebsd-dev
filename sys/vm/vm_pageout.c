@@ -208,8 +208,13 @@ struct scan_state {
 	struct vm_batchqueue bq;
 	struct vm_pagequeue *pq;
 	vm_page_t	marker;
-	int		maxscan;
-	int		scanned;
+	int		maxscan;	/* Limit on number of pages to scan. */
+	int		scanned;	/* Pages scanned so far. */
+	int		xbusy;		/* Skipped due to xbusy. */
+	int		deferred;	/* Skipped due to pending queue ops. */
+	int		wired;		/* Skipped due to wirings. */
+	int		reactivated;	/* Moved to the active queue. */
+	int		requeued;	/* Given a second chance. */
 };
 
 static void
@@ -227,11 +232,11 @@ vm_pageout_init_scan(struct scan_state *ss, struct vm_pagequeue *pq,
 		TAILQ_INSERT_AFTER(&pq->pq_pl, after, marker, plinks.q);
 	vm_page_aflag_set(marker, PGA_ENQUEUED);
 
+	memset(ss, 0, sizeof(*ss));
 	vm_batchqueue_init(&ss->bq);
 	ss->pq = pq;
 	ss->marker = marker;
 	ss->maxscan = maxscan;
-	ss->scanned = 0;
 	vm_pagequeue_unlock(pq);
 }
 
@@ -248,6 +253,11 @@ vm_pageout_end_scan(struct scan_state *ss)
 	TAILQ_REMOVE(&pq->pq_pl, ss->marker, plinks.q);
 	vm_page_aflag_clear(ss->marker, PGA_ENQUEUED);
 	pq->pq_pdpages += ss->scanned;
+	pq->pq_xbusy += ss->xbusy;
+	pq->pq_deferred += ss->deferred;
+	pq->pq_wired += ss->wired;
+	pq->pq_reactivated += ss->reactivated;
+	pq->pq_requeued += ss->requeued;
 }
 
 /*
@@ -322,19 +332,28 @@ vm_pageout_next(struct scan_state *ss, const bool dequeue)
  * outstanding queue operations are processed.
  */
 static __always_inline bool
-vm_pageout_defer(vm_page_t m, const uint8_t queue, const bool enqueued)
+vm_pageout_defer(struct scan_state *ss, vm_page_t m, const uint8_t queue,
+    const bool enqueued)
 {
 	vm_page_astate_t as;
 
 	as = vm_page_astate_load(m);
 	if (__predict_false(as.queue != queue ||
-	    ((as.flags & PGA_ENQUEUED) != 0) != enqueued))
+	    ((as.flags & PGA_ENQUEUED) != 0) != enqueued)) {
+		ss->deferred++;
 		return (true);
+	}
 	if ((as.flags & PGA_QUEUE_OP_MASK) != 0) {
 		vm_page_pqbatch_submit(m, queue);
+		ss->deferred++;
 		return (true);
 	}
 	return (false);
+}
+
+static __always_inline bool
+vm_pageout_page_xbusy(struct scan_state *ss, vm_page_t m)
+{
 }
 
 /*
@@ -758,7 +777,7 @@ scan:
 		 * pending queue operations, such as dequeues for wired pages,
 		 * are handled.
 		 */
-		if (vm_pageout_defer(m, queue, true))
+		if (vm_pageout_defer(&ss, m, queue, true))
 			continue;
 
 		/*
@@ -781,7 +800,7 @@ scan:
 			}
 		}
 
-		if (vm_page_tryxbusy(m) == 0)
+		if (!vm_pageout_page_xbusy(&ss, m))
 			continue;
 
 		/*
@@ -792,8 +811,10 @@ scan:
 		 * wirings and removes mappings.  If the page is unmapped, the
 		 * wire count is guaranteed not to increase after this check.
 		 */
-		if (__predict_false(vm_page_wired(m)))
+		if (__predict_false(vm_page_wired(m))) {
+			ss.wired++;
 			goto skip_page;
+		}
 
 		/*
 		 * Invalid pages can be easily freed.  They cannot be
@@ -811,8 +832,10 @@ scan:
 			 * so, discarding any references collected by
 			 * pmap_ts_referenced().
 			 */
-			if (__predict_false(_vm_page_queue(old) == PQ_NONE))
+			if (__predict_false(_vm_page_queue(old) == PQ_NONE)) {
+				ss.deferred++;
 				goto skip_page;
+			}
 
 			new = old;
 			act_delta = refs;
@@ -850,12 +873,13 @@ scan:
 				 */
 				if (!in_shortfall)
 					launder--;
-				VM_CNT_INC(v_reactivated);
+				ss.reactivated++;
 				goto skip_page;
 			} else if ((object->flags & OBJ_DEAD) == 0) {
 				new.flags |= PGA_REQUEUE;
 				if (!vm_page_pqstate_commit(m, &old, new))
 					continue;
+				ss.requeued++;
 				goto skip_page;
 			}
 			break;
@@ -870,8 +894,10 @@ scan:
 		 */
 		if (object->ref_count != 0) {
 			vm_page_test_dirty(m);
-			if (m->dirty == 0 && !vm_page_try_remove_all(m))
+			if (m->dirty == 0 && !vm_page_try_remove_all(m)) {
+				ss.wired++;
 				goto skip_page;
+			}
 		}
 
 		/*
@@ -887,7 +913,7 @@ free_page:
 			 * manipulating the page, check for a last-second
 			 * reference.
 			 */
-			if (vm_pageout_defer(m, queue, true))
+			if (vm_pageout_defer(&ss, m, queue, true))
 				goto skip_page;
 			vm_page_free(m);
 			VM_CNT_INC(v_dfree);
@@ -1231,7 +1257,7 @@ act_scan:
 		 * pending queue operations, such as dequeues for wired pages,
 		 * are handled.
 		 */
-		if (vm_pageout_defer(m, PQ_ACTIVE, true))
+		if (vm_pageout_defer(&ss, m, PQ_ACTIVE, true))
 			continue;
 
 		/*
@@ -1472,7 +1498,7 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int shortage,
 		 * pending queue operations, such as dequeues for wired pages,
 		 * are handled.
 		 */
-		if (vm_pageout_defer(m, PQ_INACTIVE, false))
+		if (vm_pageout_defer(&ss, m, PQ_INACTIVE, false))
 			continue;
 
 		/*
@@ -1495,7 +1521,7 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int shortage,
 			}
 		}
 
-		if (vm_page_tryxbusy(m) == 0) {
+		if (!vm_pageout_page_xbusy(&ss, m)) {
 			/*
 			 * Don't mess with busy pages.  Leave them at
 			 * the front of the queue.  Most likely, they
@@ -1505,6 +1531,7 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int shortage,
 			 * inactive count.
 			 */
 			addl_page_shortage++;
+			ss->xbusy++;
 			goto reinsert;
 		}
 
@@ -1520,8 +1547,10 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int shortage,
 		 * wirings and removes mappings.  If the page is unmapped, the
 		 * wire count is guaranteed not to increase after this check.
 		 */
-		if (__predict_false(vm_page_wired(m)))
+		if (__predict_false(vm_page_wired(m))) {
+			ss.wired++;
 			goto skip_page;
+		}
 
 		/*
 		 * Invalid pages can be easily freed. They cannot be
@@ -1539,8 +1568,10 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int shortage,
 			 * so, discarding any references collected by
 			 * pmap_ts_referenced().
 			 */
-			if (__predict_false(_vm_page_queue(old) == PQ_NONE))
+			if (__predict_false(_vm_page_queue(old) == PQ_NONE)) {
+				ss.deferred++;
 				goto skip_page;
+			}
 
 			new = old;
 			act_delta = refs;
@@ -1569,13 +1600,14 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int shortage,
 				if (!vm_page_pqstate_commit(m, &old, new))
 					continue;
 
-				VM_CNT_INC(v_reactivated);
+				ss.reactivated++;
 				goto skip_page;
 			} else if ((object->flags & OBJ_DEAD) == 0) {
 				new.queue = PQ_INACTIVE;
 				new.flags |= PGA_REQUEUE;
 				if (!vm_page_pqstate_commit(m, &old, new))
 					continue;
+				ss.requeued++;
 				goto skip_page;
 			}
 			break;
@@ -1590,8 +1622,10 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int shortage,
 		 */
 		if (object->ref_count != 0) {
 			vm_page_test_dirty(m);
-			if (m->dirty == 0 && !vm_page_try_remove_all(m))
+			if (m->dirty == 0 && !vm_page_try_remove_all(m)) {
+				ss.wired++;
 				goto skip_page;
+			}
 		}
 
 		/*
@@ -1608,7 +1642,7 @@ free_page:
 			 * manipulating the page, check for a last-second
 			 * reference that would save it from doom.
 			 */
-			if (vm_pageout_defer(m, PQ_INACTIVE, false))
+			if (vm_pageout_defer(&ss, m, PQ_INACTIVE, false))
 				goto skip_page;
 
 			/*
