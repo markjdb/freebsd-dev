@@ -54,8 +54,8 @@ static void	gtaskqueue_thread_loop(void *arg);
 static int	task_is_running(struct gtaskqueue *queue, struct gtask *gtask);
 static void	gtaskqueue_drain_locked(struct gtaskqueue *queue, struct gtask *gtask);
 
-TASKQGROUP_DEFINE(softirq, mp_ncpus, 1);
-TASKQGROUP_DEFINE(config, 1, 1);
+TASKQGROUP_DEFINE(softirq, mp_ncpus, 1, PI_SOFT);
+TASKQGROUP_DEFINE(config, 1, 1, PI_SOFT);
 
 struct gtaskqueue_busy {
 	struct gtask		*tb_running;
@@ -612,7 +612,7 @@ struct taskq_bind_task {
 };
 
 static void
-taskqgroup_cpu_create(struct taskqgroup *qgroup, int idx, int cpu)
+taskqgroup_cpu_create(struct taskqgroup *qgroup, int idx, int cpu, int pri)
 {
 	struct taskqgroup_cpu *qcpu;
 
@@ -620,7 +620,7 @@ taskqgroup_cpu_create(struct taskqgroup *qgroup, int idx, int cpu)
 	LIST_INIT(&qcpu->tgc_tasks);
 	qcpu->tgc_taskq = gtaskqueue_create_fast(NULL, M_WAITOK,
 	    taskqueue_thread_enqueue, &qcpu->tgc_taskq);
-	gtaskqueue_start_threads(&qcpu->tgc_taskq, 1, PI_SOFT,
+	gtaskqueue_start_threads(&qcpu->tgc_taskq, 1, pri,
 	    "%s_%d", qgroup->tqg_name, idx);
 	qcpu->tgc_cpu = cpu;
 }
@@ -900,7 +900,7 @@ taskqgroup_config_init(void *arg)
 	LIST_SWAP(&gtask_head, &qgroup->tqg_queue[0].tgc_tasks,
 	    grouptask, gt_list);
 	qgroup->tqg_queue[0].tgc_cnt = 0;
-	taskqgroup_cpu_create(qgroup, 0, 0);
+	taskqgroup_cpu_create(qgroup, 0, 0, PI_SOFT);
 
 	qgroup->tqg_cnt = 1;
 	qgroup->tqg_stride = 1;
@@ -910,7 +910,7 @@ SYSINIT(taskqgroup_config_init, SI_SUB_TASKQ, SI_ORDER_SECOND,
 	taskqgroup_config_init, NULL);
 
 static int
-_taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
+_taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, int pri)
 {
 	LIST_HEAD(, grouptask) gtask_head = LIST_HEAD_INITIALIZER(NULL);
 	struct grouptask *gtask;
@@ -948,7 +948,7 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
 	 */
 	cpu = old_cpu;
 	for (i = old_cnt; i < cnt; i++) {
-		taskqgroup_cpu_create(qgroup, i, cpu);
+		taskqgroup_cpu_create(qgroup, i, cpu, pri);
 
 		for (k = 0; k < stride; k++)
 			cpu = CPU_NEXT(cpu);
@@ -1001,12 +1001,12 @@ _taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
 }
 
 int
-taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride)
+taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride, int pri)
 {
 	int error;
 
 	mtx_lock(&qgroup->tqg_lock);
-	error = _taskqgroup_adjust(qgroup, cnt, stride);
+	error = _taskqgroup_adjust(qgroup, cnt, stride, pri);
 	mtx_unlock(&qgroup->tqg_lock);
 
 	return (error);

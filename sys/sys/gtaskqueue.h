@@ -79,7 +79,8 @@ int	taskqgroup_attach_cpu(struct taskqgroup *qgroup,
 void	taskqgroup_detach(struct taskqgroup *qgroup, struct grouptask *gtask);
 struct taskqgroup *taskqgroup_create(const char *name);
 void	taskqgroup_destroy(struct taskqgroup *qgroup);
-int	taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride);
+int	taskqgroup_adjust(struct taskqgroup *qgroup, int cnt, int stride,
+	    int pri);
 void	taskqgroup_config_gtask_init(void *ctx, struct grouptask *gtask,
 	    gtask_fn_t *fn, const char *name);
 void	taskqgroup_config_gtask_deinit(struct grouptask *gtask);
@@ -100,7 +101,7 @@ void	taskqgroup_config_gtask_deinit(struct grouptask *gtask);
 #define TASKQGROUP_DECLARE(name)			\
 extern struct taskqgroup *qgroup_##name
 
-#define TASKQGROUP_DEFINE(name, cnt, stride)				\
+#define TASKQGROUP_DEFINE(name, cnt, stride, pri)			\
 									\
 struct taskqgroup *qgroup_##name;					\
 									\
@@ -116,7 +117,7 @@ SYSINIT(taskqgroup_##name, SI_SUB_TASKQ, SI_ORDER_FIRST,		\
 static void								\
 taskqgroup_adjust_##name(void *arg)					\
 {									\
-	taskqgroup_adjust(qgroup_##name, (cnt), (stride));		\
+	taskqgroup_adjust(qgroup_##name, (cnt), (stride), (pri));	\
 }									\
 									\
 SYSINIT(taskqgroup_adj_##name, SI_SUB_SMP, SI_ORDER_ANY,		\

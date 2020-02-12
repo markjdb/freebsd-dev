@@ -74,7 +74,12 @@ typedef struct epoch_record {
 	volatile struct epoch_tdlist er_tdlist;
 	volatile uint32_t er_gen;
 	uint32_t er_cpuid;
+	int er_drain_state;
 } __aligned(EPOCH_ALIGN)     *epoch_record_t;
+
+#define	EPOCH_DRAIN_START	2
+#define	EPOCH_DRAIN_RUNNING	1
+#define	EPOCH_DRAIN_DONE	0
 
 struct epoch {
 	struct ck_epoch e_epoch __aligned(EPOCH_ALIGN);
@@ -82,7 +87,6 @@ struct epoch {
 	int	e_idx;
 	int	e_flags;
 	struct sx e_drain_sx;
-	struct mtx e_drain_mtx;
 	volatile int e_drain_count;
 	const char *e_name;
 };
@@ -335,7 +339,6 @@ epoch_alloc(const char *name, int flags)
 	epoch->e_idx = epoch_count;
 	epoch->e_name = name;
 	sx_init(&epoch->e_drain_sx, "epoch-drain-sx");
-	mtx_init(&epoch->e_drain_mtx, "epoch-drain-mtx", NULL, MTX_DEF);
 	allepochs[epoch_count++] = epoch;
 	return (epoch);
 }
@@ -348,7 +351,6 @@ epoch_free(epoch_t epoch)
 	allepochs[epoch->e_idx] = NULL;
 	epoch_wait(global_epoch);
 	uma_zfree_pcpu(pcpu_zone_record, epoch->e_pcpu_record);
-	mtx_destroy(&epoch->e_drain_mtx);
 	sx_destroy(&epoch->e_drain_sx);
 	free(epoch, M_EPOCH);
 }
@@ -699,14 +701,24 @@ epoch_call_task(void *arg __unused)
 	epoch_t epoch;
 	ck_stack_t cb_stack;
 	int i, npending, total;
+	bool draining;
+
+	KASSERT(curthread->td_pinned > 0,
+	    ("%s: callback task thread is not pinned", __func__));
 
 	ck_stack_init(&cb_stack);
 	critical_enter();
 	epoch_enter(global_epoch);
-	for (total = i = 0; i < epoch_count; i++) {
+	for (total = i = 0, draining = false; i < epoch_count; i++) {
 		if (__predict_false((epoch = allepochs[i]) == NULL))
 			continue;
 		er = epoch_currecord(epoch);
+		if (atomic_load_int(&er->er_drain_state) == EPOCH_DRAIN_START) {
+			atomic_store_int(&er->er_drain_state,
+			    EPOCH_DRAIN_RUNNING);
+			draining = true;
+		}
+
 		record = &er->er_record;
 		if ((npending = record->n_pending) == 0)
 			continue;
@@ -727,6 +739,20 @@ epoch_call_task(void *arg __unused)
 
 		next = CK_STACK_NEXT(cursor);
 		entry->function(entry);
+	}
+
+	if (__predict_false(draining)) {
+		epoch_enter(global_epoch);
+		for (i = 0; i < epoch_count; i++) {
+			if (__predict_false((epoch = allepochs[i]) == NULL))
+				continue;
+			er = epoch_currecord(epoch);
+			if (atomic_load_int(&er->er_drain_state) ==
+			    EPOCH_DRAIN_RUNNING)
+				atomic_store_int(&er->er_drain_state,
+				    EPOCH_DRAIN_DONE);
+		}
+		epoch_exit(global_epoch);
 	}
 }
 
@@ -769,27 +795,18 @@ in_epoch(epoch_t epoch)
 }
 
 static void
-epoch_drain_cb(struct epoch_context *ctx)
+epoch_drain_handler(struct ck_epoch *global __unused,
+    ck_epoch_record_t *cr __unused, void *arg __unused)
 {
-	struct epoch *epoch =
-	    __containerof(ctx, struct epoch_record, er_drain_ctx)->er_parent;
-
-	if (atomic_fetchadd_int(&epoch->e_drain_count, -1) == 1) {
-		mtx_lock(&epoch->e_drain_mtx);
-		wakeup(epoch);
-		mtx_unlock(&epoch->e_drain_mtx);
-	}
+	maybe_yield();
 }
 
 void
 epoch_drain_callbacks(epoch_t epoch)
 {
 	epoch_record_t er;
-	struct thread *td;
-	int was_bound;
-	int old_pinned;
-	int old_cpu;
-	int cpu;
+	int cpu, state;
+	bool pending;
 
 	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
 	    "epoch_drain_callbacks() may sleep!");
@@ -802,45 +819,28 @@ epoch_drain_callbacks(epoch_t epoch)
 		return;
 #endif
 	DROP_GIANT();
-
 	sx_xlock(&epoch->e_drain_sx);
-	mtx_lock(&epoch->e_drain_mtx);
 
-	td = curthread;
-	thread_lock(td);
-	old_cpu = PCPU_GET(cpuid);
-	old_pinned = td->td_pinned;
-	was_bound = sched_is_bound(td);
-	sched_unbind(td);
-	td->td_pinned = 0;
+	/* Make sure that all pending callbacks are available. */
+	ck_epoch_synchronize_wait(&epoch->e_epoch, epoch_drain_handler, NULL);
 
-	CPU_FOREACH(cpu)
-		epoch->e_drain_count++;
 	CPU_FOREACH(cpu) {
 		er = zpcpu_get_cpu(epoch->e_pcpu_record, cpu);
-		sched_bind(td, cpu);
-		epoch_call(epoch, &epoch_drain_cb, &er->er_drain_ctx);
+		atomic_store_int(&er->er_drain_state, EPOCH_DRAIN_START);
+		GROUPTASK_ENQUEUE(DPCPU_ID_PTR(cpu, epoch_cb_task));
 	}
 
-	/* restore CPU binding, if any */
-	if (was_bound != 0) {
-		sched_bind(td, old_cpu);
-	} else {
-		/* get thread back to initial CPU, if any */
-		if (old_pinned != 0)
-			sched_bind(td, old_cpu);
-		sched_unbind(td);
-	}
-	/* restore pinned after bind */
-	td->td_pinned = old_pinned;
+	do {
+		pending = false;
+		CPU_FOREACH(cpu) {
+			er = zpcpu_get_cpu(epoch->e_pcpu_record, cpu);
+			state = atomic_load_int(&er->er_drain_state);
+			if (state != EPOCH_DRAIN_DONE)
+				pending = true;
+		}
+		pause("edrain", 1);
+	} while (pending);
 
-	thread_unlock(td);
-
-	while (epoch->e_drain_count != 0)
-		msleep(epoch, &epoch->e_drain_mtx, PZERO, "EDRAIN", 0);
-
-	mtx_unlock(&epoch->e_drain_mtx);
 	sx_xunlock(&epoch->e_drain_sx);
-
 	PICKUP_GIANT();
 }

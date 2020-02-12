@@ -37,6 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/types.h>
 #include <sys/bus.h>
 #include <sys/eventhandler.h>
+#include <sys/interrupt.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -560,8 +561,8 @@ MODULE_VERSION(iflib, 1);
 MODULE_DEPEND(iflib, pci, 1, 1, 1);
 MODULE_DEPEND(iflib, ether, 1, 1, 1);
 
-TASKQGROUP_DEFINE(if_io_tqg, mp_ncpus, 1);
-TASKQGROUP_DEFINE(if_config_tqg, 1, 1);
+TASKQGROUP_DEFINE(if_io_tqg, mp_ncpus, 1, PI_SWI(SWI_NET));
+TASKQGROUP_DEFINE(if_config_tqg, 1, 1, PI_SWI(SWI_NET));
 
 #ifndef IFLIB_DEBUG_COUNTERS
 #ifdef INVARIANTS
