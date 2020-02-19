@@ -33,10 +33,14 @@ __FBSDID("$FreeBSD$");
 #include <sys/counter.h>
 #include <sys/kernel.h>
 #include <sys/limits.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/sched.h>
 #include <sys/smp.h>
 #include <sys/smr.h>
 #include <sys/sysctl.h>
+#include <sys/turnstile.h>
 
 #include <vm/uma.h>
 
@@ -173,7 +177,8 @@ static counter_u64_t poll = EARLY_COUNTER;
 SYSCTL_COUNTER_U64(_debug_smr, OID_AUTO, poll, CTLFLAG_RD, &poll, "");
 static counter_u64_t poll_scan = EARLY_COUNTER;
 SYSCTL_COUNTER_U64(_debug_smr, OID_AUTO, poll_scan, CTLFLAG_RD, &poll_scan, "");
-
+static counter_u64_t poll_block = EARLY_COUNTER;
+SYSCTL_COUNTER_U64(_debug_smr, OID_AUTO, poll_block, CTLFLAG_RD, &poll_block, "");
 
 /*
  * Advance the write sequence and return the new value for use as the
@@ -252,6 +257,24 @@ smr_advance_deferred(smr_t smr, int limit)
 	return (smr_advance(smr));
 }
 
+void
+smr_exit_wakeup(smr_t smr, smr_tracker_t t)
+{
+	struct turnstile *ts;
+
+	KASSERT(curthread->td_pinned > 0,
+	    ("%s: thread not pinned", __func__));
+
+	mtx_lock(&smr->c_lock);
+	turnstile_chain_lock(&smr->c_lo);
+	ts = turnstile_lookup(&smr->c_lo);
+	turnstile_broadcast(ts, TS_EXCLUSIVE_QUEUE);
+	turnstile_unpend(ts);
+	turnstile_chain_unlock(&smr->c_lo);
+	_smr_exit_preempt(smr, t);
+	mtx_unlock(&smr->c_lock);
+}
+
 /*
  * Poll to determine whether all readers have observed the 'goal' write
  * sequence number.
@@ -267,6 +290,8 @@ smr_advance_deferred(smr_t smr, int limit)
 bool
 smr_poll(smr_t smr, smr_seq_t goal, bool wait)
 {
+	struct thread *td;
+	struct turnstile *ts;
 	smr_shared_t s;
 	smr_t c;
 	smr_seq_t s_wr_seq, s_rd_seq, rd_seq, c_seq;
@@ -374,7 +399,45 @@ smr_poll(smr_t smr, smr_seq_t goal, bool wait)
 				success = false;
 				break;
 			}
-			cpu_spinwait();
+
+			/*
+			 * Check for a thread that has been switched out while
+			 * executing its section.
+			 */
+			td = atomic_load_ptr(&c->c_tail->st_td);
+			if (__predict_true(td == NULL ||
+			    (td != SMR_BLOCKED && TD_IS_RUNNING(td)))) {
+				cpu_spinwait();
+				continue;
+			}
+			critical_exit();
+
+			mtx_lock(&c->c_lock);
+			td = atomic_load_ptr(&c->c_tail->st_td);
+			if (td != SMR_BLOCKED) {
+				thread_lock(td);
+				if (__predict_false(TD_IS_RUNNING(td) ||
+				    td != atomic_load_ptr(&c->c_tail->st_td))) {
+					thread_unlock(td);
+					mtx_unlock(&c->c_lock);
+					cpu_spinwait();
+					continue;
+				}
+
+				/*
+				 * Make sure that the thread takes the slow path
+				 * out of smr_exit_preempt().  It may come back
+				 * on-CPU at any point after the thread lock is
+				 * dropped.
+				 */
+				c->c_tail->st_td = SMR_BLOCKED;
+				thread_unlock(td);
+			}
+			ts = turnstile_trywait(&c->c_lo);
+			mtx_unlock(&c->c_lock);
+			turnstile_wait(ts, td, TS_EXCLUSIVE_QUEUE);
+
+			critical_enter();
 		}
 
 		/*
@@ -424,6 +487,14 @@ smr_create(const char *name)
 		c = zpcpu_get_cpu(smr, i);
 		c->c_seq = SMR_SEQ_INVALID;
 		c->c_shared = s;
+
+		c->c_q.st_seq = SMR_SEQ_INVALID;
+		c->c_q.st_td = NULL;
+		c->c_q.st_next = c->c_q.st_prev = &c->c_q;
+		c->c_head = c->c_tail = NULL;
+
+		mtx_init(&c->c_lock, "smr", NULL, MTX_DEF);
+		c->c_lo.lo_name = name;
 	}
 	atomic_thread_fence_seq_cst();
 

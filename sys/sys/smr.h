@@ -31,6 +31,7 @@
 #ifndef _SYS_SMR_H_
 #define	_SYS_SMR_H_
 
+#include <sys/_mutex.h>
 #include <sys/_smr.h>
 
 /*
@@ -53,6 +54,15 @@
 
 #define	SMR_SEQ_INVALID		0
 
+struct thread;
+
+struct smr_tracker {
+	smr_seq_t	st_seq;
+	struct thread	*st_td;
+	struct smr_tracker *st_prev, *st_next;
+};
+typedef struct smr_tracker *smr_tracker_t;
+
 /* Shared SMR state. */
 struct smr_shared {
 	const char	*s_name;	/* Name for debugging/reporting. */
@@ -66,6 +76,11 @@ struct smr {
 	smr_seq_t	c_seq;		/* Current observed sequence. */
 	smr_shared_t	c_shared;	/* Shared SMR state. */
 	int		c_deferred;	/* Deferred advance counter. */
+
+	smr_tracker_t	c_head, c_tail;
+	struct smr_tracker c_q;
+	struct lock_object c_lo;
+	struct mtx	c_lock;
 };
 
 #define	SMR_ENTERED(smr)						\
@@ -76,6 +91,36 @@ struct smr {
 
 #define	SMR_ASSERT_NOT_ENTERED(smr)					\
     KASSERT(!SMR_ENTERED(smr), ("In smr section."));
+
+/*
+ * Advances the write sequence number.  Returns the sequence number
+ * required to ensure that all modifications are visible to readers.
+ */
+smr_seq_t smr_advance(smr_t smr);
+
+/*
+ * Advances the write sequence number only after N calls.  Returns
+ * the correct goal for a wr_seq that has not yet occurred.  Used to
+ * minimize shared cacheline invalidations for frequent writers.
+ */
+smr_seq_t smr_advance_deferred(smr_t smr, int limit);
+
+/*
+ * Slow path for smr_exit_preempt().  Wakes up pollers that have propagated
+ * priority to a reader in an effort to advance the read sequence.
+ */
+void smr_exit_wakeup(smr_t smr, smr_tracker_t t);
+#define	SMR_BLOCKED	((struct thread *)1ul)
+
+/*
+ * Returns true if a goal sequence has been reached.  If
+ * wait is true this will busy loop until success.
+ */
+bool smr_poll(smr_t smr, smr_seq_t goal, bool wait);
+
+/* Create a new SMR context. */
+smr_t smr_create(const char *name);
+void smr_destroy(smr_t smr);
 
 /*
  * Return the current write sequence number.
@@ -150,28 +195,56 @@ smr_exit(smr_t smr)
 	critical_exit();
 }
 
-/*
- * Advances the write sequence number.  Returns the sequence number
- * required to ensure that all modifications are visible to readers.
- */
-smr_seq_t smr_advance(smr_t smr);
+static inline void
+smr_enter_preempt(smr_t smr, smr_tracker_t t)
+{
+	struct thread *td;
 
-/*
- * Advances the write sequence number only after N calls.  Returns
- * the correct goal for a wr_seq that has not yet occurred.  Used to
- * minimize shared cacheline invalidations for frequent writers.
- */
-smr_seq_t smr_advance_deferred(smr_t smr, int limit);
+	td = curthread;
+	t->st_td = td;
 
-/*
- * Returns true if a goal sequence has been reached.  If
- * wait is true this will busy loop until success.
- */
-bool smr_poll(smr_t smr, smr_seq_t goal, bool wait);
+	critical_enter();
+	smr = zpcpu_get(smr);
 
-/* Create a new SMR context. */
-smr_t smr_create(const char *name);
-void smr_destroy(smr_t smr);
+	t->st_seq = smr_shared_current(smr->c_shared);
+
+	t->st_next = &smr->c_q;
+	t->st_prev = smr->c_tail;
+	smr->c_tail->st_next = t;
+	smr->c_tail = t;
+
+	atomic_store_rel_int(&smr->c_seq, t->st_seq);
+	atomic_thread_fence_seq_cst();
+
+	sched_pin();
+	td->td_critnest--;
+}
+
+static inline void
+_smr_exit_preempt(smr_t smr, smr_tracker_t t)
+{
+
+	critical_enter();
+	sched_unpin();
+
+	t->st_next->st_prev = t->st_prev;
+	t->st_prev->st_next = t->st_next;
+
+	atomic_store_rel_int(&smr->c_seq, smr->c_tail->st_seq);
+	critical_exit();
+}
+
+static inline void
+smr_exit_preempt(smr_t smr, smr_tracker_t t)
+{
+
+	smr = zpcpu_get(smr);
+	if (__predict_false(t->st_td == SMR_BLOCKED)) {
+		smr_exit_wakeup(smr, t);
+		return;
+	}
+	_smr_exit_preempt(smr, t);
+}
 
 /*
  * Blocking wait for all readers to observe 'goal'.
