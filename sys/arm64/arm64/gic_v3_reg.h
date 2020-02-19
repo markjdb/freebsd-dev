@@ -55,6 +55,13 @@
 #define	GIC_LAST_SPI		(1019)
 /* Numbers for local peripheral interrupts */
 #define	GIC_FIRST_LPI		(8192)
+/* GICD_CTLR */
+#define	 GICD_CTLR_G1		(1 << 0)
+#define	 GICD_CTLR_G1A		(1 << 1)
+#define	 GICD_CTLR_ARE_NS	(1 << 4)
+#define	 GICD_CTLR_RWP		(1 << 31)
+/* GICD_TYPER */
+#define	 GICD_TYPER_IDBITS(n)	((((n) >> 19) & 0x1F) + 1)
 
 /*
  * Registers (v2/v3)
@@ -99,6 +106,18 @@
 #define	GICR_PIDR2_ARCH_MASK	(0xF0)
 #define	GICR_PIDR2_ARCH_GICv3	(0x30)
 #define	GICR_PIDR2_ARCH_GICv4	(0x40)
+#define	GICD_PIDR4		0xFFD0
+#define	GICD_PIDR5		0xFFD4
+#define	GICD_PIDR6		0xFFD8
+#define	GICD_PIDR7		0xFFDC
+#define	GICD_PIDR0		0xFFE0
+#define	GICD_PIDR1		0xFFE4
+
+#define	GICR_PIDR2_ARCH_SHIFT	4
+#define	GICR_PIDR2_ARCH(x)				\
+    (((x) & GICR_PIDR2_ARCH_MASK) >> GICR_PIDR2_ARCH_SHIFT)
+
+#define	GICD_PIDR3		0xFFEC
 
 /* Redistributor registers */
 #define	GICR_CTLR		GICD_CTLR
@@ -205,12 +224,20 @@
 #define	GICR_VLPI_BASE_SIZE	PAGE_SIZE_64K
 #define	GICR_RESERVED_SIZE	PAGE_SIZE_64K
 
+#define	GICR_IGROUPR0				(0x0080)
 #define	GICR_ISENABLER0				(0x0100)
 #define	GICR_ICENABLER0				(0x0180)
 #define		GICR_I_ENABLER_SGI_MASK		(0x0000FFFF)
 #define		GICR_I_ENABLER_PPI_MASK		(0xFFFF0000)
 
 #define		GICR_I_PER_IPRIORITYn		(GICD_I_PER_IPRIORITYn)
+
+#define	GICD_IGROUPR(n)		(0x0080 + (((n) >> 5) * 4))	/* v1 ICDISER */
+#define	 GICD_I_PER_IGROUPRn	32
+#define	GICD_ISPENDR(n)		(0x0200 + (((n) >> 5) * 4))	/* v1 ICDISPR */
+#define	GICD_ICPENDR(n)		(0x0280 + (((n) >> 5) * 4))	/* v1 ICDICPR */
+#define	GICD_ICACTIVER(n)	(0x0380 + (((n) >> 5) * 4))	/* v1 ICDABR */
+#define	GICD_ITARGETSR(n)	(0x0800 + (((n) >> 2) * 4))	/* v1 ICDIPTR */
 
 /* ITS registers */
 #define	GITS_PIDR2		GICR_PIDR2

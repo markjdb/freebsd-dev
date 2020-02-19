@@ -253,7 +253,7 @@ int bus_dmamap_load_ma_triv(bus_dma_tag_t dmat, bus_dmamap_t map,
  *     <machine/bus_dma.h> for the sparc64 arch contains the equivalent
  *     declarations.
  */
-#if !defined(__sparc64__)
+#if !defined(__sparc64__) && !defined(__aarch64__)
 
 /*
  * Allocate a handle for mapping from kva/uva/physical

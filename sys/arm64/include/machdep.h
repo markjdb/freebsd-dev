@@ -37,10 +37,19 @@ struct arm64_bootparams {
 	vm_offset_t	kern_l0pt;	/* L1 page table for the kernel */
 };
 
-extern vm_paddr_t physmap[];
-extern u_int physmap_idx;
+enum arm64_bus {
+	ARM64_BUS_NONE,
+	ARM64_BUS_FDT,
+	ARM64_BUS_ACPI,
+};
 
+extern enum arm64_bus arm64_bus_method;
+
+void dbg_init(void);
 void initarm(struct arm64_bootparams *);
 extern void (*pagezero)(void *);
+
+void parse_fdt_bootargs(void);
+vm_offset_t parse_boot_param(struct arm64_bootparams *);
 
 #endif /* _MACHINE_MACHDEP_H_ */

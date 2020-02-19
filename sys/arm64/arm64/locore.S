@@ -167,7 +167,7 @@ ENTRY(mpentry)
 	bl	drop_to_el1
 
 	/* Set the context id */
-	msr	contextidr_el1, x1
+	msr	contextidr_el1, xzr
 
 	/* Load the kernel page table */
 	adr	x24, pagetable_l0_ttbr1
@@ -617,19 +617,23 @@ start_mmu:
 
 	.align 3
 mair:
-		/* Device            Normal, no cache     Normal, write-back */
-	.quad	MAIR_ATTR(0x00, 0) | MAIR_ATTR(0x44, 1) | MAIR_ATTR(0xff, 2)
+	.quad	MAIR_ATTR(MAIR_DEVICE_nGnRnE, 0) |	\
+		MAIR_ATTR(MAIR_NORMAL_NC, 1) |		\
+		MAIR_ATTR(MAIR_NORMAL_WB, 2) |		\
+		MAIR_ATTR(MAIR_NORMAL_WT, 3)
 tcr:
 	.quad (TCR_TxSZ(64 - VIRT_BITS) | TCR_ASID_16 | TCR_TG1_4K | \
 	    TCR_CACHE_ATTRS | TCR_SMP_ATTRS)
 sctlr_set:
 	/* Bits to set */
-	.quad (SCTLR_UCI | SCTLR_nTWE | SCTLR_nTWI | SCTLR_UCT | SCTLR_DZE | \
-	    SCTLR_I | SCTLR_SED | SCTLR_SA0 | SCTLR_SA | SCTLR_C | SCTLR_M)
+	.quad (SCTLR_LSMAOE | SCTLR_nTLSMD | SCTLR_UCI | SCTLR_SPAN | \
+	    SCTLR_nTWE | SCTLR_nTWI | SCTLR_UCT | SCTLR_DZE | \
+	    SCTLR_I | SCTLR_SED | SCTLR_SA0 | SCTLR_SA | SCTLR_C | \
+	    SCTLR_M | SCTLR_CP15BEN)
 sctlr_clear:
 	/* Bits to clear */
-	.quad (SCTLR_EE | SCTLR_EOE | SCTLR_WXN | SCTLR_UMA | SCTLR_ITD | \
-	    SCTLR_THEE | SCTLR_CP15BEN | SCTLR_A)
+	.quad (SCTLR_EE | SCTLR_EOE | SCTLR_IESB | SCTLR_WXN | SCTLR_UMA | \
+	    SCTLR_ITD | SCTLR_A)
 
 	.globl abort
 abort:
@@ -695,3 +699,21 @@ esigcode:
 	.global	szsigcode
 szsigcode:
 	.quad	esigcode - sigcode
+
+ENTRY(aarch32_sigcode)
+	.word 0xe1a0000d	// mov r0, sp
+	.word 0xe2800040	// add r0, r0, #SIGF_UC
+	.word 0xe59f700c	// ldr r7, [pc, #12]
+	.word 0xef000000	// swi #0
+	.word 0xe59f7008	// ldr r7, [pc, #8]
+	.word 0xef000000	// swi #0
+	.word 0xeafffffa	// b . - 16
+END(aarch32_sigcode)
+	.word SYS_sigreturn
+	.word SYS_exit
+	.align	3
+aarch32_esigcode:
+	.data
+	.global sz_aarch32_sigcode
+sz_aarch32_sigcode:
+	.quad aarch32_esigcode - aarch32_sigcode

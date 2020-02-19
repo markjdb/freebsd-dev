@@ -18,7 +18,7 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -30,29 +30,52 @@
  * $FreeBSD$
  */
 
-#ifndef __ARM64_INCLUDE_EFI_H_
-#define __ARM64_INCLUDE_EFI_H_
+#ifndef _MACHINE__UNDEFINED_H_
+#define	_MACHINE__UNDEFINED_H_
 
-#define	EFIABI_ATTR
+typedef int (*undef_handler_t)(vm_offset_t, uint32_t, struct trapframe *,
+    uint32_t);
 
-#ifdef _KERNEL
-#define	EFI_TIME_LOCK()
-#define	EFI_TIME_UNLOCK()
-#define	EFI_TIME_OWNED()
+#define	MRS_MASK			0xfff00000
+#define	MRS_VALUE			0xd5300000
+#define	MRS_SPECIAL(insn)		((insn) & 0x000fffe0)
+#define	MRS_REGISTER(insn)		((insn) & 0x0000001f)
+#define	 MRS_Op0_SHIFT			19
+#define	 MRS_Op0_MASK			0x00080000
+#define	 MRS_Op1_SHIFT			16
+#define	 MRS_Op1_MASK			0x00070000
+#define	 MRS_CRn_SHIFT			12
+#define	 MRS_CRn_MASK			0x0000f000
+#define	 MRS_CRm_SHIFT			8
+#define	 MRS_CRm_MASK			0x00000f00
+#define	 MRS_Op2_SHIFT			5
+#define	 MRS_Op2_MASK			0x000000e0
+#define	 MRS_Rt_SHIFT			0
+#define	 MRS_Rt_MASK			0x0000001f
 
-#define	EFI_RT_HANDLE_FAULTS_DEFAULT	0
+static inline int
+mrs_Op0(uint32_t insn)
+{
+
+	/* op0 is encoded without the top bit in a mrs instruction */
+	return (2 | ((insn & MRS_Op0_MASK) >> MRS_Op0_SHIFT));
+}
+
+#define	MRS_GET(op)						\
+static inline int						\
+mrs_##op(uint32_t insn)						\
+{								\
+								\
+	return ((insn & MRS_##op##_MASK) >> MRS_##op##_SHIFT);	\
+}
+MRS_GET(Op1)
+MRS_GET(CRn)
+MRS_GET(CRm)
+MRS_GET(Op2)
+
+void undef_init(void);
+void *install_undef_handler(bool, undef_handler_t);
+void remove_undef_handler(void *);
+int undef_insn(u_int, struct trapframe *);
+
 #endif
-
-struct efirt_callinfo {
-	const char	*ec_name;
-	register_t	ec_efi_status;
-	register_t	ec_fptr;
-	register_t	ec_argcnt;
-	register_t	ec_arg1;
-	register_t	ec_arg2;
-	register_t	ec_arg3;
-	register_t	ec_arg4;
-	register_t	ec_arg5;
-};
-
-#endif /* __ARM64_INCLUDE_EFI_H_ */

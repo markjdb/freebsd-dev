@@ -123,6 +123,7 @@ gic_v3_fdt_attach(device_t dev)
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
+	sc->gic_bus = GIC_BUS_FDT;
 
 	/*
 	 * Recover number of the Re-Distributor regions.
@@ -144,6 +145,9 @@ gic_v3_fdt_attach(device_t dev)
 		err = ENXIO;
 		goto error;
 	}
+
+	/* Register xref */
+	OF_device_register_xref(xref, dev);
 
 	if (intr_pic_claim_root(dev, xref, arm_gic_v3_intr, sc,
 	    GIC_LAST_SGI - GIC_FIRST_SGI + 1) != 0) {
@@ -181,6 +185,7 @@ error:
 
 /* OFW bus interface */
 struct gic_v3_ofw_devinfo {
+	struct gic_v3_devinfo	di_gic_dinfo;
 	struct ofw_bus_devinfo	di_dinfo;
 	struct resource_list	di_rl;
 };
@@ -260,10 +265,12 @@ static int
 gic_v3_ofw_bus_attach(device_t dev)
 {
 	struct gic_v3_ofw_devinfo *di;
+	struct gic_v3_softc *sc;
 	device_t child;
 	phandle_t parent, node;
 	pcell_t addr_cells, size_cells;
 
+	sc = device_get_softc(dev);
 	parent = ofw_bus_get_node(dev);
 	if (parent > 0) {
 		addr_cells = 2;
@@ -276,6 +283,14 @@ gic_v3_ofw_bus_attach(device_t dev)
 		for (node = OF_child(parent); node > 0; node = OF_peer(node)) {
 			/* Allocate and populate devinfo. */
 			di = malloc(sizeof(*di), M_GIC_V3, M_WAITOK | M_ZERO);
+
+			/* Read the numa node, or -1 if there is none */
+			if (OF_getencprop(node, "numa-node-id",
+			    &di->di_gic_dinfo.gic_domain,
+			    sizeof(di->di_gic_dinfo.gic_domain)) <= 0) {
+				di->di_gic_dinfo.gic_domain = -1;
+			}
+
 			if (ofw_bus_gen_setup_devinfo(&di->di_dinfo, node)) {
 				if (bootverbose) {
 					device_printf(dev,
@@ -306,6 +321,7 @@ gic_v3_ofw_bus_attach(device_t dev)
 				continue;
 			}
 
+			sc->gic_nchildren++;
 			device_set_ivars(child, di);
 		}
 	}

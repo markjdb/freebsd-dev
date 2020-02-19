@@ -36,7 +36,10 @@
 #include <sys/elf32.h>	/* Definitions common to all 32 bit architectures. */
 #include <sys/elf64.h>	/* Definitions common to all 64 bit architectures. */
 
+#ifndef __ELF_WORD_SIZE
 #define	__ELF_WORD_SIZE	64	/* Used by <sys/elf_generic.h> */
+#endif
+
 #include <sys/elf_generic.h>
 
 /*
@@ -61,6 +64,7 @@ typedef struct {	/* Auxiliary vector entry on initial stack */
 
 __ElfType(Auxinfo);
 
+#define	ELF_ARCH32	EM_ARM
 #define	ELF_ARCH	EM_AARCH64
 
 #define	ELF_MACHINE_OK(x) ((x) == (ELF_ARCH))
@@ -94,11 +98,22 @@ __ElfType(Auxinfo);
 #define	AT_COUNT	24	/* Count of defined aux entry types. */
 
 /* Define "machine" characteristics */
+#if __ELF_WORD_SIZE == 64
 #define	ELF_TARG_CLASS	ELFCLASS64
 #define	ELF_TARG_DATA	ELFDATA2LSB
 #define	ELF_TARG_MACH	EM_AARCH64
 #define	ELF_TARG_VER	1
+#else
+#define	ELF_TARG_CLASS	ELFCLASS32
+#define	ELF_TARG_DATA	ELFDATA2LSB
+#define	ELF_TARG_MACH	EM_ARM
+#define	ELF_TARG_VER	1
+#endif
 
+#if __ELF_WORD_SIZE == 32
+#define	ET_DYN_LOAD_ADDR 0x12000
+#else
 #define	ET_DYN_LOAD_ADDR 0x100000
+#endif
 
 #endif /* !_MACHINE_ELF_H_ */
