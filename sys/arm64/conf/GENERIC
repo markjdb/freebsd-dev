@@ -49,7 +49,7 @@ options 	PSEUDOFS		# Pseudo-filesystem framework
 options 	GEOM_PART_GPT		# GUID Partition Tables.
 options 	GEOM_RAID		# Soft RAID functionality.
 options 	GEOM_LABEL		# Provides labelization
-options 	COMPAT_FREEBSD32	# Compatible with FreeBSD/arm
+#options 	COMPAT_FREEBSD32	# Compatible with FreeBSD/arm
 options 	SCSI_DELAY=5000		# Delay (in ms) before probing SCSI
 options 	KTRACE			# ktrace(1) support
 options 	STACK			# stack(9) support
@@ -87,7 +87,7 @@ options 	WITNESS_SKIPSPIN	# Don't run witness on spinlocks for speed
 options 	MALLOC_DEBUG_MAXZONES=8	# Separate malloc(9) zones
 
 # SoC support
-options 	SOC_CAVM_THUNDERX
+#options 	SOC_CAVM_THUNDERX
 options 	SOC_HISI_HI6220
 
 # VirtIO support
