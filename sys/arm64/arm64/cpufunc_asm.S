@@ -33,7 +33,7 @@
 #include <machine/asm.h>
 #include <machine/param.h>
 
-#include "assym.inc"
+#include "assym.s"
 
 __FBSDID("$FreeBSD$");
 
