@@ -121,6 +121,15 @@ SYSCTL_ULONG(_vm, OID_AUTO, max_kernel_address, CTLFLAG_RD,
 #endif
     "Max kernel address");
 
+static SYSCTL_NODE(_vm_stats, OID_AUTO, kern, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+    "Kernel memory statistics");
+
+static counter_u64_t nofree_import_failures = EARLY_COUNTER;
+COUNTER_U64_SYSINIT(nofree_import_failures);
+SYSCTL_COUNTER_U64(_vm_stats_kern, OID_AUTO, nofree_import_failures,
+    CTLFLAG_RD, &nofree_import_failures,
+    "Number of failed M_STABLE imports");
+
 #if VM_NRESERVLEVEL > 0
 #define	KVA_QUANTUM_SHIFT	(VM_LEVEL_0_ORDER + PAGE_SHIFT)
 #else
@@ -169,6 +178,30 @@ kva_free(vm_offset_t addr, vm_size_t size)
 	vmem_free(kernel_arena, addr, size);
 }
 
+#if VM_NRESERVLEVEL > 0
+/*
+ *	Allocate kernel memory to satisfy a M_STABLE request, meaning that the
+ *	memory is expected never to be freed.  Such allocations are physically
+ *	contiguous so as to minimize fragmentation.
+ */
+static vm_offset_t
+kmem_alloc_nofree(int domain, vm_size_t size, u_long align, int flags)
+{
+	vm_offset_t addr;
+
+	KASSERT(size + align <= KVA_QUANTUM,
+	    ("%s: unhandled size %#lx and alignment %#lx",
+	    __func__, size, align));
+
+	if (vmem_xalloc(vm_dom[domain].vmd_kernel_nofree_arena, size, align,
+	    0, 0, VMEM_ADDR_MIN, VMEM_ADDR_MAX, flags | M_BESTFIT, &addr) != 0)
+		return (0);
+	if ((flags & M_ZERO) != 0)
+		memset((void *)addr, 0, size);
+	return (addr);
+}
+#endif
+
 /*
  *	Allocates a region from the kernel address map and physical pages
  *	within the specified address range to the kernel object.  Creates a
@@ -188,8 +221,8 @@ kmem_alloc_attr_domain(int domain, vm_size_t size, int flags, vm_paddr_t low,
 	int pflags, tries;
 	vm_prot_t prot;
 
-	KASSERT((flags & M_EXEC) == 0,
-	    ("%s: M_EXEC is not supported", __func__));
+	KASSERT((flags & M_STABLE) == 0,
+	    ("%s: does not handle M_STABLE allocations", __func__));
 
 	size = round_page(size);
 	vmem = vm_dom[domain].vmd_kernel_arena;
@@ -276,7 +309,7 @@ kmem_alloc_contig_domain(int domain, vm_size_t size, int flags, vm_paddr_t low,
     vm_memattr_t memattr)
 {
 	vmem_t *vmem;
-	vm_object_t object = kernel_object;
+	vm_object_t object;
 	vm_offset_t addr, offset, tmp;
 	vm_page_t end_m, m;
 	u_long npages;
@@ -286,6 +319,17 @@ kmem_alloc_contig_domain(int domain, vm_size_t size, int flags, vm_paddr_t low,
 	    ("%s: M_EXEC is not supported", __func__));
  
 	size = round_page(size);
+	if ((flags & M_STABLE) != 0) {
+		flags &= ~M_STABLE;
+#if VM_NRESERVLEVEL > 0
+		if (low == 0 && high == ~(vm_paddr_t)0 && boundary == 0) {
+			addr = kmem_alloc_nofree(domain, size, alignment,
+			    flags);
+			if (addr != 0)
+				return (addr);
+		}
+#endif
+	}
 	vmem = vm_dom[domain].vmd_kernel_arena;
 	if (vmem_alloc(vmem, size, flags | M_BESTFIT, &addr))
 		return (0);
@@ -294,6 +338,7 @@ kmem_alloc_contig_domain(int domain, vm_size_t size, int flags, vm_paddr_t low,
 	pflags &= ~(VM_ALLOC_NOWAIT | VM_ALLOC_WAITOK | VM_ALLOC_WAITFAIL);
 	pflags |= VM_ALLOC_NOWAIT;
 	npages = atop(size);
+	object = kernel_object;
 	VM_OBJECT_WLOCK(object);
 	tries = 0;
 retry:
@@ -408,15 +453,20 @@ kmem_malloc_domain(int domain, vm_size_t size, int flags)
 	vm_offset_t addr;
 	int rv;
 
-#if VM_NRESERVLEVEL > 0
-	if (__predict_true((flags & M_EXEC) == 0))
-		arena = vm_dom[domain].vmd_kernel_arena;
-	else
-		arena = vm_dom[domain].vmd_kernel_rwx_arena;
-#else
-	arena = vm_dom[domain].vmd_kernel_arena;
-#endif
 	size = round_page(size);
+	if (__predict_true((flags & (M_EXEC | M_STABLE)) == 0))
+		arena = vm_dom[domain].vmd_kernel_arena;
+	else if ((flags & M_EXEC) != 0)
+		arena = vm_dom[domain].vmd_kernel_rwx_arena;
+	else {
+		flags &= ~M_STABLE;
+#if VM_NRESERVLEVEL > 0
+		addr = kmem_alloc_nofree(domain, size, PAGE_SIZE, flags);
+		if (addr != 0)
+			return (addr);
+#endif
+		arena = vm_dom[domain].vmd_kernel_arena;
+	}
 	if (vmem_alloc(arena, size, flags | M_BESTFIT, &addr))
 		return (0);
 
@@ -468,7 +518,9 @@ kmem_back_domain(int domain, vm_object_t object, vm_offset_t addr,
 	int pflags;
 
 	KASSERT(object == kernel_object,
-	    ("kmem_back_domain: only supports kernel object."));
+	    ("%s: only supports kernel object", __func__));
+	KASSERT((flags & M_STABLE) == 0,
+	    ("%s: does not handle M_STABLE allocations", __func__));
 
 	offset = addr - VM_MIN_KERNEL_ADDRESS;
 	pflags = malloc2vm_flags(flags) | VM_ALLOC_WIRED;
@@ -507,10 +559,8 @@ retry:
 		vm_page_valid(m);
 		pmap_enter(kernel_pmap, addr + i, m, prot,
 		    prot | PMAP_ENTER_WIRED, 0);
-#if VM_NRESERVLEVEL > 0
 		if (__predict_false((prot & VM_PROT_EXECUTE) != 0))
 			m->oflags |= VPO_KMEM_EXEC;
-#endif
 	}
 	VM_OBJECT_WUNLOCK(object);
 
@@ -584,14 +634,10 @@ _kmem_unback(vm_object_t object, vm_offset_t addr, vm_size_t size)
 	VM_OBJECT_WLOCK(object);
 	m = vm_page_lookup(object, atop(offset)); 
 	domain = vm_phys_domain(m);
-#if VM_NRESERVLEVEL > 0
 	if (__predict_true((m->oflags & VPO_KMEM_EXEC) == 0))
 		arena = vm_dom[domain].vmd_kernel_arena;
 	else
 		arena = vm_dom[domain].vmd_kernel_rwx_arena;
-#else
-	arena = vm_dom[domain].vmd_kernel_arena;
-#endif
 	for (; offset < end; offset += PAGE_SIZE, m = next) {
 		next = vm_page_next(m);
 		vm_page_xbusy_claim(m);
@@ -742,11 +788,36 @@ kva_import_domain(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
 {
 
 	KASSERT((size % KVA_QUANTUM) == 0,
-	    ("kva_import_domain: Size %jd is not a multiple of %d",
+	    ("%s: Size %jd is not a multiple of %d", __func__,
 	    (intmax_t)size, (int)KVA_QUANTUM));
 	return (vmem_xalloc(arena, size, KVA_QUANTUM, 0, 0, VMEM_ADDR_MIN,
 	    VMEM_ADDR_MAX, flags, addrp));
 }
+
+#if VM_NRESERVLEVEL > 0
+static int
+kva_import_nofree(void *arg, vmem_size_t size, int flags, vmem_addr_t *addrp)
+{
+	int domain;
+
+	domain = (int)(uintptr_t)arg;
+	KASSERT(domain >= 0 && domain < vm_ndomains,
+	    ("%s: Invalid domain index %d", __func__, domain));
+	KASSERT((size % KVA_QUANTUM) == 0,
+	    ("%s: Size %jd is not a multiple of %d", __func__,
+	    (intmax_t)size, (int)KVA_QUANTUM));
+
+	/* XXX this does not necessarily give suitably aligned KVA */
+	*addrp = (vmem_addr_t)kmem_alloc_contig_domain(domain, size, flags,
+	    0, ~(vm_paddr_t)0, KVA_QUANTUM, 0, VM_MEMATTR_DEFAULT);
+	if (*addrp == 0) {
+		counter_u64_add(nofree_import_failures, 1);
+		return (ENOMEM);
+	} else {
+		return (0);
+	}
+}
+#endif
 
 /*
  * 	kmem_init:
@@ -810,9 +881,13 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 
 		/*
 		 * In architectures with superpages, maintain separate arenas
-		 * for allocations with permissions that differ from the
-		 * "standard" read/write permissions used for kernel memory,
-		 * so as not to inhibit superpage promotion.
+		 * for
+		 * 1) allocations with permissions that differ from the
+		 *    "standard" read/write permissions used for kernel memory,
+		 *    and
+		 * 2) allocations which are never going to be freed.
+		 *
+		 * This helps minimize fragmentation of physical memory.
 		 */
 #if VM_NRESERVLEVEL > 0
 		vm_dom[domain].vmd_kernel_rwx_arena = vmem_create(
@@ -820,6 +895,14 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 		vmem_set_import(vm_dom[domain].vmd_kernel_rwx_arena,
 		    kva_import_domain, (vmem_release_t *)vmem_xfree,
 		    kernel_arena, KVA_QUANTUM);
+		vm_dom[domain].vmd_kernel_nofree_arena = vmem_create(
+		    "kernel nofree arena domain", 0, 0, PAGE_SIZE, 0, M_WAITOK);
+		vmem_set_import(vm_dom[domain].vmd_kernel_nofree_arena,
+		    kva_import_nofree, (vmem_release_t *)vmem_xfree,
+		    (void *)(uintptr_t)domain, KVA_QUANTUM);
+#else
+		vm_dom[domain].vmd_kernel_rwx_arena = kernel_arena;
+		vm_dom[domain].vmd_kernel_nofree_arena = kernel_arena;
 #endif
 	}
 

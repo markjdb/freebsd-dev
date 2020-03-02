@@ -242,8 +242,9 @@ struct vm_domain {
 		int pool;
 		uma_zone_t zone;
 	} vmd_pgcache[VM_NFREEPOOL];
-	struct vmem *vmd_kernel_arena;	/* (c) per-domain kva R/W arena. */
-	struct vmem *vmd_kernel_rwx_arena; /* (c) per-domain kva R/W/X arena. */
+	struct vmem *vmd_kernel_arena;	/* (c) per-domain KVA */
+	struct vmem *vmd_kernel_rwx_arena; /* (c) per-domain RWX KVA */
+	struct vmem *vmd_kernel_nofree_arena; /* (c) per-domain nofree KVA */
 	u_int vmd_domain;		/* (c) Domain number. */
 	u_int vmd_page_count;		/* (c) Total page count. */
 	long vmd_segs;			/* (c) bitmask of the segments */
