@@ -78,6 +78,9 @@ __FBSDID("$FreeBSD$");
 #include <machine/md_var.h>
 #include <machine/pcb.h>
 #include <machine/reg.h>
+#ifdef RESCUE
+#include <machine/rescue.h>
+#endif
 #include <machine/undefined.h>
 #include <machine/vmparam.h>
 
@@ -888,6 +891,87 @@ print_efi_map_entries(struct efi_map_header *efihdr)
 	foreach_efi_map_entry(efihdr, print_efi_map_entry);
 }
 
+#ifdef RESCUE
+static vm_offset_t
+preload_add_string(vm_offset_t dst, int type, const char *s)
+{
+	uint32_t *data, len;
+
+	data = (uint32_t *)dst;
+	len = strlen(s) + 1;
+
+	*data++ = type;
+	*data++ = len;
+	strcpy((void *)data, s);
+	return (roundup2((vm_offset_t)data + len, sizeof(long)));
+}
+
+static vm_offset_t
+preload_add_u64(vm_offset_t dst, int type, uint64_t val)
+{
+	uint32_t *data;
+
+	data = (uint32_t *)dst;
+
+	*data++ = type;
+	*data++ = sizeof(val);
+	memcpy(data, &val, sizeof(val));
+	return ((vm_offset_t)data + sizeof(val));
+}
+
+static void
+preload_add_terminator(vm_offset_t dst)
+{
+	memset((void *)dst, 0, sizeof(uint32_t) * 2);
+}
+
+/*
+ * Fake some preloaded metadata for the rescue kernel using parameters passed by
+ * the panicked kernel.
+ */
+void
+rescue_preload_init(struct arm64_bootparams *abp)
+{
+	extern u_long _end;
+	struct rescue_kernel_params *params;
+	vm_offset_t dtb, env, kernend, md, mdstart;
+
+	/*
+	 * Get the parameter structure, making use of the identity map loaded in
+	 * TTBR0.  This relies on locore using a L1 (1GB) block mapping.
+	 */
+	params = (void *)(KERNBASE - abp->kern_delta -
+	    RESCUE_RESERV_KERNEL_OFFSET);
+
+	/*
+	 * Copy the DTB and environment strings to memory following the kernel.
+	 * This ensures that they remain mapped after the pmap is bootstrapped.
+	 * This relies on locore providing some extra space in region following
+	 * the kernel mapped by TTBR1.
+	 */
+	dtb = round_page((uintptr_t)&_end);
+	memcpy((void *)dtb, (void *)params->kp_dtbstart, params->kp_dtblen);
+	env = round_page(dtb + params->kp_dtblen);
+	memcpy((void *)env, (void *)params->kp_kenvstart, params->kp_kenvlen);
+
+	md = mdstart = round_page(env + params->kp_kenvlen);
+	kernend = mdstart + PAGE_SIZE;
+
+	md = preload_add_string(md, MODINFO_NAME, "kernel");
+	md = preload_add_string(md, MODINFO_TYPE, "elf64 kernel");
+	md = preload_add_u64(md, MODINFO_ADDR, VM_MIN_KERNEL_ADDRESS);
+	md = preload_add_u64(md, MODINFO_SIZE, (uintptr_t)&_end - KERNBASE);
+	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_KERNEND, kernend);
+	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_DTBP, dtb);
+	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_ENVP, env);
+	preload_add_terminator(md);
+
+	rescue_dumper_init(&params->kp_dumpparams);
+
+	abp->modulep = mdstart;
+}
+#endif /* RESCUE */
+
 #ifdef FDT
 static void
 try_load_dtb(caddr_t kmdp)
@@ -1012,6 +1096,16 @@ initarm(struct arm64_bootparams *abp)
 	vm_offset_t lastaddr;
 	caddr_t kmdp;
 	bool valid;
+
+#ifdef RESCUE
+	/*
+	 * The rescue kernel runs without any module metadata.  The panicked
+	 * kernel could provide it, but some variables, like the size of the
+	 * loaded rescue kernel, can't easily be determined there.  So, fake it
+	 * here.
+	 */
+	rescue_preload_init(abp);
+#endif
 
 	/* Set the module data location */
 	preload_metadata = (caddr_t)(uintptr_t)(abp->modulep);

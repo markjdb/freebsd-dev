@@ -1,0 +1,25 @@
+#!/rescue/sh
+
+set -x
+
+export PATH=/rescue
+
+rootfs=$(kenv rescue_rootfs)
+if [ -z "$rootfs" ]; then
+    echo "rc: failed to locate root filesystem" >&2
+    exit 1
+fi
+mountdir=/mnt
+destfile=${mountdir}/var/crash/vmcore
+
+fsck_ffs -fy $rootfs
+if [ $? -eq 16 ]; then
+    fsck_ffs -fy $rootfs
+fi
+
+set -e
+
+mount $rootfs $mountdir
+dd if=/dev/dumper of=${destfile} bs=1M
+umount $mountdir
+reboot

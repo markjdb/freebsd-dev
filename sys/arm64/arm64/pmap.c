@@ -167,14 +167,6 @@ __FBSDID("$FreeBSD$");
 #define PMAP_INLINE
 #endif
 
-/*
- * These are configured by the mair_el1 register. This is set up in locore.S
- */
-#define	DEVICE_MEMORY	0
-#define	UNCACHED_MEMORY	1
-#define	CACHED_MEMORY	2
-
-
 #ifdef PV_STATS
 #define PV_STAT(x)	do { x ; } while (0)
 #else

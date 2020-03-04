@@ -35,6 +35,8 @@ arm64/arm64/db_interface.c	optional	ddb
 arm64/arm64/db_trace.c		optional	ddb
 arm64/arm64/debug_monitor.c	optional	ddb
 arm64/arm64/disassem.c		optional	ddb
+arm64/arm64/rescue_dumper.c	optional	rescue
+arm64/arm64/rescue_machdep.c	optional	rescue_support
 arm64/arm64/dump_machdep.c	standard
 arm64/arm64/elf_machdep.c	standard
 arm64/arm64/exception.S		standard

@@ -1,0 +1,43 @@
+/set type=file uid=0 gid=0 mode=0755 nlink=1 flags=none
+.               type=dir nlink=8
+
+.snap           type=dir gid=5 mode=0775 nlink=2
+..
+
+
+dev             type=dir nlink=2
+..
+
+
+/set type=file uid=0 gid=0 mode=0644 nlink=1 flags=none
+etc             type=dir mode=0755 nlink=2
+    rc          size=385
+..
+
+
+mnt             type=dir mode=0755 nlink=2
+..
+
+
+/set type=file uid=0 gid=1001 mode=0755 nlink=1 flags=none
+rescue          type=dir gid=0 nlink=2
+    dd          nlink=15 size=6035760
+    fsck        nlink=15 size=6035760
+    fsck_ffs    nlink=15 size=6035760
+    init        nlink=15 size=6035760
+    kenv        nlink=15 size=6035760
+    ln          nlink=15 size=6035760
+    ls          nlink=15 size=6035760
+    mkdir       nlink=15 size=6035760
+    mount       nlink=15 size=6035760
+    reboot      nlink=15 size=6035760
+    rescue      nlink=15 size=6035760
+    rm          nlink=15 size=6035760
+    sh          nlink=15 size=6035760
+    sysctl      nlink=15 size=6035760
+    umount      nlink=15 size=6035760
+..
+
+
+sbin            type=dir gid=0 nlink=2
+..

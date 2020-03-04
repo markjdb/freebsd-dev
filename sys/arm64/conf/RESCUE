@@ -1,0 +1,16 @@
+include "./GENERIC"
+
+ident		RESCUE
+
+nooptions	RESCUE_SUPPORT
+nomakeoptions	RESCUE_EMBED
+makeoptions	RESCUE_EMBED="no"
+
+makeoptions	MFS_IMAGE=/root/rescue.img
+
+# Try to keep the rescue kernel small.
+options 	NO_SYSCTL_DESCR
+nooptions	WITNESS
+nooptions	SMP
+
+options 	RESCUE

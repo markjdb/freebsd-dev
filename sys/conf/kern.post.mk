@@ -398,6 +398,20 @@ embedfs_${MFS_IMAGE:T:R}.o: ${MFS_IMAGE}
 .endif
 .endif
 
+.if ${RESCUE_EMBED:Uno} != "no"
+rescue.o: ${RESCUE_EMBED}
+	${OBJCOPY} --input-target binary \
+	    --output-target ${EMBEDFS_FORMAT.${MACHINE_ARCH}} \
+	    --binary-architecture ${EMBEDFS_ARCH.${MACHINE_ARCH}} \
+	    ${RESCUE_EMBED} ${.TARGET}
+	${OBJCOPY} \
+	    --rename-section .data=rescue,contents,alloc,load,readonly,data \
+	    --redefine-sym _binary_${RESCUE_EMBED:C,[^[:alnum:]],_,g}_size=__rescue_kernel_size \
+	    --redefine-sym _binary_${RESCUE_EMBED:C,[^[:alnum:]],_,g}_start=__rescue_kernel_start \
+	    --redefine-sym _binary_${RESCUE_EMBED:C,[^[:alnum:]],_,g}_end=__rescue_kernel_end \
+	    ${.TARGET}
+.endif
+
 # XXX strictly, everything depends on Makefile because changes to ${PROF}
 # only appear there, but we don't handle that.
 
