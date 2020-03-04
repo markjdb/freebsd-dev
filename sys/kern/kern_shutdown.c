@@ -804,6 +804,8 @@ panic(const char *fmt, ...)
 	vpanic(fmt, ap);
 }
 
+void exec_rescue_kernel(void);
+
 void
 vpanic(const char *fmt, va_list ap)
 {

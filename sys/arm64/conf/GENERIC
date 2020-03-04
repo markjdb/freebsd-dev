@@ -87,6 +87,9 @@ options 	GZIO			# gzip-compressed kernel and user dumps
 options 	ZSTDIO			# zstd-compressed kernel and user dumps
 options 	NETDUMP			# netdump(4) client support
 
+options 	RESCUE_SUPPORT
+makeoptions 	RESCUE_EMBED=${.CURDIR}/../RESCUE/kernel
+
 # SoC support
 options 	SOC_ALLWINNER_A64
 options 	SOC_ALLWINNER_H5

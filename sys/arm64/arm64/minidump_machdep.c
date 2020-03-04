@@ -55,6 +55,9 @@ __FBSDID("$FreeBSD$");
 #include <machine/md_var.h>
 #include <machine/pte.h>
 #include <machine/minidump.h>
+#ifdef RESCUE_SUPPORT
+#include <machine/rescue.h>
+#endif
 
 CTASSERT(sizeof(struct kerneldumpheader) == 512);
 
@@ -207,6 +210,8 @@ blk_write(struct dumperinfo *di, char *ptr, vm_paddr_t pa, size_t sz)
 	return (0);
 }
 
+extern void rescue_kernel_exec(void);
+
 int
 minidumpsys(struct dumperinfo *di)
 {
@@ -271,6 +276,13 @@ minidumpsys(struct dumperinfo *di)
 		}
 	}
 	dumpsize += PAGE_SIZE;
+
+#ifdef RESCUE_SUPPORT
+	if (do_rescue_minidump) {
+		rescue_kernel_exec();
+		return (ENXIO);
+	}
+#endif
 
 	progress = dumpsize;
 

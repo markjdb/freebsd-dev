@@ -226,6 +226,9 @@ MD_ROOT_SIZE_CONFIGURED!=	grep MD_ROOT_SIZE opt_md.h || true ; echo
 SYSTEM_OBJS+= embedfs_${MFS_IMAGE:T:R}.o
 .endif
 .endif
+.if ${RESCUE_EMBED:Uno} != "no"
+SYSTEM_OBJS+= rescue.o
+.endif
 SYSTEM_LD= @${LD} -m ${LD_EMULATION} -Bdynamic -T ${LDSCRIPT} ${_LDFLAGS} \
 	--no-warn-mismatch --warn-common --export-dynamic \
 	--dynamic-linker /red/herring \
@@ -264,7 +267,7 @@ MKMODULESENV+=	__MPATH="${__MPATH}"
 # Architecture and output format arguments for objcopy to convert image to
 # object file
 
-.if ${MFS_IMAGE:Uno} != "no"
+.if ${MFS_IMAGE:Uno} != "no" || ${RESCUE_EMBED:Uno} != "no"
 .if empty(MD_ROOT_SIZE_CONFIGURED)
 .if !defined(EMBEDFS_FORMAT.${MACHINE_ARCH})
 EMBEDFS_FORMAT.${MACHINE_ARCH}!= awk -F'"' '/OUTPUT_FORMAT/ {print $$2}' ${LDSCRIPT}

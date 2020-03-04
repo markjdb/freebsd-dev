@@ -38,6 +38,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
+#include <sys/conf.h>
 #include <sys/cpu.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
@@ -54,6 +55,9 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/machdep.h>
 #include <machine/intr.h>
+#ifdef RESCUE_SUPPORT
+#include <machine/rescue.h>
+#endif
 #include <machine/smp.h>
 #ifdef VFP
 #include <machine/vfp.h>
@@ -430,6 +434,13 @@ ipi_stop(void *dummy __unused)
 	/* Wait for restart */
 	while (!CPU_ISSET(cpu, &started_cpus))
 		cpu_spinwait();
+
+#ifdef RESCUE_SUPPORT
+	if (dumping) {
+		/* Never returns. */
+		rescue_kernel_exec();
+	}
+#endif
 
 	CPU_CLR_ATOMIC(cpu, &started_cpus);
 	CPU_CLR_ATOMIC(cpu, &stopped_cpus);

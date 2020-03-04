@@ -177,6 +177,13 @@ pmap_vmspace_copy(pmap_t dst_pmap __unused, pmap_t src_pmap __unused)
 	return (0);
 }
 
+/*
+ * These are configured by the mair_el1 register. This is set up in locore.S
+ */
+#define	DEVICE_MEMORY	0
+#define	UNCACHED_MEMORY	1
+#define	CACHED_MEMORY	2
+
 #endif	/* _KERNEL */
 
 #endif	/* !LOCORE */
