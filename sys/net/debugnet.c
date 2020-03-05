@@ -36,6 +36,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/cons.h>
 #include <sys/endian.h>
 #include <sys/errno.h>
 #include <sys/eventhandler.h>
@@ -345,11 +346,12 @@ retransmit:
  */
 
 /*
- * Just introspect the header enough to fire off a seqno ack and validate
- * length fits.
+ * Examine a potential debugnet message.  Validate the packet length and send an
+ * ACK if we have already set up a connection.
  */
 static void
-debugnet_handle_rx_msg(struct debugnet_pcb *pcb, struct mbuf **mb)
+debugnet_handle_rx_msg(struct debugnet_pcb *pcb, struct sockaddr *saddr,
+    struct mbuf **mb)
 {
 	const struct debugnet_msg_hdr *dnh;
 	struct mbuf *m;
@@ -362,7 +364,7 @@ debugnet_handle_rx_msg(struct debugnet_pcb *pcb, struct mbuf **mb)
 		return;
 	}
 
-	/* Get ND header. */
+	/* Get debugnet header. */
 	if (m->m_len < sizeof(*dnh)) {
 		m = m_pullup(m, sizeof(*dnh));
 		*mb = m;
@@ -378,14 +380,18 @@ debugnet_handle_rx_msg(struct debugnet_pcb *pcb, struct mbuf **mb)
 		return;
 	}
 
-	/*
-	 * If the issue is transient (ENOBUFS), sender should resend.  If
-	 * non-transient (like driver objecting to rx -> tx from the same
-	 * thread), not much else we can do.
-	 */
-	error = debugnet_ack_output(pcb, dnh->mh_seqno);
-	if (error != 0)
-		return;
+	if (pcb->dp_state > DN_STATE_INIT) {
+		error = debugnet_ack_output(pcb, dnh->mh_seqno);
+		if (error != 0) {
+			/*
+			 * If the issue is transient (ENOBUFS), sender should
+			 * resend.  If non-transient (like driver objecting to
+			 * rx -> tx from the same thread), not much else we can
+			 * do.
+			 */
+			return;
+		}
+	}
 
 	if (ntohl(dnh->mh_type) == DEBUGNET_FINISHED) {
 		printf("Remote shut down the connection on us!\n");
@@ -397,7 +403,7 @@ debugnet_handle_rx_msg(struct debugnet_pcb *pcb, struct mbuf **mb)
 		 */
 	}
 
-	pcb->dp_rx_handler(pcb, mb);
+	pcb->dp_rx_handler(pcb, saddr, mb);
 }
 
 static void
@@ -439,7 +445,8 @@ debugnet_handle_ack(struct debugnet_pcb *pcb, struct mbuf **mb, uint16_t sport)
 }
 
 void
-debugnet_handle_udp(struct debugnet_pcb *pcb, struct mbuf **mb)
+debugnet_handle_udp(struct debugnet_pcb *pcb, struct sockaddr *saddr,
+    struct mbuf **mb)
 {
 	const struct udphdr *udp;
 	struct mbuf *m;
@@ -478,11 +485,20 @@ debugnet_handle_udp(struct debugnet_pcb *pcb, struct mbuf **mb)
 	}
 
 	sport = ntohs(udp->uh_sport);
+	switch (saddr->sa_family) {
+	case AF_INET:
+		((struct sockaddr_in *)saddr)->sin_port = sport;
+		break;
+	default:
+		panic("%s: unhandled address family %d",
+		    __func__, saddr->sa_family);
+	}
 
 	m_adj(m, sizeof(*udp));
 	ulen -= sizeof(*udp);
 
-	if (ulen == sizeof(struct debugnet_ack)) {
+	if (pcb->dp_state > DN_STATE_INIT &&
+	    ulen == sizeof(struct debugnet_ack)) {
 		debugnet_handle_ack(pcb, mb, sport);
 		return;
 	}
@@ -496,7 +512,7 @@ debugnet_handle_udp(struct debugnet_pcb *pcb, struct mbuf **mb)
 		return;
 	}
 
-	debugnet_handle_rx_msg(pcb, mb);
+	debugnet_handle_rx_msg(pcb, saddr, mb);
 }
 
 /*
@@ -630,7 +646,7 @@ debugnet_connect(const struct debugnet_conn_params *dcp,
 		.dp_client = dcp->dc_client,
 		.dp_server = dcp->dc_server,
 		.dp_gateway = dcp->dc_gateway,
-		.dp_server_port = dcp->dc_herald_port,	/* Initially */
+		.dp_server_port = dcp->dc_herald_port,  /* Initially */
 		.dp_client_port = dcp->dc_client_port,
 		.dp_seqno = 1,
 		.dp_ifp = dcp->dc_ifp,
@@ -754,6 +770,101 @@ debugnet_connect(const struct debugnet_conn_params *dcp,
 		goto cleanup;
 	}
 
+	*pcb_out = pcb;
+	return (0);
+
+cleanup:
+	debugnet_free(pcb);
+	return (error);
+}
+
+static void
+debugnet_listen_rx(struct debugnet_pcb *pcb, struct sockaddr *saddr,
+    struct mbuf **mp)
+{
+	const struct debugnet_msg_hdr *dnh;
+	struct mbuf *m;
+
+	m = *mp;
+	dnh = mtod(m, void *);
+
+	printf("hi I got a packet\n");
+
+	if (ntohl(dnh->mh_type) != DEBUGNET_HERALD ||
+	    ntohl(dnh->mh_seqno) != 1 ||
+	    dnh->mh_offset != 0 ||
+	    dnh->mh_len != 0 ||
+	    dnh->mh_aux2 != 0)
+		return;
+
+	printf("omg it's the right packet!\n");
+	pcb->dp_server = ((struct sockaddr_in *)saddr)->sin_addr.s_addr;
+}
+
+int
+debugnet_listen(const struct debugnet_conn_params *dcp,
+    struct debugnet_pcb **pcb_out)
+{
+	struct debugnet_pcb *pcb;
+	struct ifnet *ifp;
+	int c, error;
+
+	ifp = dcp->dc_ifp;
+
+	/* Validate iface is online and supported. */
+	if (!DEBUGNET_SUPPORTED_NIC(ifp)) {
+		printf("%s: interface '%s' does not support debugnet\n",
+		    __func__, if_name(ifp));
+		return (ENODEV);
+	}
+	if ((if_getflags(ifp) & IFF_UP) == 0) {
+		printf("%s: interface '%s' link is down\n", __func__,
+		    if_name(ifp));
+		return (ENXIO);
+	}
+
+	pcb = &g_dnet_pcb;
+	*pcb = (struct debugnet_pcb) {
+		.dp_state = DN_STATE_INIT,
+		.dp_client = dcp->dc_client,
+		.dp_server = INADDR_ANY,
+		.dp_gateway = INADDR_ANY,
+		.dp_server_port = dcp->dc_herald_port,
+		.dp_client_port = dcp->dc_client_port,
+		.dp_seqno = 1,
+		.dp_ifp = dcp->dc_ifp,
+		.dp_rx_handler = debugnet_listen_rx,
+	};
+
+	g_debugnet_pcb_inuse = true;
+
+	/* Switch to the debugnet mbuf zones. */
+	debugnet_mbuf_start();
+
+	ifp->if_debugnet_methods->dn_event(ifp, DEBUGNET_START);
+	pcb->dp_event_started = true;
+
+	/* Make the card use *our* receive callback. */
+	pcb->dp_drv_input = ifp->if_input;
+	ifp->if_input = debugnet_pkt_in;
+
+	do {
+		debugnet_network_poll(pcb);
+		DELAY(500);
+		c = cncheckc();
+		if (c == 0x03) {
+			error = ECANCELED;
+			goto cleanup;
+		}
+	} while (pcb->dp_server == INADDR_ANY);
+
+	pcb->dp_rx_handler = dcp->dc_rx_handler;
+
+	error = debugnet_arp_gw(pcb);
+	if (error != 0) {
+		printf("%s: failed to locate MAC address\n", __func__);
+		goto cleanup;
+	}
 	*pcb_out = pcb;
 	return (0);
 
@@ -1047,11 +1158,7 @@ debugnet_parse_ddb_cmd(const char *cmd, struct debugnet_ddb_config *result)
 		t = db_read_token_flags(DRT_WSPACE);
 	}
 
-	if (!opt_server.has_opt) {
-		db_printf("%s: need a destination server address\n", cmd);
-		goto usage;
-	}
-
+	result->dd_has_server = opt_server.has_opt;
 	result->dd_has_client = opt_client.has_opt;
 	result->dd_has_gateway = opt_gateway.has_opt;
 	result->dd_ifp = ifp;
@@ -1060,7 +1167,7 @@ debugnet_parse_ddb_cmd(const char *cmd, struct debugnet_ddb_config *result)
 	return (0);
 
 usage:
-	db_printf("Usage: %s -s <server> [-g <gateway> -c <localip> "
+	db_printf("Usage: %s [-s <server> -g <gateway> -c <localip> "
 	    "-i <interface>]\n", cmd);
 	error = EINVAL;
 	/* FALLTHROUGH */

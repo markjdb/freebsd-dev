@@ -69,8 +69,7 @@ struct debugnet_pcb {
 	void			(*dp_drv_input)(struct ifnet *, struct mbuf *);
 
 	/* RX handler for bidirectional protocols. */
-	void			(*dp_rx_handler)(struct debugnet_pcb *,
-				    struct mbuf **);
+	debugnet_rx_handler_t	*dp_rx_handler;
 
 	enum dnet_pcb_st	dp_state;
 	uint16_t		dp_client_port;
@@ -86,7 +85,8 @@ SYSCTL_DECL(_net_debugnet);
 
 int debugnet_ether_output(struct mbuf *, struct ifnet *, struct ether_addr,
     u_short);
-void debugnet_handle_udp(struct debugnet_pcb *, struct mbuf **);
+void debugnet_handle_udp(struct debugnet_pcb *, struct sockaddr *,
+    struct mbuf **);
 
 #ifdef INET
 int debugnet_arp_gw(struct debugnet_pcb *);

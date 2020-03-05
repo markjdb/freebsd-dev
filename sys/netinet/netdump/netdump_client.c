@@ -127,7 +127,6 @@ SX_SYSINIT(nd_conf, &nd_conf_lk, "netdump configuration lock");
 #define NETDUMP_ASSERT_WLOCKED()	sx_assert(&nd_conf_lk, SA_XLOCKED)
 #define NETDUMP_ASSERT_LOCKED()		sx_assert(&nd_conf_lk, SA_LOCKED)
 static struct ifnet *nd_ifp;
-static eventhandler_tag nd_detach_cookie;
 
 FEATURE(netdump, "Netdump client support");
 
@@ -293,24 +292,25 @@ netdump_start(struct dumperinfo *di)
 
 	/* Check if the dumping is allowed to continue. */
 	if (!netdump_enabled())
-		return (EINVAL);
+		return (ENXIO);
 
 	if (!KERNEL_PANICKED()) {
-		printf(
-		    "netdump_start: netdump may only be used after a panic\n");
+		printf("%s: netdump may only be used after a panic\n",
+		    __func__);
 		return (EINVAL);
 	}
 
-	memset(&dcp, 0, sizeof(dcp));
-
+#if 0
 	if (nd_server.s_addr == INADDR_ANY) {
-		printf("netdump_start: can't netdump; no server IP given\n");
+		printf("%s: can't netdump; no server IP given\n", __func__);
 		return (EINVAL);
 	}
+#endif
 
 	/* We start dumping at offset 0. */
 	di->dumpoff = 0;
 
+	memset(&dcp, 0, sizeof(dcp));
 	dcp.dc_ifp = nd_ifp;
 
 	dcp.dc_client = nd_client.s_addr;
@@ -323,11 +323,23 @@ netdump_start(struct dumperinfo *di)
 	dcp.dc_herald_data = nd_path;
 	dcp.dc_herald_datalen = (nd_path[0] == 0) ? 0 : strlen(nd_path) + 1;
 
-	error = debugnet_connect(&dcp, &pcb);
-	if (error != 0) {
-		printf("failed to contact netdump server\n");
-		/* Squash debugnet to something the dumper code understands. */
-		return (EINVAL);
+	if (nd_server.s_addr != INADDR_ANY) {
+		error = debugnet_connect(&dcp, &pcb);
+		if (error != 0) {
+			/*
+			 * Squash debugnet to something the dumper code
+			 * understands.
+			 */
+			printf("%s: failed to contact netdump server (%d)\n",
+			    __func__, error);
+			return (EINVAL);
+		}
+	} else {
+		error = debugnet_listen(&dcp, &pcb);
+		if (error != 0) {
+			printf("%s: debugnet_listen() failed (%d)\n", __func__, error);
+			return (EINVAL);
+		}
 	}
 
 	printf("netdumping to %s (%6D)\n", inet_ntoa_r(nd_server, buf),
@@ -677,6 +689,7 @@ netdump_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t addr,
 static int
 netdump_modevent(module_t mod __unused, int what, void *priv __unused)
 {
+	static eventhandler_tag nd_detach_cookie;
 	struct diocskerneldump_arg conf;
 	char *arg;
 	int error;
@@ -779,7 +792,10 @@ DB_FUNC(netdump, db_netdump_cmd, db_cmd_table, CS_OWN, NULL)
 		    sizeof(conf.kda_iface));
 
 	conf.kda_af = AF_INET;
-	conf.kda_server.in4 = (struct in_addr) { params.dd_server };
+	if (params.dd_has_server)
+		conf.kda_server.in4 = (struct in_addr) { params.dd_server };
+	else
+		conf.kda_server.in4 = (struct in_addr) { INADDR_ANY };
 	if (params.dd_has_client)
 		conf.kda_client.in4 = (struct in_addr) { params.dd_client };
 	else

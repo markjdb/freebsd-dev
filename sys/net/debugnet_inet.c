@@ -82,6 +82,7 @@ SYSCTL_INT(_net_debugnet, OID_AUTO, arp_nretries, CTLFLAG_RWTUN,
 void
 debugnet_handle_ip(struct debugnet_pcb *pcb, struct mbuf **mb)
 {
+	struct sockaddr_in sin;
 	struct ip *ip;
 	struct mbuf *m;
 	unsigned short hlen;
@@ -128,6 +129,11 @@ debugnet_handle_ip(struct debugnet_pcb *pcb, struct mbuf **mb)
 		DNETDEBUG("drop packet with IP options\n");
 		return;
 	}
+	/* Do not deal with fragments. */
+	if ((ip->ip_off & (IP_MF | IP_OFFMASK)) != 0) {
+		DNETDEBUG("drop fragmented packet\n");
+		return;
+	}
 
 #ifdef INVARIANTS
 	if ((IN_LOOPBACK(ntohl(ip->ip_dst.s_addr)) ||
@@ -161,7 +167,6 @@ debugnet_handle_ip(struct debugnet_pcb *pcb, struct mbuf **mb)
 		return;
 	}
 	if (m->m_pkthdr.len > ip->ip_len) {
-
 		/* Truncate the packet to the IP length. */
 		if (m->m_len == m->m_pkthdr.len) {
 			m->m_len = ip->ip_len;
@@ -173,7 +178,8 @@ debugnet_handle_ip(struct debugnet_pcb *pcb, struct mbuf **mb)
 	ip->ip_off = ntohs(ip->ip_off);
 
 	/* Check that the source is the server's IP. */
-	if (ip->ip_src.s_addr != pcb->dp_server) {
+	if (pcb->dp_server != INADDR_ANY &&
+	    pcb->dp_server != ip->ip_src.s_addr) {
 		DNETDEBUG("drop packet not from server (from 0x%x)\n",
 		    ip->ip_src.s_addr);
 		return;
@@ -190,12 +196,6 @@ debugnet_handle_ip(struct debugnet_pcb *pcb, struct mbuf **mb)
 		return;
 	}
 
-	/* Do not deal with fragments. */
-	if ((ip->ip_off & (IP_MF | IP_OFFMASK)) != 0) {
-		DNETDEBUG("drop fragmented packet\n");
-		return;
-	}
-
 	if ((m->m_pkthdr.csum_flags & CSUM_PSEUDO_HDR) != 0) {
 		if ((m->m_pkthdr.csum_flags & CSUM_DATA_VALID) == 0) {
 			DNETDEBUG("bad UDP checksum\n");
@@ -208,12 +208,21 @@ debugnet_handle_ip(struct debugnet_pcb *pcb, struct mbuf **mb)
 	/* UDP custom is to have packet length not include IP header. */
 	ip->ip_len -= hlen;
 
+	memset(&sin, 0, sizeof(sin));
+	sin = (struct sockaddr_in) {
+		.sin_len = sizeof(sin),
+		.sin_family = AF_INET,
+		.sin_port = ntohs(0),
+		.sin_addr.s_addr = ip->ip_src.s_addr,
+	};
+
 	/* Checked above before decoding IP header. */
 	MPASS(m->m_pkthdr.len >= sizeof(struct ipovly));
 
 	/* Put the UDP header at start of chain. */
 	m_adj(m, sizeof(struct ipovly));
-	debugnet_handle_udp(pcb, mb);
+
+	debugnet_handle_udp(pcb, (struct sockaddr *)&sin, mb);
 }
 
 /*

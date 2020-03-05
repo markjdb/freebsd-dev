@@ -65,6 +65,9 @@ struct debugnet_ack {
 #define	DEBUGNET_MAX_IN_FLIGHT	64
 
 #ifdef _KERNEL
+
+struct debugnet_pcb; /* opaque */
+
 /*
  * Hook API for network drivers.
  */
@@ -80,6 +83,9 @@ typedef void debugnet_event_t(struct ifnet *, enum debugnet_ev);
 typedef int debugnet_transmit_t(struct ifnet *, struct mbuf *);
 typedef int debugnet_poll_t(struct ifnet *, int);
 
+typedef void debugnet_rx_handler_t(struct debugnet_pcb *, struct sockaddr *,
+    struct mbuf **);
+
 struct debugnet_methods {
 	debugnet_init_t		*dn_init;
 	debugnet_event_t	*dn_event;
@@ -89,8 +95,6 @@ struct debugnet_methods {
 
 #define	DEBUGNET_SUPPORTED_NIC(ifp)				\
 	((ifp)->if_debugnet_methods != NULL && (ifp)->if_type == IFT_ETHER)
-
-struct debugnet_pcb; /* opaque */
 
 /*
  * Debugnet consumer API.
@@ -134,7 +138,7 @@ struct debugnet_conn_params {
 	 *
 	 * The handler should ACK receieved packets with debugnet_ack_output.
 	 */
-	void		(*dc_rx_handler)(struct debugnet_pcb *, struct mbuf **);
+	debugnet_rx_handler_t *dc_rx_handler;
 };
 
 /*
@@ -147,6 +151,10 @@ struct debugnet_conn_params {
  * Returns zero on success, or errno.
  */
 int debugnet_connect(const struct debugnet_conn_params *,
+    struct debugnet_pcb **pcb_out);
+
+/* XXX */
+int debugnet_listen(const struct debugnet_conn_params *,
     struct debugnet_pcb **pcb_out);
 
 /*
@@ -233,6 +241,7 @@ struct debugnet_ddb_config {
 	in_addr_t	dd_gateway;
 	bool		dd_has_client : 1;
 	bool		dd_has_gateway : 1;
+	bool		dd_has_server : 1;
 };
 int debugnet_parse_ddb_cmd(const char *cmd,
     struct debugnet_ddb_config *result);
