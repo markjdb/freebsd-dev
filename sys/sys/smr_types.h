@@ -46,7 +46,7 @@
  * All acceses include a parameter for an assert to verify the required
  * synchronization.  For example, a writer might use:
  *
- * smr_serialized_store(pointer, value, mtx_owned(&writelock));
+ * smr_serialized_store(pointer, value, mtx_assert(&writelock, MA_OWNED));
  *
  * These are only enabled in INVARIANTS kernels.
  */
@@ -67,24 +67,24 @@ struct {								\
 
 /*
  * Read from an SMR protected pointer while serialized by an
- * external mechanism.  'ex' should contain an assert that the
- * external mechanism is held.  i.e. mtx_owned()
+ * external mechanism.  'ex' should contain an assertion that the
+ * external mechanism is held, e.g., mtx_assert().
  */
 #define	smr_serialized_load(p, ex) ({					\
-	SMR_ASSERT(ex, "smr_serialized_load");				\
+	SMR_ASSERT((ex), "smr_serialized_load");			\
 	(__typeof((p)->__ptr))atomic_load_ptr(&(p)->__ptr);		\
 })
 
 /*
  * Store 'v' to an SMR protected pointer while serialized by an
- * external mechanism.  'ex' should contain an assert that the
- * external mechanism is held.  i.e. mtx_owned()
+ * external mechanism.  'ex' should contain an assertion that the
+ * external mechanism is held, e.g., mtx_assert().
  *
  * Writers that are serialized with mutual exclusion or on a single
  * thread should use smr_serialized_store() rather than swap.
  */
 #define	smr_serialized_store(p, v, ex) do {				\
-	SMR_ASSERT(ex, "smr_serialized_store");				\
+	SMR_ASSERT((ex), "smr_serialized_store");			\
 	__typeof((p)->__ptr) _v = (v);					\
 	atomic_store_rel_ptr((uintptr_t *)&(p)->__ptr, (uintptr_t)_v);	\
 } while (0)
@@ -92,12 +92,12 @@ struct {								\
 /*
  * swap 'v' with an SMR protected pointer and return the old value
  * while serialized by an external mechanism.  'ex' should contain
- * an assert that the external mechanism is provided.  i.e. mtx_owned()
+ * an assertion that the external mechanism is provided, e.g., mtx_assert().
  *
  * Swap permits multiple writers to update a pointer concurrently.
  */
 #define	smr_serialized_swap(p, v, ex) ({				\
-	SMR_ASSERT(ex, "smr_serialized_swap");				\
+	SMR_ASSERT((ex), "smr_serialized_swap");			\
 	__typeof((p)->__ptr) _v = (v);					\
 	/* Release barrier guarantees contents are visible to reader */ \
 	atomic_thread_fence_rel();					\
@@ -111,7 +111,7 @@ struct {								\
  * synchronization.
  */
 #define	smr_unserialized_load(p, ex) ({					\
-	SMR_ASSERT(ex, "smr_unserialized_load");			\
+	SMR_ASSERT((ex), "smr_unserialized_load");			\
 	(__typeof((p)->__ptr))atomic_load_ptr(&(p)->__ptr);		\
 })
 
@@ -121,10 +121,92 @@ struct {								\
  * synchronization.
  */
 #define	smr_unserialized_store(p, v, ex) do {				\
-	SMR_ASSERT(ex, "smr_unserialized_store");			\
+	SMR_ASSERT((ex), "smr_unserialized_store");			\
 	__typeof((p)->__ptr) _v = (v);					\
 	atomic_store_ptr((uintptr_t *)&(p)->__ptr, (uintptr_t)_v);	\
 } while (0)
+
+/*
+ * Macros defining a queue.h-style doubly-linked list that permits
+ * concurrent readers and serialized writers.
+ */
+#define	SMR_LIST_HEAD(name, type)					\
+	struct name {							\
+		struct type *smr_lh_first;				\
+	}
+
+#define	SMR_LIST_HEAD_INITIALIZER(head) { NULL }
+
+#define	SMR_LIST_ENTRY(type)						\
+	struct {							\
+		struct type *smr_le_next;				\
+		struct type **smr_le_prev;				\
+	}
+
+#define	SMR_LIST_INIT(head)						\
+	atomic_store_rel_ptr(&(head)->smr_lh_first, NULL)
+
+#define	SMR_LIST_FIRST(head)						\
+	((__typeof((head)->smr_lh_first))atomic_load_acq_ptr(		\
+	    (uintptr_t *)&(head)->smr_lh_first))
+
+#define	SMR_LIST_EMPTY(head)						\
+	(atomic_load_ptr(&(head)->smr_lh_first) == NULL)
+
+#define	SMR_LIST_NEXT(elm, field)					\
+	((__typeof(elm))atomic_load_acq_ptr(				\
+	    (uintptr_t *)&(elm)->field.smr_le_next))
+
+#define	SMR_LIST_INSERT_AFTER(listelm, elm, field) do {			\
+	SMR_ASSERT((ex), "SMR_LIST_INSERT_AFTER");			\
+	__typeof(elm) _next = (listelm)->field.smr_le_next;		\
+	(elm)->field.smr_le_next = _next;				\
+	(elm)->field.smr_le_prev = &(listelm)->field.smr_le_next;	\
+	if (_next != NULL)						\
+		_next->field.smr_le_prev = &(elm)->field.smr_le_next;	\
+	atomic_store_rel_ptr((uintptr_t *)&(listelm)->field.smr_le_next,\
+	    (uintptr_t)(elm));						\
+} while (0)
+
+#define	SMR_LIST_INSERT_BEFORE(listelm, elm, field, ex) do {		\
+	SMR_ASSERT((ex), "SMR_LIST_INSERT_BEFORE");			\
+	__typeof(elm) _prev = (listelm)->field.smr_le_prev;		\
+	(elm)->field.smr_le_next = (listelm);				\
+	(elm)->field.smr_le_prev = _prev;				\
+	(listelm)->field.smr_le_prev = &(elm)->field.smr_le_next;	\
+	atomic_store_rel_ptr((uintptr_t *)_prev, (uintptr_t)(elm));	\
+} while (0)
+
+#define	SMR_LIST_INSERT_HEAD(head, elm, field, ex) do {			\
+	SMR_ASSERT((ex), "SMR_LIST_INSERT_HEAD");			\
+	__typeof(elm) _next = (head)->smr_lh_first;			\
+	(elm)->field.smr_le_next = _next;				\
+	(elm)->field.smr_le_prev = &(head)->smr_lh_first;		\
+	if (_next != NULL)						\
+		_next->field.smr_le_prev = &(elm)->field.smr_le_next;	\
+	atomic_store_rel_ptr((uintptr_t *)&(head)->smr_lh_first,	\
+	    (uintptr_t)(elm));						\
+} while (0)
+
+#define	SMR_LIST_REMOVE(elm, field, ex) do {				\
+	SMR_ASSERT((ex), "SMR_LIST_REMOVE");				\
+	__typeof(elm) _next = (elm)->field.smr_le_next;			\
+	if (_next != NULL)						\
+		_next->field.smr_le_prev = (elm)->field.smr_le_prev;	\
+	atomic_store_ptr((elm)->field.smr_le_prev, _next);		\
+} while (0)
+
+#define	SMR_LIST_FOREACH(var, head, field, ex)				\
+	for (({SMR_ASSERT((ex), "SMR_LIST_FOREACH"); 1;}),		\
+	    (var) = SMR_LIST_FIRST(head);				\
+	    (var) != NULL;						\
+	    (var) = SMR_LIST_NEXT((var), field))
+
+#define	SMR_LIST_FOREACH_SAFE(var, head, field, tvar, ex)		\
+	for (({SMR_ASSERT((ex), "SMR_LIST_FOREACH_SAFE"); 1;}),		\
+	    (var) = SMR_LIST_FIRST(head);				\
+	    (var) != NULL && ((tvar) = SMR_LIST_NEXT((var), field), 1);	\
+	    (var) = (tvar))
 
 #ifndef _KERNEL
 
