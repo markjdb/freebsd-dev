@@ -453,7 +453,6 @@ typedef struct if_rxsd {
 	caddr_t *ifsd_cl;
 	struct mbuf **ifsd_m;
 	iflib_fl_t ifsd_fl;
-	qidx_t ifsd_cidx;
 } *if_rxsd_t;
 
 /* multiple of word size */
@@ -2598,7 +2597,6 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
 	cidx = irf->irf_idx;
 	fl = &rxq->ifr_fl[flid];
 	sd->ifsd_fl = fl;
-	sd->ifsd_cidx = cidx;
 	sd->ifsd_m = &fl->ifl_sds.ifsd_m[cidx];
 	sd->ifsd_cl = &fl->ifl_sds.ifsd_cl[cidx];
 	fl->ifl_credits--;
@@ -2610,7 +2608,6 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
 	next = (cidx + CACHE_PTR_INCREMENT) & (fl->ifl_size-1);
 	prefetch(&fl->ifl_sds.ifsd_map[next]);
 	map = fl->ifl_sds.ifsd_map[cidx];
-	next = (cidx + CACHE_LINE_SIZE) & (fl->ifl_size-1);
 
 	bus_dmamap_sync(fl->ifl_buf_tag, map, BUS_DMASYNC_POSTREAD);
 
