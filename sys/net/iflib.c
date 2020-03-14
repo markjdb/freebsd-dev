@@ -2595,7 +2595,8 @@ rxd_frag_to_sd(iflib_rxq_t rxq, if_rxd_frag_t irf, int unload, if_rxsd_t sd)
 	/* not valid assert if bxe really does SGE from non-contiguous elements */
 	MPASS(fl->ifl_cidx == cidx);
 	bus_dmamap_sync(fl->ifl_buf_tag, map, BUS_DMASYNC_POSTREAD);
-	if (unload)
+
+	if (unload && irf->irf_len != 0)
 		bus_dmamap_unload(fl->ifl_buf_tag, map);
 	fl->ifl_cidx = (fl->ifl_cidx + 1) & (fl->ifl_size-1);
 	if (__predict_false(fl->ifl_cidx == 0))
@@ -2667,6 +2668,7 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 
 	/* should I merge this back in now that the two paths are basically duplicated? */
 	if (ri->iri_nfrags == 1 &&
+	    ri->iri_frags[0].irf_len != 0 &&
 	    ri->iri_frags[0].irf_len <= MIN(IFLIB_RX_COPY_THRESH, MHLEN)) {
 		rxd_frag_to_sd(rxq, &ri->iri_frags[0], FALSE, &sd);
 		m = *sd.ifsd_m;
@@ -2680,6 +2682,8 @@ iflib_rxd_pkt_get(iflib_rxq_t rxq, if_rxd_info_t ri)
 		m->m_len = ri->iri_frags[0].irf_len;
        } else {
 		m = assemble_segments(rxq, ri, &sd);
+		if (m == NULL)
+			return (NULL);
 	}
 	m->m_pkthdr.len = ri->iri_len;
 	m->m_pkthdr.rcvif = ri->iri_ifp;
