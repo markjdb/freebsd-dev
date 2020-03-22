@@ -299,9 +299,7 @@ static int
 vm_fault_soft_fast(struct faultstate *fs)
 {
 	vm_page_t m, m_map;
-#if (defined(__aarch64__) || defined(__amd64__) || (defined(__arm__) && \
-    __ARM_ARCH >= 6) || defined(__i386__) || defined(__riscv)) && \
-    VM_NRESERVLEVEL > 0
+#if defined(VM_FAULT_LARGE_PAGES) && VM_NRESERVLEVEL > 0
 	vm_page_t m_super;
 	int flags;
 #endif
@@ -320,9 +318,7 @@ vm_fault_soft_fast(struct faultstate *fs)
 	}
 	m_map = m;
 	psind = 0;
-#if (defined(__aarch64__) || defined(__amd64__) || (defined(__arm__) && \
-    __ARM_ARCH >= 6) || defined(__i386__) || defined(__riscv)) && \
-    VM_NRESERVLEVEL > 0
+#if defined(VM_FAULT_LARGE_PAGES) && VM_NRESERVLEVEL > 0
 	if ((m->flags & PG_FICTITIOUS) == 0 &&
 	    (m_super = vm_reserv_to_superpage(m)) != NULL &&
 	    rounddown2(vaddr, pagesizes[m_super->psind]) >= fs->entry->start &&
@@ -500,8 +496,7 @@ vm_fault_populate(struct faultstate *fs)
 	    pidx <= pager_last;
 	    pidx += npages, m = vm_page_next(&m[npages - 1])) {
 		vaddr = fs->entry->start + IDX_TO_OFF(pidx) - fs->entry->offset;
-#if defined(__aarch64__) || defined(__amd64__) || (defined(__arm__) && \
-    __ARM_ARCH >= 6) || defined(__i386__) || defined(__riscv)
+#ifdef VM_FAULT_LARGE_PAGES
 		psind = m->psind;
 		if (psind > 0 && ((vaddr & (pagesizes[psind] - 1)) != 0 ||
 		    pidx + OFF_TO_IDX(pagesizes[psind]) - 1 > pager_last ||

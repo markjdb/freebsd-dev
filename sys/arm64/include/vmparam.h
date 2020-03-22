@@ -248,4 +248,9 @@ extern vm_offset_t init_pt_va;
  */
 #define	MINIDUMP_PAGE_TRACKING	1
 
+/*
+ * pmap_enter() and pmap_enter_object() support creation of large mappings.
+ */
+#define	VM_FAULT_LARGE_PAGES	1
+
 #endif /* !_MACHINE_VMPARAM_H_ */

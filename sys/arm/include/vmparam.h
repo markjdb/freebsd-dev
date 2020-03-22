@@ -198,4 +198,11 @@ extern vm_offset_t vm_max_kernel_address;
  */
 #define	MINIDUMP_PAGE_TRACKING	1
 
+#if __ARM_ARCH >= 6
+/*
+ * pmap_enter() and pmap_enter_object() support creation of large mappings.
+ */
+#define	VM_FAULT_LARGE_PAGES	1
+#endif
+
 #endif	/* _MACHINE_VMPARAM_H_ */
