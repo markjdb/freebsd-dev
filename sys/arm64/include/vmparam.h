@@ -243,4 +243,9 @@ extern vm_offset_t init_pt_va;
 
 #define	DEVMAP_MAX_VADDR	VM_MAX_KERNEL_ADDRESS
 
+/*
+ * Direct page allocations are tracked in the vm_page_dump array.
+ */
+#define	MINIDUMP_PAGE_TRACKING	1
+
 #endif /* !_MACHINE_VMPARAM_H_ */

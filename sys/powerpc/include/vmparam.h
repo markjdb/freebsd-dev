@@ -265,4 +265,13 @@ struct pmap_physseg {
 	KASSERT(hw_direct_map, ("Direct map not provided by PMAP"));	\
 	(x) &~ DMAP_BASE_ADDRESS; })
 
+#ifdef __powerpc64__
+/*
+ * Direct page allocations are tracked in the vm_page_dump array.
+ */
+#define	MINIDUMP_PAGE_TRACKING	1
+#else
+#define	MINIDUMP_PAGE_TRACKING	0
+#endif
+
 #endif /* _MACHINE_VMPARAM_H_ */

@@ -247,4 +247,9 @@
  */
 #define	VM_BATCHQUEUE_SIZE	31
 
+/*
+ * Direct page allocations are tracked in the vm_page_dump array.
+ */
+#define	MINIDUMP_PAGE_TRACKING	1
+
 #endif /* _MACHINE_VMPARAM_H_ */

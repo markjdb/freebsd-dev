@@ -552,7 +552,7 @@ vm_page_startup(vm_offset_t vaddr)
 	char *list, *listend;
 	vm_paddr_t end, high_avail, low_avail, new_end, size;
 	vm_paddr_t page_range __unused;
-	vm_paddr_t last_pa, pa;
+	vm_paddr_t pa;
 	u_long pagecount;
 	int biggestone, i, segind;
 #ifdef WITNESS
@@ -588,9 +588,7 @@ vm_page_startup(vm_offset_t vaddr)
 	witness_startup((void *)mapped);
 #endif
 
-#if defined(__aarch64__) || defined(__amd64__) || defined(__arm__) || \
-    defined(__i386__) || defined(__mips__) || defined(__riscv) || \
-    defined(__powerpc64__)
+#ifdef MINIDUMP_PAGE_TRACKING
 	/*
 	 * Allocate a bitmap to indicate that a random physical page
 	 * needs to be included in a minidump.
@@ -602,7 +600,7 @@ vm_page_startup(vm_offset_t vaddr)
 	 * minidump code.  In theory, they are not needed on i386, but are
 	 * included should the sf_buf code decide to use them.
 	 */
-	last_pa = 0;
+	vm_paddr_t last_pa = 0;
 	for (i = 0; dump_avail[i + 1] != 0; i += 2)
 		if (dump_avail[i + 1] > last_pa)
 			last_pa = dump_avail[i + 1];
@@ -612,9 +610,6 @@ vm_page_startup(vm_offset_t vaddr)
 	vm_page_dump = (void *)(uintptr_t)pmap_map(&vaddr, new_end,
 	    new_end + vm_page_dump_size, VM_PROT_READ | VM_PROT_WRITE);
 	bzero((void *)vm_page_dump, vm_page_dump_size);
-#else
-	(void)last_pa;
-#endif
 #if defined(__aarch64__) || defined(__amd64__) || defined(__mips__) || \
     defined(__riscv) || defined(__powerpc64__)
 	/*
@@ -624,8 +619,6 @@ vm_page_startup(vm_offset_t vaddr)
 	 */
 	for (pa = new_end; pa < end; pa += PAGE_SIZE)
 		dump_add_page(pa);
-#endif
-	phys_avail[biggestone + 1] = new_end;
 #ifdef __amd64__
 	/*
 	 * Request that the physical pages underlying the message buffer be
@@ -639,6 +632,10 @@ vm_page_startup(vm_offset_t vaddr)
 		pa += PAGE_SIZE;
 	}
 #endif
+#endif
+#endif /* MINIDUMP_PAGE_TRACKING */
+
+	phys_avail[biggestone + 1] = new_end;
 	/*
 	 * Compute the number of pages of memory that will be available for
 	 * use, taking into account the overhead of a page structure per page.

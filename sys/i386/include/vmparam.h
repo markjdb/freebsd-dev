@@ -241,4 +241,9 @@
 #define	PHYS_TO_DMAP(x)	({ panic("No direct map exists"); 0; })
 #define	DMAP_TO_PHYS(x)	({ panic("No direct map exists"); 0; })
 
+/*
+ * Direct page allocations are tracked in the vm_page_dump array.
+ */
+#define	MINIDUMP_PAGE_TRACKING	1
+
 #endif /* _MACHINE_VMPARAM_H_ */

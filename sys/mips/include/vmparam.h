@@ -197,4 +197,9 @@
 #define	PHYS_TO_DMAP(x)	MIPS_PHYS_TO_DIRECT(x)
 #define	DMAP_TO_PHYS(x)	MIPS_DIRECT_TO_PHYS(x)
 
+/*
+ * Direct page allocations are tracked in the vm_page_dump array.
+ */
+#define	MINIDUMP_PAGE_TRACKING	1
+
 #endif /* !_MACHINE_VMPARAM_H_ */
