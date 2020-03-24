@@ -119,7 +119,6 @@ static void ipi_preempt(void *);
 static void ipi_rendezvous(void *);
 static void ipi_stop(void *);
 
-struct mtx ap_boot_mtx;
 struct pcb stoppcbs[MAXCPU];
 
 /*
@@ -132,10 +131,18 @@ static int cpu0 = -1;
 void mpentry(unsigned long cpuid);
 void init_secondary(uint64_t);
 
-uint8_t secondary_stacks[MAXCPU - 1][PAGE_SIZE * KSTACK_PAGES] __aligned(16);
+/* Synchronize AP startup. */
+static struct mtx ap_boot_mtx;
+
+/* Stacks for AP initialization, discarded once idle threads are started. */
+void *bootstack;
+static void *bootstacks[MAXCPU];
+
+/* Count of started APs, used to synchronize access to bootstack. */
+static volatile int aps_started;
 
 /* Set to 1 once we're ready to let the APs out of the pen. */
-volatile int aps_ready = 0;
+static volatile int aps_ready;
 
 /* Temporary variables for init_secondary()  */
 void *dpcpu[MAXCPU - 1];
@@ -197,14 +204,14 @@ init_secondary(uint64_t cpu)
 	    "mov x18, %0 \n"
 	    "msr tpidr_el1, %0" :: "r"(pcpup));
 
-	/* Spin until the BSP releases the APs */
-	while (!aps_ready)
+	/* Signal the BSP and spin until it has released all APs. */
+	atomic_add_int(&aps_started, 1);
+	while (!atomic_load_acq_int(&aps_ready))
 		__asm __volatile("wfe");
 
 	/* Initialize curthread */
 	KASSERT(PCPU_GET(idlethread) != NULL, ("no idle thread"));
 	pcpup->pc_curthread = pcpup->pc_idlethread;
-	pcpup->pc_curpcb = pcpup->pc_idlethread->td_pcb;
 
 	/*
 	 * Identify current CPU. This is necessary to setup
@@ -239,12 +246,36 @@ init_secondary(uint64_t cpu)
 
 	mtx_unlock_spin(&ap_boot_mtx);
 
+	/*
+	 * Assert that smp_after_idle_runnable condition is reasonable.
+	 */
+	MPASS(PCPU_GET(curpcb) == NULL);
+
 	/* Enter the scheduler */
 	sched_throw(NULL);
 
 	panic("scheduler returned us to init_secondary");
 	/* NOTREACHED */
 }
+
+static void
+smp_after_idle_runnable(void *arg __unused)
+{
+	struct pcpu *pc;
+	int cpu;
+
+	for (cpu = 1; cpu < mp_ncpus; cpu++) {
+		if (bootstacks[cpu] != NULL) {
+			pc = pcpu_find(cpu);
+			while (pc->pc_curpcb == 0)
+				cpu_spinwait();
+			kmem_free(kernel_arena, (vm_offset_t)bootstacks[cpu],
+			    PAGE_SIZE);
+		}
+	}
+}
+SYSINIT(smp_after_idle_runnable, SI_SUB_SMP, SI_ORDER_ANY,
+    smp_after_idle_runnable, NULL);
 
 /*
  *  Send IPI thru interrupt controller.
@@ -376,7 +407,7 @@ start_cpu(u_int id, uint64_t target_cpu)
 	struct pcpu *pcpup;
 	vm_paddr_t pa;
 	u_int cpuid;
-	int err;
+	int err, naps;
 
 	/* Check we are able to start this cpu */
 	if (id > mp_maxid)
@@ -390,7 +421,7 @@ start_cpu(u_int id, uint64_t target_cpu)
 
 	/*
 	 * Rotate the CPU IDs to put the boot CPU as CPU 0. We keep the other
-	 * CPUs ordered as the are likely grouped into clusters so it can be
+	 * CPUs ordered as they are likely grouped into clusters so it can be
 	 * useful to keep that property, e.g. for the GICv3 driver to send
 	 * an IPI to all CPUs in the cluster.
 	 */
@@ -406,9 +437,14 @@ start_cpu(u_int id, uint64_t target_cpu)
 	    M_WAITOK | M_ZERO);
 	dpcpu_init(dpcpu[cpuid - 1], cpuid);
 
+	bootstacks[cpuid] = (void *)kmem_malloc(kernel_arena, PAGE_SIZE,
+	    M_WAITOK | M_ZERO);
+
+	naps = aps_started;
+	bootstack = (char *)bootstacks[cpuid] + PAGE_SIZE;
+
 	printf("Starting CPU %u (%lx)\n", cpuid, target_cpu);
 	pa = pmap_extract(kernel_pmap, (vm_offset_t)mpentry);
-
 	err = psci_cpu_on(target_cpu, pa, cpuid);
 	if (err != PSCI_RETVAL_SUCCESS) {
 		/* Panic here if INVARIANTS are enabled */
@@ -419,12 +455,20 @@ start_cpu(u_int id, uint64_t target_cpu)
 		kmem_free(kernel_arena, (vm_offset_t)dpcpu[cpuid - 1],
 		    DPCPU_SIZE);
 		dpcpu[cpuid - 1] = NULL;
+		kmem_free(kernel_arena, (vm_offset_t)bootstacks[cpuid],
+		    PAGE_SIZE);
+		bootstacks[cpuid] = NULL;
 		mp_ncpus--;
 
 		/* Notify the user that the CPU failed to start */
-		printf("Failed to start CPU %u (%lx)\n", id, target_cpu);
-	} else
+		printf("Failed to start CPU %u (%lx), error %d\n",
+		    id, target_cpu, err);
+	} else {
+		/* Wait for the AP to switch to its boot stack. */
+		while (aps_started < naps + 1)
+			cpu_spinwait();
 		CPU_SET(cpuid, &all_cpus);
+	}
 
 	return (true);
 }
