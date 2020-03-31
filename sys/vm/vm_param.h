@@ -69,6 +69,10 @@
 #ifndef	_VM_PARAM_
 #define	_VM_PARAM_
 
+#define	VM_KERN_NO_SMALL_ALLOC	0
+#define	VM_KERN_MD_SMALL_ALLOC	1
+#define	VM_KERN_MI_SMALL_ALLOC	2
+
 #include <machine/vmparam.h>
 
 /*

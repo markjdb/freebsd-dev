@@ -108,20 +108,22 @@
 #endif
 
 /*
- * Use the direct-mapped BAT registers for UMA small allocs. This
+ * Use the direct-mapped BAT registers for page-size allocations. This
  * takes pressure off the small amount of available KVA.
  */
-#define UMA_MD_SMALL_ALLOC
+
+#define	VM_KERN_SMALL_ALLOC	VM_KERN_MD_SMALL_ALLOC
 
 #else /* Book-E */
 
-/* Use the direct map for UMA small allocs on powerpc64. */
 #ifdef __powerpc64__
-#define UMA_MD_SMALL_ALLOC
+/* Use the direct map for small allocations on powerpc64. */
+#define	VM_KERN_SMALL_ALLOC	VM_KERN_MD_SMALL_ALLOC
 #else
 #define	VM_MIN_KERNEL_ADDRESS		0xc0000000
 #define	VM_MAX_KERNEL_ADDRESS		0xffffefff
 #define	VM_MAX_SAFE_KERNEL_ADDRESS	VM_MAX_KERNEL_ADDRESS
+#define	VM_KERN_SMALL_ALLOC		VM_KERN_NO_SMALL_ALLOC
 #endif
 
 #endif /* AIM/E500 */

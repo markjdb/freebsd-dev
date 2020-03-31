@@ -97,6 +97,8 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_extern.h>
 #include <vm/uma.h>
 
+#include <machine/md_var.h>
+
 vm_map_t kernel_map;
 vm_map_t exec_map;
 vm_map_t pipe_map;
@@ -130,6 +132,11 @@ SYSCTL_ULONG(_vm, OID_AUTO, max_kernel_address, CTLFLAG_RD,
 #define	KVA_QUANTUM		(1 << KVA_QUANTUM_SHIFT)
 
 extern void     uma_startup2(void);
+
+#if VM_KERN_SMALL_ALLOC == VM_KERN_MD_SMALL_ALLOC
+extern vm_offset_t	kmem_small_alloc_domain(int domain, int flags);
+extern void		kmem_small_free(vm_offset_t addr);
+#endif
 
 /*
  *	kva_alloc:
@@ -168,6 +175,46 @@ kva_free(vm_offset_t addr, vm_size_t size)
 	size = round_page(size);
 	vmem_free(kernel_arena, addr, size);
 }
+
+#if VM_KERN_SMALL_ALLOC == VM_KERN_MI_SMALL_ALLOC
+/*
+ *	Allocate a single page, making use of the direct map to avoid dynamic
+ *	page table updates.
+ */
+static vm_offset_t
+kmem_small_alloc_domain(int domain, int flags)
+{
+	vm_page_t m;
+	vm_offset_t va;
+	vm_paddr_t pa;
+
+	m = vm_page_alloc_domain(NULL, 0, domain,
+	    malloc2vm_flags(flags) | VM_ALLOC_NOOBJ | VM_ALLOC_WIRED);
+	if (m == NULL)
+		return (0);
+	pa = m->phys_addr;
+	if (MINIDUMP_PAGE_TRACKING && (flags & M_NODUMP) == 0)
+		dump_add_page(pa);
+	va = pmap_map(&pa, pa, pa + PAGE_SIZE, VM_PROT_READ | VM_PROT_WRITE);
+	if ((flags & M_ZERO) && (m->flags & PG_ZERO) == 0)
+		memset((void *)va, 0, PAGE_SIZE);
+	return (va);
+}
+
+static void
+kmem_small_free(vm_offset_t addr)
+{
+	vm_page_t m;
+	vm_paddr_t pa;
+
+	pa = DMAP_TO_PHYS(addr);
+	if (MINIDUMP_PAGE_TRACKING)
+		dump_drop_page(pa);
+	m = PHYS_TO_VM_PAGE(pa);
+	vm_page_unwire_noq(m);
+	vm_page_free(m);
+}
+#endif
 
 /*
  *	Allocates a region from the kernel address map and physical pages
@@ -405,15 +452,16 @@ kmem_malloc_domain(int domain, vm_size_t size, int flags)
 	vm_offset_t addr;
 	int rv;
 
-#if VM_NRESERVLEVEL > 0
-	if (__predict_true((flags & M_EXEC) == 0))
-		arena = vm_dom[domain].vmd_kernel_arena;
-	else
-		arena = vm_dom[domain].vmd_kernel_rwx_arena;
-#else
-	arena = vm_dom[domain].vmd_kernel_arena;
-#endif
 	size = round_page(size);
+	if (__predict_true((flags & M_EXEC) == 0)) {
+#if VM_KERN_SMALL_ALLOC != VM_KERN_NO_SMALL_ALLOC
+		if (size == PAGE_SIZE && (flags & M_EXEC) == 0)
+			return (kmem_small_alloc_domain(domain, flags));
+#endif
+		arena = vm_dom[domain].vmd_kernel_arena;
+	} else {
+		arena = vm_dom[domain].vmd_kernel_rwx_arena;
+	}
 	if (vmem_alloc(arena, size, flags | M_BESTFIT, &addr))
 		return (0);
 
@@ -504,10 +552,8 @@ retry:
 		vm_page_valid(m);
 		pmap_enter(kernel_pmap, addr + i, m, prot,
 		    prot | PMAP_ENTER_WIRED, 0);
-#if VM_NRESERVLEVEL > 0
 		if (__predict_false((prot & VM_PROT_EXECUTE) != 0))
 			m->oflags |= VPO_KMEM_EXEC;
-#endif
 	}
 	VM_OBJECT_WUNLOCK(object);
 
@@ -581,14 +627,10 @@ _kmem_unback(vm_object_t object, vm_offset_t addr, vm_size_t size)
 	VM_OBJECT_WLOCK(object);
 	m = vm_page_lookup(object, atop(offset)); 
 	domain = vm_phys_domain(m);
-#if VM_NRESERVLEVEL > 0
 	if (__predict_true((m->oflags & VPO_KMEM_EXEC) == 0))
 		arena = vm_dom[domain].vmd_kernel_arena;
 	else
 		arena = vm_dom[domain].vmd_kernel_rwx_arena;
-#else
-	arena = vm_dom[domain].vmd_kernel_arena;
-#endif
 	for (; offset < end; offset += PAGE_SIZE, m = next) {
 		next = vm_page_next(m);
 		vm_page_xbusy_claim(m);
@@ -619,6 +661,14 @@ kmem_free(vm_offset_t addr, vm_size_t size)
 	struct vmem *arena;
 
 	size = round_page(size);
+
+#if VM_KERN_SMALL_ALLOC != VM_KERN_NO_SMALL_ALLOC
+	if (size == PAGE_SIZE &&
+	    (addr < VM_MIN_KERNEL_ADDRESS || addr > VM_MAX_KERNEL_ADDRESS)) {
+		kmem_small_free(addr);
+		return;
+	}
+#endif
 	arena = _kmem_unback(kernel_object, addr, size);
 	if (arena != NULL)
 		vmem_free(arena, addr, size);
@@ -817,6 +867,9 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 		vmem_set_import(vm_dom[domain].vmd_kernel_rwx_arena,
 		    kva_import_domain, (vmem_release_t *)vmem_xfree,
 		    kernel_arena, KVA_QUANTUM);
+#else
+		vm_dom[domain].vmd_kernel_rwx_arena =
+		    vm_dom[domain].vmd_kernel_arena;
 #endif
 	}
 

@@ -280,8 +280,8 @@ powerpc/powerpc/syncicache.c	standard
 powerpc/powerpc/sys_machdep.c	standard
 powerpc/powerpc/trap.c		standard
 powerpc/powerpc/uio_machdep.c	standard
-powerpc/powerpc/uma_machdep.c	standard
 powerpc/powerpc/vm_machdep.c	standard
+powerpc/powerpc/vm_kern_machdep.c	standard
 powerpc/ps3/ehci_ps3.c		optional	ps3 ehci
 powerpc/ps3/ohci_ps3.c		optional	ps3 ohci
 powerpc/ps3/if_glc.c		optional	ps3 glc

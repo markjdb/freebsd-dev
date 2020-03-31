@@ -588,14 +588,14 @@ qc_drain(vmem_t *vm)
 		uma_zone_reclaim(vm->vm_qcache[i].qc_cache, UMA_RECLAIM_DRAIN);
 }
 
-#ifndef UMA_MD_SMALL_ALLOC
+#if VM_KERN_SMALL_ALLOC == VM_KERN_NO_SMALL_ALLOC
 
 static struct mtx_padalign __exclusive_cache_line vmem_bt_lock;
 
 /*
  * vmem_bt_alloc:  Allocate a new page of boundary tags.
  *
- * On architectures with uma_small_alloc there is no recursion; no address
+ * On architectures with a direct map there is no recursion; no address
  * space need be allocated to allocate boundary tags.  For the others, we
  * must handle recursion.  Boundary tags are necessary to allocate new
  * boundary tags.
@@ -671,7 +671,7 @@ vmem_startup(void)
 	vmem_bt_zone = uma_zcreate("vmem btag",
 	    sizeof(struct vmem_btag), NULL, NULL, NULL, NULL,
 	    UMA_ALIGN_PTR, UMA_ZONE_VM);
-#ifndef UMA_MD_SMALL_ALLOC
+#if VM_KERN_SMALL_ALLOC == VM_KERN_NO_SMALL_ALLOC
 	mtx_init(&vmem_bt_lock, "btag lock", NULL, MTX_DEF);
 	uma_prealloc(vmem_bt_zone, BT_MAXALLOC);
 	/*

@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2003 Alan L. Cox <alc@cs.rice.edu>
  * All rights reserved.
  *
@@ -36,40 +38,54 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm.h>
 #include <vm/vm_page.h>
 #include <vm/vm_pageout.h>
-#include <vm/uma.h>
-#include <vm/uma_int.h>
 #include <machine/md_var.h>
 #include <machine/vmparam.h>
 
-void *
-uma_small_alloc(uma_zone_t zone, vm_size_t bytes, int domain, u_int8_t *flags,
-    int wait)
+vm_offset_t
+kmem_small_alloc_domain(int domain, int flags)
 {
-	vm_page_t m;
 	vm_paddr_t pa;
-	void *va;
+	vm_page_t m;
+	vm_offset_t va;
+	int pflags;
 
-	*flags = UMA_SLAB_PRIV;
-	m = vm_page_alloc_domain(NULL, 0, domain,
-	    malloc2vm_flags(wait) | VM_ALLOC_NOOBJ | VM_ALLOC_WIRED);
-	if (m == NULL)
-		return (NULL);
-	pa = m->phys_addr;
-	if ((wait & M_NODUMP) == 0)
+	pflags = malloc2vm_flags(flags) | VM_ALLOC_WIRED;
+#ifndef __mips_n64
+	pflags &= ~(VM_ALLOC_WAITOK | VM_ALLOC_WAITFAIL);
+	pflags |= VM_ALLOC_NOWAIT;
+#endif
+
+	for (;;) {
+		m = vm_page_alloc_freelist_domain(domain, VM_FREELIST_DIRECT,
+		    pflags);
+#ifndef __mips_n64
+		if (m == NULL && vm_page_reclaim_contig(pflags, 1,
+		    0, MIPS_KSEG0_LARGEST_PHYS, PAGE_SIZE, 0))
+			continue;
+#endif
+		if (m != NULL)
+			break;
+		if ((flags & M_NOWAIT) != 0)
+			return (NULL);
+		vm_wait(NULL);
+	}
+
+	pa = VM_PAGE_TO_PHYS(m);
+	if ((flags & M_NODUMP) == 0)
 		dump_add_page(pa);
-	va = (void *)PHYS_TO_DMAP(pa);
-	if ((wait & M_ZERO) && (m->flags & PG_ZERO) == 0)
-		bzero(va, PAGE_SIZE);
+	va = MIPS_PHYS_TO_DIRECT(pa);
+	if ((flags & M_ZERO) && (m->flags & PG_ZERO) == 0)
+		bzero((void *)va, PAGE_SIZE);
 	return (va);
 }
 
 void
-uma_small_free(void *mem, vm_size_t size, u_int8_t flags)
+kmem_small_free(vm_offset_t addr)
 {
 	vm_page_t m;
 	vm_paddr_t pa;
 
-	pa = DMAP_TO_PHYS((vm_offset_t)mem);
+	pa = MIPS_DIRECT_TO_PHYS(addr);
 	dump_drop_page(pa);
 	m = PHYS_TO_VM_PAGE(pa);
 	vm_page_unwire_noq(m);

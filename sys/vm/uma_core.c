@@ -2232,11 +2232,6 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	 * If we haven't booted yet we need allocations to go through the
 	 * startup cache until the vm is ready.
 	 */
-#ifdef UMA_MD_SMALL_ALLOC
-	if (keg->uk_ppera == 1)
-		keg->uk_allocf = uma_small_alloc;
-	else
-#endif
 	if (booted < BOOT_KVA)
 		keg->uk_allocf = startup_alloc;
 	else if (keg->uk_flags & UMA_ZONE_PCPU)
@@ -2245,11 +2240,6 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 		keg->uk_allocf = contig_alloc;
 	else
 		keg->uk_allocf = page_alloc;
-#ifdef UMA_MD_SMALL_ALLOC
-	if (keg->uk_ppera == 1)
-		keg->uk_freef = uma_small_free;
-	else
-#endif
 	if (keg->uk_flags & UMA_ZONE_PCPU)
 		keg->uk_freef = pcpu_page_free;
 	else
@@ -2871,7 +2861,7 @@ uma_startup1(vm_offset_t virtual_avail)
 	smr_init();
 }
 
-#ifndef UMA_MD_SMALL_ALLOC
+#if VM_KERN_SMALL_ALLOC == VM_KERN_NO_SMALL_ALLOC
 extern void vm_radix_reserve_kva(void);
 #endif
 
@@ -2891,7 +2881,7 @@ uma_startup2(void)
 		vm_map_unlock(kernel_map);
 	}
 
-#ifndef UMA_MD_SMALL_ALLOC
+#if VM_KERN_SMALL_ALLOC == VM_KERN_NO_SMALL_ALLOC
 	/* Set up radix zone to use noobj_alloc. */
 	vm_radix_reserve_kva();
 #endif
@@ -4683,7 +4673,7 @@ uma_zone_reserve_kva(uma_zone_t zone, int count)
 
 	pages = howmany(count, keg->uk_ipers) * keg->uk_ppera;
 
-#ifdef UMA_MD_SMALL_ALLOC
+#if VM_KERN_SMALL_ALLOC != VM_KERN_NO_SMALL_ALLOC
 	if (keg->uk_ppera > 1) {
 #else
 	if (1) {
@@ -4698,8 +4688,8 @@ uma_zone_reserve_kva(uma_zone_t zone, int count)
 	keg->uk_kva = kva;
 	keg->uk_offset = 0;
 	zone->uz_max_items = pages * keg->uk_ipers;
-#ifdef UMA_MD_SMALL_ALLOC
-	keg->uk_allocf = (keg->uk_ppera > 1) ? noobj_alloc : uma_small_alloc;
+#if VM_KERN_SMALL_ALLOC != VM_KERN_NO_SMALL_ALLOC
+	keg->uk_allocf = (keg->uk_ppera > 1) ? noobj_alloc : page_alloc;
 #else
 	keg->uk_allocf = noobj_alloc;
 #endif

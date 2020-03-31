@@ -72,11 +72,9 @@
 #endif
 
 /*
- * We provide a machine specific single page allocator through the use
- * of the direct mapped segment.  This uses 2MB pages for reduced
- * TLB pressure.
+ * Single-page kernel memory allocations can use the direct map.
  */
-#define	UMA_MD_SMALL_ALLOC
+#define	VM_KERN_SMALL_ALLOC	VM_KERN_MI_SMALL_ALLOC
 
 /*
  * The physical address space is densely populated.

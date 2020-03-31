@@ -244,6 +244,13 @@ vm_map_min(const struct vm_map *map)
 	return (map->header.end);
 }
 
+static __inline bool
+vm_map_contains(const struct vm_map *map, vm_offset_t addr, vm_size_t size)
+{
+
+	return (addr >= vm_map_min(map) && addr + size <= vm_map_max(map));
+}
+
 static __inline pmap_t
 vm_map_pmap(vm_map_t map)
 {

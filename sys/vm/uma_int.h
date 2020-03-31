@@ -664,15 +664,6 @@ uma_total_inc(unsigned long size)
 		uma_reclaim_wakeup();
 }
 
-/*
- * The following two functions may be defined by architecture specific code
- * if they can provide more efficient allocation functions.  This is useful
- * for using direct mapped addresses.
- */
-void *uma_small_alloc(uma_zone_t zone, vm_size_t bytes, int domain,
-    uint8_t *pflag, int wait);
-void uma_small_free(void *mem, vm_size_t size, uint8_t flags);
-
 /* Set a global soft limit on UMA managed memory. */
 void uma_set_limit(unsigned long limit);
 

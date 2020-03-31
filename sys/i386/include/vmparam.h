@@ -66,6 +66,11 @@
 #endif
 
 /*
+ * Single-page allocations must be mapped.
+ */
+#define	VM_KERN_SMALL_ALLOC	VM_KERN_NO_SMALL_ALLOC
+
+/*
  * Choose between DENSE and SPARSE based on whether lower execution time or
  * lower kernel address space consumption is desired.  Under PAE, kernel
  * address space is often in short supply.

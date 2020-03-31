@@ -63,6 +63,11 @@
 #endif
 
 /*
+ * Single-page allocations must be mapped.
+ */
+#define	VM_KERN_SMALL_ALLOC	VM_KERN_NO_SMALL_ALLOC
+
+/*
  * Address space constants
  */
 

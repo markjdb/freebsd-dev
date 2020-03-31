@@ -72,8 +72,9 @@
 #endif
 
 /*
- * Mach derived constants
+ * Single-page kernel memory allocations can use the direct map.
  */
+#define	VM_KERN_SMALL_ALLOC	VM_KERN_MD_SMALL_ALLOC
 
 /* user/kernel map constants */
 #define	VM_MIN_ADDRESS		((vm_offset_t)0x00000000)
@@ -137,8 +138,6 @@
 #ifndef VM_INITIAL_PAGEIN
 #define	VM_INITIAL_PAGEIN	16
 #endif
-
-#define	UMA_MD_SMALL_ALLOC
 
 /*
  * max number of non-contig chunks of physical RAM you can have

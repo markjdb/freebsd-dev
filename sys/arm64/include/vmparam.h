@@ -62,6 +62,11 @@
 #endif
 
 /*
+ * Single-page kernel memory allocations can use the direct map.
+ */
+#define	VM_KERN_SMALL_ALLOC	VM_KERN_MI_SMALL_ALLOC
+
+/*
  * The physical address space is sparsely populated.
  */
 #define	VM_PHYSSEG_SPARSE
@@ -226,8 +231,6 @@
 #ifndef	VM_INITIAL_PAGEIN
 #define	VM_INITIAL_PAGEIN	16
 #endif
-
-#define	UMA_MD_SMALL_ALLOC
 
 #ifndef LOCORE
 

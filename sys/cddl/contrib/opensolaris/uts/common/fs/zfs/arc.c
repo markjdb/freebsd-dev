@@ -4740,7 +4740,7 @@ arc_available_memory(void)
 	}
 
 #endif	/* __FreeBSD__ */
-#if defined(__i386) || !defined(UMA_MD_SMALL_ALLOC)
+#if VM_KERN_SMALL_ALLOC == VM_KERN_NO_SMALL_ALLOC
 	/*
 	 * If we're on an i386 platform, it's possible that we'll exhaust the
 	 * kernel heap space before we ever run out of available physical
@@ -6745,7 +6745,7 @@ arc_memory_throttle(spa_t *spa, uint64_t reserve, uint64_t txg)
 #ifdef _KERNEL
 	uint64_t available_memory = ptob(freemem);
 
-#if defined(__i386) || !defined(UMA_MD_SMALL_ALLOC)
+#if VM_KERN_SMALL_ALLOC == VM_KERN_NO_SMALL_ALLOC
 	available_memory = MIN(available_memory, uma_avail());
 #endif
 

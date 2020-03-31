@@ -40,9 +40,6 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_kern.h>
 #include <vm/vm_pageout.h>
 #include <vm/vm_extern.h>
-#include <vm/uma.h>
-#include <vm/uma.h>
-#include <vm/uma_int.h>
 #include <machine/md_var.h>
 #include <machine/vmparam.h>
 
@@ -50,16 +47,13 @@ static int hw_uma_mdpages;
 SYSCTL_INT(_hw, OID_AUTO, uma_mdpages, CTLFLAG_RD, &hw_uma_mdpages, 0,
 	   "UMA MD pages in use");
 
-void *
-uma_small_alloc(uma_zone_t zone, vm_size_t bytes, int domain, u_int8_t *flags,
-    int wait)
+vm_offset_t
+kmem_small_alloc(int domain, int flags)
 {
-	void *va;
 	vm_paddr_t pa;
 	vm_page_t m;
+	vm_offset_t va;
 	
-	*flags = UMA_SLAB_PRIV;
-
 	m = vm_page_alloc_domain(NULL, 0, domain,
 	    malloc2vm_flags(wait) | VM_ALLOC_WIRED | VM_ALLOC_NOOBJ);
 	if (m == NULL) 
@@ -73,32 +67,30 @@ uma_small_alloc(uma_zone_t zone, vm_size_t bytes, int domain, u_int8_t *flags,
 
 	if (!hw_direct_map) {
 		pmap_kenter(pa, pa);
-		va = (void *)(vm_offset_t)pa;
+		va = (vm_offset_t)pa;
 	} else {
-		va = (void *)(vm_offset_t)PHYS_TO_DMAP(pa);
+		va = (vm_offset_t)PHYS_TO_DMAP(pa);
 	}
 
 	if ((wait & M_ZERO) && (m->flags & PG_ZERO) == 0)
-		bzero(va, PAGE_SIZE);
+		bzero((void *)va, PAGE_SIZE);
 	atomic_add_int(&hw_uma_mdpages, 1);
 
 	return (va);
 }
 
 void
-uma_small_free(void *mem, vm_size_t size, u_int8_t flags)
+kmem_small_free(vm_offset_t addr)
 {
 	vm_page_t m;
 
 	if (hw_direct_map)
-		m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)mem));
+		m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS(addr));
 	else {
-		m = PHYS_TO_VM_PAGE(pmap_kextract((vm_offset_t)mem));
-		pmap_kremove((vm_offset_t)mem);
+		m = PHYS_TO_VM_PAGE(pmap_kextract(addr));
+		pmap_kremove(addr);
 	}
 
-	KASSERT(m != NULL,
-	    ("Freeing UMA block at %p with no associated page", mem));
 #ifdef __powerpc64__
 	dump_drop_page(VM_PAGE_TO_PHYS(m));
 #endif

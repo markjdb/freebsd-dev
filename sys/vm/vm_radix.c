@@ -342,7 +342,7 @@ vm_radix_reclaim_allnodes_int(struct vm_radix_node *rnode)
 	vm_radix_node_put(rnode, -1);
 }
 
-#ifndef UMA_MD_SMALL_ALLOC
+#if VM_KERN_SMALL_ALLOC == VM_KERN_NO_SMALL_ALLOC
 void vm_radix_reserve_kva(void);
 /*
  * Reserve the KVA necessary to satisfy the node allocation.
