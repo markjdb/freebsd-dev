@@ -1513,6 +1513,7 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
     int aflags)
 {
 	uma_domain_t dom;
+	uma_alloc allocf;
 	uma_slab_t slab;
 	unsigned long size;
 	uint8_t *mem;
@@ -1522,6 +1523,7 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	KASSERT(domain >= 0 && domain < vm_ndomains,
 	    ("keg_alloc_slab: domain %d out of range", domain));
 
+	allocf = keg->uk_allocf;
 	slab = NULL;
 	mem = NULL;
 	if (keg->uk_flags & UMA_ZFLAG_OFFPAGE) {
@@ -1545,14 +1547,12 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	else
 		aflags &= ~M_ZERO;
 
-	if ((keg->uk_flags & UMA_ZONE_NODUMP) != 0)
+	if (keg->uk_flags & UMA_ZONE_NODUMP)
 		aflags |= M_NODUMP;
-	if ((keg->uk_flags & UMA_ZONE_NOFREE) != 0)
-		aflags |= M_STABLE;
 
 	/* zone is passed for legacy reasons. */
 	size = keg->uk_ppera * PAGE_SIZE;
-	mem = keg->uk_allocf(zone, size, domain, &sflags, aflags);
+	mem = allocf(zone, size, domain, &sflags, aflags);
 	if (mem == NULL) {
 		if (keg->uk_flags & UMA_ZFLAG_OFFPAGE)
 			zone_free_item(slabzone(keg->uk_ipers),
@@ -1679,22 +1679,28 @@ startup_free(void *mem, vm_size_t bytes)
 }
 
 /*
- * Allocates slab pages requiring KVA.
+ * Allocates a number of pages from the system
+ *
+ * Arguments:
+ *	bytes  The number of bytes requested
+ *	wait  Shall we wait?
+ *
+ * Returns:
+ *	A pointer to the alloced memory or possibly
+ *	NULL if M_NOWAIT is set.
  */
 static void *
 page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
-    int flags)
+    int wait)
 {
-	void *p;
+	void *p;	/* Returned page */
 
 	*pflag = UMA_SLAB_KERNEL;
-	p = (void *)kmem_malloc_domainset(DOMAINSET_FIXED(domain), bytes, flags);
+	p = (void *)kmem_malloc_domainset(DOMAINSET_FIXED(domain), bytes, wait);
+
 	return (p);
 }
 
-/*
- * Allocates a per-CPU slab.
- */
 static void *
 pcpu_page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
     int wait)
@@ -1816,12 +1822,12 @@ noobj_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *flags,
  */
 static void *
 contig_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
-    int flags)
+    int wait)
 {
 
 	*pflag = UMA_SLAB_KERNEL;
 	return ((void *)kmem_alloc_contig_domainset(DOMAINSET_FIXED(domain),
-	    bytes, flags, 0, ~(vm_paddr_t)0, 1, 0, VM_MEMATTR_DEFAULT));
+	    bytes, wait, 0, ~(vm_paddr_t)0, 1, 0, VM_MEMATTR_DEFAULT));
 }
 
 /*
@@ -2227,7 +2233,7 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	 * startup cache until the vm is ready.
 	 */
 #ifdef UMA_MD_SMALL_ALLOC
-	if (keg->uk_ppera == 1 && (keg->uk_flags & UMA_ZONE_NOFREE) == 0)
+	if (keg->uk_ppera == 1)
 		keg->uk_allocf = uma_small_alloc;
 	else
 #endif
