@@ -1513,7 +1513,6 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
     int aflags)
 {
 	uma_domain_t dom;
-	uma_alloc allocf;
 	uma_slab_t slab;
 	unsigned long size;
 	uint8_t *mem;
@@ -1523,7 +1522,6 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	KASSERT(domain >= 0 && domain < vm_ndomains,
 	    ("keg_alloc_slab: domain %d out of range", domain));
 
-	allocf = keg->uk_allocf;
 	slab = NULL;
 	mem = NULL;
 	if (keg->uk_flags & UMA_ZFLAG_OFFPAGE) {
@@ -1552,7 +1550,7 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 
 	/* zone is passed for legacy reasons. */
 	size = keg->uk_ppera * PAGE_SIZE;
-	mem = allocf(zone, size, domain, &sflags, aflags);
+	mem = keg->uk_allocf(zone, size, domain, &sflags, aflags);
 	if (mem == NULL) {
 		if (keg->uk_flags & UMA_ZFLAG_OFFPAGE)
 			zone_free_item(slabzone(keg->uk_ipers),
