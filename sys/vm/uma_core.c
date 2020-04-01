@@ -1677,35 +1677,30 @@ startup_free(void *mem, vm_size_t bytes)
 }
 
 /*
- * Allocates a number of pages from the system
- *
- * Arguments:
- *	bytes  The number of bytes requested
- *	wait  Shall we wait?
- *
- * Returns:
- *	A pointer to the alloced memory or possibly
- *	NULL if M_NOWAIT is set.
+ * Allocates a page-sized slab from the system.
  */
 static void *
 page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
-    int wait)
+    int flags)
 {
-	void *p;	/* Returned page */
+	void *p;
 
 	*pflag = UMA_SLAB_KERNEL;
-	p = (void *)kmem_malloc_domainset(DOMAINSET_FIXED(domain), bytes, wait);
-
+	p = (void *)kmem_malloc_domainset(DOMAINSET_FIXED(domain), bytes,
+	    flags);
 	return (p);
 }
 
+/*
+ * Allocates a per-CPU slab.
+ */
 static void *
 pcpu_page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
-    int wait)
+    int flags)
 {
 	struct pglist alloctail;
 	vm_offset_t addr, zkva;
-	int cpu, flags;
+	int cpu, pflags;
 	vm_page_t p, p_next;
 #ifdef NUMA
 	struct pcpu *pc;
@@ -1714,24 +1709,24 @@ pcpu_page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
 	MPASS(bytes == (mp_maxid + 1) * PAGE_SIZE);
 
 	TAILQ_INIT(&alloctail);
-	flags = VM_ALLOC_SYSTEM | VM_ALLOC_WIRED | VM_ALLOC_NOOBJ |
-	    malloc2vm_flags(wait);
+	pflags = VM_ALLOC_SYSTEM | VM_ALLOC_WIRED | VM_ALLOC_NOOBJ |
+	    malloc2vm_flags(flags);
 	*pflag = UMA_SLAB_KERNEL;
 	for (cpu = 0; cpu <= mp_maxid; cpu++) {
 		if (CPU_ABSENT(cpu)) {
-			p = vm_page_alloc(NULL, 0, flags);
+			p = vm_page_alloc(NULL, 0, pflags);
 		} else {
 #ifndef NUMA
-			p = vm_page_alloc(NULL, 0, flags);
+			p = vm_page_alloc(NULL, 0, pflags);
 #else
 			pc = pcpu_find(cpu);
 			if (__predict_false(VM_DOMAIN_EMPTY(pc->pc_domain)))
 				p = NULL;
 			else
 				p = vm_page_alloc_domain(NULL, 0,
-				    pc->pc_domain, flags);
+				    pc->pc_domain, pflags);
 			if (__predict_false(p == NULL))
-				p = vm_page_alloc(NULL, 0, flags);
+				p = vm_page_alloc(NULL, 0, pflags);
 #endif
 		}
 		if (__predict_false(p == NULL))
@@ -1755,19 +1750,11 @@ fail:
 }
 
 /*
- * Allocates a number of pages from within an object
- *
- * Arguments:
- *	bytes  The number of bytes requested
- *	wait   Shall we wait?
- *
- * Returns:
- *	A pointer to the alloced memory or possibly
- *	NULL if M_NOWAIT is set.
+ * Allocates physical pages backing pre-reserved KVA.
  */
 static void *
-noobj_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *flags,
-    int wait)
+noobj_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
+    int flags)
 {
 	TAILQ_HEAD(, vm_page) alloctail;
 	u_long npages;
@@ -1782,7 +1769,7 @@ noobj_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *flags,
 	while (npages > 0) {
 		p = vm_page_alloc_domain(NULL, 0, domain, VM_ALLOC_INTERRUPT |
 		    VM_ALLOC_WIRED | VM_ALLOC_NOOBJ |
-		    ((wait & M_WAITOK) != 0 ? VM_ALLOC_WAITOK :
+		    ((flags & M_WAITOK) != 0 ? VM_ALLOC_WAITOK :
 		    VM_ALLOC_NOWAIT));
 		if (p != NULL) {
 			/*
@@ -1803,7 +1790,7 @@ noobj_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *flags,
 		}
 		return (NULL);
 	}
-	*flags = UMA_SLAB_PRIV;
+	*pflag = UMA_SLAB_PRIV;
 	zkva = keg->uk_kva +
 	    atomic_fetchadd_long(&keg->uk_offset, round_page(bytes));
 	retkva = zkva;
@@ -1820,12 +1807,12 @@ noobj_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *flags,
  */
 static void *
 contig_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
-    int wait)
+    int flags)
 {
 
 	*pflag = UMA_SLAB_KERNEL;
 	return ((void *)kmem_alloc_contig_domainset(DOMAINSET_FIXED(domain),
-	    bytes, wait, 0, ~(vm_paddr_t)0, 1, 0, VM_MEMATTR_DEFAULT));
+	    bytes, flags, 0, ~(vm_paddr_t)0, 1, 0, VM_MEMATTR_DEFAULT));
 }
 
 /*
