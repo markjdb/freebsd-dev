@@ -365,7 +365,7 @@ acpi_wakeup_machdep(struct acpi_softc *sc, int state, int sleep_result,
 static void *
 acpi_alloc_wakeup_handler(void *wakepages[ACPI_WAKEPAGES])
 {
-	int		i;
+	int flags, i;
 
 	memset(wakepages, 0, ACPI_WAKEPAGES * sizeof(*wakepages));
 
@@ -377,12 +377,12 @@ acpi_alloc_wakeup_handler(void *wakepages[ACPI_WAKEPAGES])
 	 * page-aligned.
 	 */
 	for (i = 0; i < ACPI_WAKEPAGES; i++) {
-		wakepages[i] = contigmalloc(PAGE_SIZE, M_DEVBUF,
-		    M_NOWAIT
+		flags = M_NOWAIT;
 #ifdef __i386__
-			     | M_EXEC
+		flags |= M_EXEC;
 #endif
-		    , 0x500, 0xa0000, PAGE_SIZE, 0ul);
+		wakepages[i] = contigmalloc(PAGE_SIZE, M_DEVBUF, flags,
+		    0x500, 0xa0000, PAGE_SIZE, 0ul);
 		if (wakepages[i] == NULL) {
 			printf("%s: can't alloc wake memory\n", __func__);
 			goto freepages;
