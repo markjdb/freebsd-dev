@@ -342,6 +342,7 @@ kmem_alloc_contig_domain(int domain, vm_size_t size, int flags, vm_paddr_t low,
 	vmem_t *vmem;
 	vm_object_t object;
 	vm_offset_t addr, offset, tmp;
+	vm_paddr_t pa;
 	vm_page_t end_m, m;
 	u_long npages;
 	int pflags;
@@ -349,36 +350,50 @@ kmem_alloc_contig_domain(int domain, vm_size_t size, int flags, vm_paddr_t low,
 	KASSERT((flags & M_EXEC) == 0,
 	    ("%s: M_EXEC is not supported", __func__));
 
-	object = kernel_object;
-	size = round_page(size);
-	vmem = vm_dom[domain].vmd_kernel_arena;
-	if (vmem_alloc(vmem, size, flags | M_BESTFIT, &addr))
-		return (0);
-	offset = addr - VM_MIN_KERNEL_ADDRESS;
 	pflags = malloc2vm_flags(flags) | VM_ALLOC_WIRED;
+	size = round_page(size);
 	npages = atop(size);
-	VM_OBJECT_WLOCK(object);
-	m = kmem_alloc_contig_pages(object, atop(offset), domain,
-	    pflags, npages, low, high, alignment, boundary, memattr);
-	if (m == NULL) {
+
+	if (VM_KERN_SMALL_ALLOC == VM_KERN_MI_SMALL_ALLOC) {
+		pflags |= VM_ALLOC_NOOBJ;
+		m = kmem_alloc_contig_pages(NULL, 0, domain,
+		    pflags, npages, low, high, alignment, boundary, memattr);
+		if (m != NULL) {
+			pa = m->phys_addr;
+			addr = pmap_map(&addr, pa, pa + ptoa(npages),
+			    VM_PROT_RW);
+		} else {
+			addr = 0;
+		}
+	} else {
+		object = kernel_object;
+		vmem = vm_dom[domain].vmd_kernel_arena;
+		if (vmem_alloc(vmem, size, flags | M_BESTFIT, &addr))
+			return (0);
+		offset = addr - VM_MIN_KERNEL_ADDRESS;
+		VM_OBJECT_WLOCK(object);
+		m = kmem_alloc_contig_pages(object, atop(offset), domain,
+		    pflags, npages, low, high, alignment, boundary, memattr);
+		if (m == NULL) {
+			VM_OBJECT_WUNLOCK(object);
+			vmem_free(vmem, addr, size);
+			return (0);
+		}
+		KASSERT(vm_phys_domain(m) == domain,
+		    ("kmem_alloc_contig_domain: Domain mismatch %d != %d",
+		    vm_phys_domain(m), domain));
+		end_m = m + npages;
+		tmp = addr;
+		for (; m < end_m; m++) {
+			if ((flags & M_ZERO) && (m->flags & PG_ZERO) == 0)
+				pmap_zero_page(m);
+			vm_page_valid(m);
+			pmap_enter(kernel_pmap, tmp, m, VM_PROT_RW,
+			    VM_PROT_RW | PMAP_ENTER_WIRED, 0);
+			tmp += PAGE_SIZE;
+		}
 		VM_OBJECT_WUNLOCK(object);
-		vmem_free(vmem, addr, size);
-		return (0);
 	}
-	KASSERT(vm_phys_domain(m) == domain,
-	    ("kmem_alloc_contig_domain: Domain mismatch %d != %d",
-	    vm_phys_domain(m), domain));
-	end_m = m + npages;
-	tmp = addr;
-	for (; m < end_m; m++) {
-		if ((flags & M_ZERO) && (m->flags & PG_ZERO) == 0)
-			pmap_zero_page(m);
-		vm_page_valid(m);
-		pmap_enter(kernel_pmap, tmp, m, VM_PROT_RW,
-		    VM_PROT_RW | PMAP_ENTER_WIRED, 0);
-		tmp += PAGE_SIZE;
-	}
-	VM_OBJECT_WUNLOCK(object);
 	return (addr);
 }
 
