@@ -478,7 +478,7 @@ kmem_malloc_domain(int domain, vm_size_t size, int flags)
 	size = round_page(size);
 	if (__predict_true((flags & M_EXEC) == 0)) {
 #if VM_KERN_SMALL_ALLOC != VM_KERN_NO_SMALL_ALLOC
-		if (size == PAGE_SIZE && (flags & M_EXEC) == 0)
+		if (size == PAGE_SIZE)
 			return (kmem_small_alloc_domain(domain, flags));
 #endif
 		arena = vm_dom[domain].vmd_kernel_arena;
