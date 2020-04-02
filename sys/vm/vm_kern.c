@@ -216,6 +216,23 @@ kmem_small_free(vm_offset_t addr)
 }
 #endif
 
+#if VM_NRESERVLEVEL > 0
+static vm_offset_t
+kmem_alloc_nofree(int domain, vm_size_t size, u_long align, int flags)
+{
+	vm_offset_t addr;
+
+	KASSERT(size + align <= KVA_QUANTUM,
+	    ("%s: unhandled size %#lx and alignment %#lx",
+	    __func__, size, align));
+
+	if (vmem_xalloc(vm_dom[domain].vmd_kernel_nofree_arena, size, align,
+	    0, 0, VMEM_ADDR_MIN, VMEM_ADDR_MAX, flags | M_BESTFIT, &addr) != 0)
+		return (0);
+	return (addr);
+}
+#endif
+
 static vm_page_t
 kmem_alloc_contig_pages(vm_object_t object, vm_pindex_t pindex, int domain,
     int pflags, u_long npages, vm_paddr_t low, vm_paddr_t high,
@@ -350,10 +367,21 @@ kmem_alloc_contig_domain(int domain, vm_size_t size, int flags, vm_paddr_t low,
 	KASSERT((flags & M_EXEC) == 0,
 	    ("%s: M_EXEC is not supported", __func__));
 
-	pflags = malloc2vm_flags(flags) | VM_ALLOC_WIRED;
 	size = round_page(size);
 	npages = atop(size);
+	if ((flags & M_STABLE) != 0) {
+		flags &= ~M_STABLE;
+#if VM_NRESERVLEVEL > 0
+		if (low == 0 && high == ~(vm_paddr_t)0 && boundary == 0) {
+			addr = kmem_alloc_nofree(domain, size, alignment,
+			    flags);
+			if (addr != 0)
+				return (addr);
+		}
+#endif
+	}
 
+	pflags = malloc2vm_flags(flags) | VM_ALLOC_WIRED;
 	if (VM_KERN_SMALL_ALLOC == VM_KERN_MI_SMALL_ALLOC) {
 		pflags |= VM_ALLOC_NOOBJ;
 		m = kmem_alloc_contig_pages(NULL, 0, domain,
@@ -477,6 +505,15 @@ kmem_malloc_domain(int domain, vm_size_t size, int flags)
 
 	size = round_page(size);
 	if (__predict_true((flags & M_EXEC) == 0)) {
+		if ((flags & M_STABLE) != 0) {
+			flags &= ~M_STABLE;
+#if VM_NRESERVLEVEL > 0
+			addr = kmem_alloc_nofree(domain, size, PAGE_SIZE,
+			    flags);
+			if (addr != 0)
+				return (addr);
+#endif
+		}
 #if VM_KERN_SMALL_ALLOC != VM_KERN_NO_SMALL_ALLOC
 		if (size == PAGE_SIZE)
 			return (kmem_small_alloc_domain(domain, flags));
@@ -818,6 +855,30 @@ kva_import_domain(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
 	    VMEM_ADDR_MAX, flags, addrp));
 }
 
+#if VM_NRESERVLEVEL > 0
+static int
+kva_import_nofree(void *arg, vmem_size_t size, int flags, vmem_addr_t *addrp)
+{
+	int domain;
+
+	domain = (int)(uintptr_t)arg;
+	KASSERT(domain >= 0 && domain < vm_ndomains,
+	    ("%s: Invalid domain index %d", __func__, domain));
+	KASSERT((size % KVA_QUANTUM) == 0,
+	    ("%s: Size %jd is not a multiple of %d", __func__,
+	    (intmax_t)size, (int)KVA_QUANTUM));
+
+	*addrp = (vmem_addr_t)kmem_alloc_contig_domain(domain, size, flags,
+	    0, ~(vm_paddr_t)0, KVA_QUANTUM, 0, VM_MEMATTR_DEFAULT);
+	if (*addrp == 0) {
+		return (ENOMEM);
+	} else {
+		memset((void *)*addrp, 0, size);
+		return (0);
+	}
+}
+#endif
+
 /*
  * 	kmem_init:
  *
@@ -880,9 +941,13 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 
 		/*
 		 * In architectures with superpages, maintain separate arenas
-		 * for allocations with permissions that differ from the
-		 * "standard" read/write permissions used for kernel memory,
-		 * so as not to inhibit superpage promotion.
+		 * for
+		 * 1) allocations with permissions that differ from the
+		 *    "standard" read/write permissions used for kernel memory,
+		 *    and
+		 * 2) allocations which are never going to be freed.
+		 *
+		 * This helps minimize fragmentation of physical memory.
 		 */
 #if VM_NRESERVLEVEL > 0
 		vm_dom[domain].vmd_kernel_rwx_arena = vmem_create(
@@ -890,8 +955,15 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 		vmem_set_import(vm_dom[domain].vmd_kernel_rwx_arena,
 		    kva_import_domain, (vmem_release_t *)vmem_xfree,
 		    kernel_arena, KVA_QUANTUM);
+		vm_dom[domain].vmd_kernel_nofree_arena = vmem_create(
+		    "kernel nofree arena domain", 0, 0, PAGE_SIZE, 0, M_WAITOK);
+		vmem_set_import(vm_dom[domain].vmd_kernel_nofree_arena,
+		    kva_import_nofree, (vmem_release_t *)vmem_xfree,
+		    (void *)(uintptr_t)domain, KVA_QUANTUM);
 #else
 		vm_dom[domain].vmd_kernel_rwx_arena =
+		    vm_dom[domain].vmd_kernel_arena;
+		vm_dom[domain].vmd_kernel_nofree_arena =
 		    vm_dom[domain].vmd_kernel_arena;
 #endif
 	}

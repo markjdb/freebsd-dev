@@ -1545,8 +1545,10 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	else
 		aflags &= ~M_ZERO;
 
-	if (keg->uk_flags & UMA_ZONE_NODUMP)
+	if ((keg->uk_flags & UMA_ZONE_NODUMP) != 0)
 		aflags |= M_NODUMP;
+	if ((keg->uk_flags & UMA_ZONE_NOFREE) != 0)
+		aflags |= M_STABLE;
 
 	/* zone is passed for legacy reasons. */
 	size = keg->uk_ppera * PAGE_SIZE;
