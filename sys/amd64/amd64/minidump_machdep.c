@@ -54,6 +54,7 @@ __FBSDID("$FreeBSD$");
 
 CTASSERT(sizeof(struct kerneldumpheader) == 512);
 
+#define	NBDUMPSLOT	(sizeof(*vm_page_dump) * NBBY)
 uint64_t *vm_page_dump;
 int vm_page_dump_size;
 
@@ -220,14 +221,14 @@ static pd_entry_t fakepd[NPDEPG];
 int
 minidumpsys(struct dumperinfo *di)
 {
-	uint32_t pmapsize;
-	vm_offset_t va;
-	int error;
-	uint64_t bits;
-	uint64_t *pml4, *pdp, *pd, *pt, pa;
-	int i, ii, j, k, n, bit;
-	int retry_count;
 	struct minidumphdr mdhdr;
+	vm_offset_t va;
+	vm_paddr_t pa;
+	long hi, lo;
+	uint64_t bit, bits;
+	uint64_t *pml4, *pdp, *pd, *pt;
+	uint32_t pmapsize;
+	int end, error, i, ii, j, k, n, retry_count;
 
 	retry_count = 0;
  retry:
@@ -309,7 +310,7 @@ minidumpsys(struct dumperinfo *di)
 		bits = vm_page_dump[i];
 		while (bits) {
 			bit = bsfq(bits);
-			pa = (((uint64_t)i * sizeof(*vm_page_dump) * NBBY) + bit) * PAGE_SIZE;
+			pa = (i * NBDUMPSLOT + bit) * PAGE_SIZE;
 			/* Clear out undumpable pages now if needed */
 			if (is_dumpable(pa)) {
 				dumpsize += PAGE_SIZE;
@@ -408,18 +409,36 @@ minidumpsys(struct dumperinfo *di)
 			goto fail;
 	}
 
-	/* Dump memory chunks */
-	/* XXX cluster it up and use blk_dump() */
-	for (i = 0; i < vm_page_dump_size / sizeof(*vm_page_dump); i++) {
+	/*
+	 * Dump physical pages.  To minimize I/O, search for a maximal run of
+	 * contiguous marked pages before writing.
+	 */
+	end = vm_page_dump_size / sizeof(*vm_page_dump);
+	for (i = 0, hi = lo = -1; i < end; i++) {
 		bits = vm_page_dump[i];
-		while (bits) {
+		bits ^= (bits << 1ul) | (hi != lo ? 1 : 0);
+		while (bits != 0) {
 			bit = bsfq(bits);
-			pa = (((uint64_t)i * sizeof(*vm_page_dump) * NBBY) + bit) * PAGE_SIZE;
-			error = blk_write(di, 0, pa, PAGE_SIZE);
-			if (error)
-				goto fail;
 			bits &= ~(1ul << bit);
+			if (hi == lo) {
+				lo = i * NBDUMPSLOT + bit;
+			} else {
+				hi = i * NBDUMPSLOT + bit;
+				error = blk_write(di, 0, lo * PAGE_SIZE,
+				    (hi - lo) * PAGE_SIZE);
+				if (error != 0)
+					goto fail;
+				hi = lo = -1;
+			}
 		}
+	}
+
+	/* Flush an unterminated run. */
+	if (hi != lo) {
+		hi = end * NBDUMPSLOT;
+		error = blk_write(di, 0, lo * PAGE_SIZE, (hi - lo) * PAGE_SIZE);
+		if (error != 0)
+			goto fail;
 	}
 
 	error = blk_flush(di);
