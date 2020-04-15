@@ -1138,6 +1138,7 @@ main(int argc, CHAR16 *argv[])
 	 * the boot protocol and also allow an escape hatch for users wishing
 	 * to try something different.
 	 */
+	setenv("rootdev", "disk0p2", 1);
 	if (find_currdev(uefi_boot_mgr, is_last, boot_info, bisz) != 0)
 		if (uefi_boot_mgr &&
 		    !interactive_interrupt("Failed to find bootable partition"))
