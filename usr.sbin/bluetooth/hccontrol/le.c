@@ -52,7 +52,7 @@ static int le_set_scan_param(int s, int argc, char *argv[]);
 static int le_set_scan_enable(int s, int argc, char *argv[]);
 static int parse_param(int argc, char *argv[], char *buf, int *len);
 static int le_set_scan_response(int s, int argc, char *argv[]);
-static int le_read_supported_status(int s, int argc, char *argv[]);
+static int le_read_supported_states(int s, int argc, char *argv[]);
 static int le_read_local_supported_features(int s, int argc ,char *argv[]);
 static int set_le_event_mask(int s, uint64_t mask);
 static int set_event_mask(int s, uint64_t mask);
@@ -225,35 +225,60 @@ static int
 le_read_local_supported_features(int s, int argc ,char *argv[])
 {
 	ng_hci_le_read_local_supported_features_rp rp;
-	int e;
 	int n = sizeof(rp);
 
-	e = hci_simple_request(s,
+	union {
+		uint64_t raw;
+		uint8_t octets[8];
+	} le_features;
+
+	char buffer[2048];
+
+	if (hci_simple_request(s,
 			NG_HCI_OPCODE(NG_HCI_OGF_LE,
 			NG_HCI_OCF_LE_READ_LOCAL_SUPPORTED_FEATURES), 
-			(void *)&rp, &n);
+			(void *)&rp, &n) == ERROR)
+		return (ERROR);
 
-	printf("LOCAL SUPPORTED: %d %d %jx\n", e, rp.status,
-	       (uintmax_t) rp.le_features);
+	if (rp.status != 0x00) {
+		fprintf(stdout, "Status: %s [%#02x]\n", 
+			hci_status2str(rp.status), rp.status);
+		return (FAILED);
+	}
 
-	return 0;
+	le_features.raw = rp.le_features;
+
+	fprintf(stdout, "LE Features: ");
+	for(int i = 0; i < 8; i++)
+                fprintf(stdout, " %#02x", le_features.octets[i]);
+	fprintf(stdout, "\n%s\n", hci_le_features2str(le_features.octets, 
+		buffer, sizeof(buffer)));
+	fprintf(stdout, "\n");
+
+	return OK;
 }
 
 static int
-le_read_supported_status(int s, int argc, char *argv[])
+le_read_supported_states(int s, int argc, char *argv[])
 {
-	ng_hci_le_read_supported_status_rp rp;
-	int e;
+	ng_hci_le_read_supported_states_rp rp;
 	int n = sizeof(rp);
 
-	e = hci_simple_request(s, NG_HCI_OPCODE(
+	if (hci_simple_request(s, NG_HCI_OPCODE(
 					NG_HCI_OGF_LE,
-					NG_HCI_OCF_LE_READ_SUPPORTED_STATUS),
-			       		(void *)&rp, &n);
+					NG_HCI_OCF_LE_READ_SUPPORTED_STATES),
+			       		(void *)&rp, &n) == ERROR)
+		return (ERROR);
 
-	printf("LE_STATUS: %d %d %jx\n", e, rp.status, (uintmax_t)rp.le_status);
+	if (rp.status != 0x00) {
+		fprintf(stdout, "Status: %s [%#02x]\n", 
+			hci_status2str(rp.status), rp.status);
+		return (FAILED);
+	}
 
-	return 0;
+	fprintf(stdout, "LE States: %jx\n", rp.le_states);
+	
+	return (OK); 
 }
 
 static int
@@ -328,11 +353,11 @@ struct hci_command le_commands[] = {
 	  &le_read_local_supported_features,
   },
   {
-	  "le_read_supported_status",
-	  "le_read_supported_status\n"
+	  "le_read_supported_states",
+	  "le_read_supported_states\n"
 	  "read supported status"	  
 	  ,
-	  &le_read_supported_status,
+	  &le_read_supported_states,
   },
   {
 	  "le_set_scan_response",
