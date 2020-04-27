@@ -1247,6 +1247,9 @@ ithread_loop(void *arg)
 	}
 }
 
+static int panic_on_intr;
+SYSCTL_INT(_debug, OID_AUTO, panic_on_intr, CTLFLAG_RW, &panic_on_intr, 0, "");
+
 /*
  * Main interrupt handling body.
  *
@@ -1315,6 +1318,9 @@ intr_event_handle(struct intr_event *ie, struct trapframe *frame)
 			ret = ih->ih_filter(frame);
 		else
 			ret = ih->ih_filter(ih->ih_argument);
+		if (PCPU_GET(cpuid) == 0 && atomic_cmpset_int(&panic_on_intr, 1, 0)) {
+			panic("panic_on_intr");
+		}
 		KASSERT(ret == FILTER_STRAY ||
 		    ((ret & (FILTER_SCHEDULE_THREAD | FILTER_HANDLED)) != 0 &&
 		    (ret & ~(FILTER_SCHEDULE_THREAD | FILTER_HANDLED)) == 0),
