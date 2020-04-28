@@ -34,18 +34,18 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/blockcount.h>
 #include <sys/capsicum.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/ktls.h>
-#include <sys/mutex.h>
 #include <sys/malloc.h>
+#include <sys/mbuf.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
-#include <sys/mbuf.h>
+#include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/protosw.h>
-#include <sys/rwlock.h>
 #include <sys/sf_buf.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
@@ -103,37 +103,25 @@ struct sf_io {
  * Structure used to track requests with SF_SYNC flag.
  */
 struct sendfile_sync {
-	struct mtx	mtx;
-	struct cv	cv;
-	unsigned	count;
-	bool		waiting;
+	u_int		refcount;	/* structure references */
+	blockcount_t	count;		/* outstanding mbufs */
 };
 
 static void
-sendfile_sync_destroy(struct sendfile_sync *sfs)
+sendfile_sync_attach(struct mbuf *m, struct sendfile_sync *sfs)
 {
-	KASSERT(sfs->count == 0, ("sendfile sync %p still busy", sfs));
-
-	cv_destroy(&sfs->cv);
-	mtx_destroy(&sfs->mtx);
-	free(sfs, M_SENDFILE);
+	m->m_ext.ext_flags |= EXT_FLAG_SYNC;
+	if (m->m_ext.ext_type == EXT_PGS)
+		m->m_ext.ext_arg1 = sfs;
+	else
+		m->m_ext.ext_arg2 = sfs;
 }
 
 static void
-sendfile_sync_signal(struct sendfile_sync *sfs)
+sendfile_sync_release(struct sendfile_sync *sfs)
 {
-	mtx_lock(&sfs->mtx);
-	KASSERT(sfs->count > 0, ("sendfile sync %p not busy", sfs));
-	if (--sfs->count == 0) {
-		if (!sfs->waiting) {
-			/* The sendfile() waiter was interrupted by a signal. */
-			sendfile_sync_destroy(sfs);
-			return;
-		} else {
-			cv_signal(&sfs->cv);
-		}
-	}
-	mtx_unlock(&sfs->mtx);
+	if (refcount_release(&sfs->refcount))
+		free(sfs, M_SENDFILE);
 }
 
 counter_u64_t sfstat[sizeof(struct sfstat) / sizeof(uint64_t)];
@@ -165,6 +153,7 @@ SYSCTL_PROC(_kern_ipc, OID_AUTO, sfstat,
 static void
 sendfile_free_mext(struct mbuf *m)
 {
+	struct sendfile_sync *sfs;
 	struct sf_buf *sf;
 	vm_page_t pg;
 	int flags;
@@ -180,8 +169,9 @@ sendfile_free_mext(struct mbuf *m)
 	vm_page_release(pg, flags);
 
 	if (m->m_ext.ext_flags & EXT_FLAG_SYNC) {
-		struct sendfile_sync *sfs = m->m_ext.ext_arg2;
-		sendfile_sync_signal(sfs);
+		sfs = m->m_ext.ext_arg2;
+		blockcount_release(&sfs->count, 1);
+		sendfile_sync_release(sfs);
 	}
 }
 
@@ -189,6 +179,7 @@ static void
 sendfile_free_mext_pg(struct mbuf *m)
 {
 	struct mbuf_ext_pgs *ext_pgs;
+	struct sendfile_sync *sfs;
 	vm_page_t pg;
 	int flags, i;
 	bool cache_last;
@@ -208,8 +199,9 @@ sendfile_free_mext_pg(struct mbuf *m)
 	}
 
 	if (m->m_ext.ext_flags & EXT_FLAG_SYNC) {
-		struct sendfile_sync *sfs = m->m_ext.ext_arg1;
-		sendfile_sync_signal(sfs);
+		sfs = m->m_ext.ext_arg1;
+		blockcount_release(&sfs->count, 1);
+		sendfile_sync_release(sfs);
 	}
 }
 
@@ -699,6 +691,7 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	struct sendfile_sync *sfs;
 	struct vattr va;
 	off_t off, sbytes, rem, obj_size;
+	u_int sfscount;
 	int bsize, error, ext_pgs_idx, hdrlen, max_pgs, softerr;
 #ifdef KERN_TLS
 	int tls_enq_cnt;
@@ -733,11 +726,11 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	SFSTAT_INC(sf_syscalls);
 	SFSTAT_ADD(sf_rhpages_requested, SF_READAHEAD(flags));
 
-	if (flags & SF_SYNC) {
-		sfs = malloc(sizeof(*sfs), M_SENDFILE, M_WAITOK | M_ZERO);
-		mtx_init(&sfs->mtx, "sendfile", NULL, MTX_DEF);
-		cv_init(&sfs->cv, "sendfile");
-		sfs->waiting = true;
+	if ((flags & SF_SYNC) != 0) {
+		sfs = malloc(sizeof(*sfs), M_SENDFILE, M_WAITOK);
+		refcount_init(&sfs->refcount, 1);
+		blockcount_init(&sfs->count);
+		sfscount = 0;
 	}
 
 	rem = nbytes ? omin(nbytes, obj_size - offset) : obj_size - offset;
@@ -1016,18 +1009,8 @@ retry_space:
 							    EXT_FLAG_CACHE_LAST;
 					}
 					if (sfs != NULL) {
-						m0->m_ext.ext_flags |=
-						    EXT_FLAG_SYNC;
-						if (m0->m_ext.ext_type ==
-						    EXT_PGS)
-							m0->m_ext.ext_arg1 =
-								sfs;
-						else
-							m0->m_ext.ext_arg2 =
-								sfs;
-						mtx_lock(&sfs->mtx);
-						sfs->count++;
-						mtx_unlock(&sfs->mtx);
+						sendfile_sync_attach(m0, sfs);
+						sfscount++;
 					}
 					ext_pgs = &m0->m_ext_pgs;
 					ext_pgs_idx = 0;
@@ -1099,15 +1082,8 @@ retry_space:
 			    !(rem > space || rhpages > 0)))
 				m0->m_ext.ext_flags |= EXT_FLAG_NOCACHE;
 			if (sfs != NULL) {
-				m0->m_ext.ext_flags |= EXT_FLAG_SYNC;
-				if (m0->m_ext.ext_type == EXT_PGS)
-					m0->m_ext.ext_arg1 = sfs;
-				else
-					m0->m_ext.ext_arg2 = sfs;
-				m0->m_ext.ext_arg2 = sfs;
-				mtx_lock(&sfs->mtx);
-				sfs->count++;
-				mtx_unlock(&sfs->mtx);
+				sendfile_sync_attach(m0, sfs);
+				sfscount++;
 			}
 			m0->m_ext.ext_count = 1;
 			m0->m_flags |= (M_EXT | M_RDONLY);
@@ -1161,6 +1137,11 @@ prepend_header:
 		if (tls != NULL)
 			ktls_frame(m, tls, &tls_enq_cnt, TLS_RLTYPE_APP);
 #endif
+		if (sfs != NULL) {
+			blockcount_acquire(&sfs->count, sfscount);
+			refcount_acquiren(&sfs->refcount, sfscount);
+			sfscount = 0;
+		}
 		if (nios == 0) {
 			/*
 			 * If sendfile_swapin() didn't initiate any I/Os,
@@ -1238,15 +1219,13 @@ out:
 		m_freem(mh);
 
 	if (sfs != NULL) {
-		mtx_lock(&sfs->mtx);
-		if (sfs->count != 0)
-			error = cv_wait_sig(&sfs->cv, &sfs->mtx);
-		if (sfs->count == 0) {
-			sendfile_sync_destroy(sfs);
-		} else {
-			sfs->waiting = false;
-			mtx_unlock(&sfs->mtx);
+		if (error == 0) {
+			error = blockcount_sleep(&sfs->count, NULL, "sfsync",
+			    PUSER | PCATCH);
+			if (error == EAGAIN)
+				error = 0;
 		}
+		sendfile_sync_release(sfs);
 	}
 #ifdef KERN_TLS
 	if (tls != NULL)
