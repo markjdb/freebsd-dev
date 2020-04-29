@@ -61,7 +61,7 @@
 #include <net/if_var.h>
 #include <net/if_dl.h>
 #include <net/route.h>
-#include <net/route_var.h>
+#include <net/route/route_var.h>
 #include <net/route/nhop.h>
 #include <net/route/shared.h>
 #include <net/vnet.h>
@@ -431,28 +431,6 @@ sys_setfib(struct thread *td, struct setfib_args *uap)
 		return EINVAL;
 	td->td_proc->p_fibnum = uap->fibnum;
 	return (0);
-}
-
-/*
- * Packet routing routines.
- */
-void
-rtalloc_ign_fib(struct route *ro, u_long ignore, u_int fibnum)
-{
-	struct rtentry *rt;
-
-	if (ro->ro_nh != NULL) {
-		if (NH_IS_VALID(ro->ro_nh))
-			return;
-		NH_FREE(ro->ro_nh);
-		ro->ro_nh = NULL;
-	}
-	rt = rtalloc1_fib(&ro->ro_dst, 1, ignore, fibnum);
-	if (rt != NULL) {
-		ro->ro_nh = rt->rt_nhop;
-		nhop_ref_object(rt->rt_nhop);
-		RT_UNLOCK(rt);
-	}
 }
 
 /*
