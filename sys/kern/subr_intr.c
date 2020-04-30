@@ -140,7 +140,7 @@ static boolean_t irq_assign_cpu = FALSE;
 #endif
 
 #ifdef RESCUE_SUPPORT
-static DPCPU_DEFINE(struct intr_irqsrc *, isrc_active);
+DPCPU_DEFINE_STATIC(struct intr_irqsrc *, isrc_active);
 #define	ISRC_ACTIVE_SET(ptr)	DPCPU_SET(isrc_active, (ptr))
 #else
 #define	ISRC_ACTIVE_SET(ptr)

@@ -203,9 +203,9 @@ rescue_kernel_init(void *arg __unused)
 		return;
 	}
 
-	rescue_va = kmem_alloc_contig(kernel_arena, RESCUE_RESERV_SIZE,
-	    M_WAITOK, 0, ~(vm_paddr_t)0,
-	    RESCUE_RESERV_ALIGN, RESCUE_RESERV_BOUNDARY, VM_MEMATTR_DEFAULT);
+	rescue_va = kmem_alloc_contig(RESCUE_RESERV_SIZE, M_WAITOK, 0,
+	    ~(vm_paddr_t)0, RESCUE_RESERV_ALIGN, RESCUE_RESERV_BOUNDARY,
+	    VM_MEMATTR_DEFAULT);
 	if (rescue_va == 0) {
 		printf("rescue: failed to reserve contiguous memory\n");
 		goto out;
@@ -333,7 +333,8 @@ rescue_kernel_init(void *arg __unused)
 	 */
 	memset(&di, 0, sizeof(di));
 	di.dumper = rescue_dumper_dummy;
-	error = set_dumper(&di, "rescue", curthread);
+	error = set_dumper(&di, "rescue", curthread, KERNELDUMP_COMP_NONE,
+	    KERNELDUMP_ENC_NONE, NULL, 0, NULL);
 	if (error != 0) {
 		printf("rescue: failed to set dump device: %d\n", error);
 		goto out;
@@ -345,7 +346,7 @@ rescue_kernel_init(void *arg __unused)
 
 out:
 	if (rescue_va != 0) {
-		kmem_free(kernel_arena, rescue_va, RESCUE_RESERV_SIZE);
+		kmem_free(rescue_va, RESCUE_RESERV_SIZE);
 		rescue_va = 0;
 		rescue_pa = 0;
 	}
