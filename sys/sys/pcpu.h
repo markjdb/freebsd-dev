@@ -247,14 +247,14 @@ extern struct pcpu *cpuid_to_pcpu[];
 #endif
 
 /* Accessor to elements allocated via UMA_ZONE_PCPU zone. */
-#define zpcpu_get(base) ({								\
-	__typeof(base) _ptr = (void *)((char *)(base) + zpcpu_offset());		\
-	_ptr;										\
+#define zpcpu_get(base) ({						\
+	__typeof(base) _ptr = (void *)((char *)(base) + zpcpu_offset());\
+	_ptr;								\
 })
 
-#define zpcpu_get_cpu(base, cpu) ({							\
-	__typeof(base) _ptr = (void *)((char *)(base) +	zpcpu_offset_cpu(cpu));		\
-	_ptr;										\
+#define zpcpu_get_cpu(base, cpu) ({					\
+	__typeof(base) _ptr = (void *)((char *)(base) +	zpcpu_offset_cpu(cpu));\
+	_ptr;								\
 })
 
 /*
