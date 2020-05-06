@@ -138,10 +138,13 @@ rescue_kernel_exec(void)
 
 	/*
 	 * Prepare the dump parameters structure for the rescue kernel.  The
-	 * rest of the parameters must already have been initialized.
+	 * rest of the parameters must already have been initialized.  These
+	 * will be accessed via an aliasing mapping, so make sure the cache is
+	 * written back.
 	 */
 	params = (struct rescue_kernel_params *)rescue_va;
 	rescue_dump_params_init(&params->kp_dumpparams);
+	cpu_dcache_wb_range((vm_offset_t)params, sizeof(*params));
 
 	/*
 	 * Construct an identity map for the rescue kernel's locore.  This
@@ -163,7 +166,7 @@ rescue_kernel_exec(void)
 	 * this is really a hack to avoid modifying locore.
 	 */
 	rescue = (void *)(rescue_pa + RESCUE_RESERV_KERNEL_OFFSET + PAGE_SIZE);
-	(rescue)(rescue_pa + RESCUE_RESERV_SIZE);
+	(rescue)(KERNBASE + RESCUE_RESERV_SIZE);
 }
 
 /*
@@ -326,6 +329,8 @@ rescue_kernel_init(void *arg __unused)
 	kernlen = (u_long)&__rescue_kernel_end - (u_long)&__rescue_kernel_start;
 	memcpy((void *)(rescue_va + off), (void *)&__rescue_kernel_start,
 	    kernlen);
+
+	cpu_idcache_wbinv_range(rescue_va, RESCUE_RESERV_SIZE);
 
 	/*
 	 * Finally tell the generic kernel dump layer that a dump device

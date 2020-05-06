@@ -34,6 +34,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
+#include <sys/sysctl.h>
 #include <sys/uio.h>
 
 #include <vm/vm.h>
@@ -68,6 +69,8 @@ struct dump_softc {
 	u_long			sc_npages;
 	off_t			sc_cursor;
 };
+
+FEATURE(rescue, "rescue kernel dumper");
 
 static MALLOC_DEFINE(M_DUMPER, "dumper", "Rescue dumper structures");
 
