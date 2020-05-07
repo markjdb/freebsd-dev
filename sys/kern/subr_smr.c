@@ -146,6 +146,14 @@ __FBSDID("$FreeBSD$");
 static uma_zone_t smr_shared_zone;
 static uma_zone_t smr_zone;
 
+enum {
+	BOOT_COLD = 1,
+	BOOT_ZONE = 2,
+	BOOT_PCPU = 3,
+} booted = BOOT_COLD;
+
+static smr_shared_t smr_init_list;
+
 #ifndef INVARIANTS
 #define	SMR_SEQ_INIT	1		/* All valid sequence numbers are odd. */
 #define	SMR_SEQ_INCR	2
@@ -582,12 +590,28 @@ out:
 	return (success);
 }
 
+static void
+smr_init_cpu(smr_shared_t s, int cpu, int limit, int flags)
+{
+	smr_t c;
+
+	c = zpcpu_get_cpu(s->s_cpu, cpu);
+	c->c_seq = SMR_SEQ_INVALID;
+	c->c_shared = s;
+	c->c_deferred = 0;
+	c->c_limit = limit;
+	c->c_flags = flags;
+}
+
 smr_t
 smr_create(const char *name, int limit, int flags)
 {
-	smr_t smr, c;
+	smr_t smr;
 	smr_shared_t s;
 	int i;
+
+	KASSERT(booted >= BOOT_ZONE,
+	    ("%s: SMR is not yet initialized", __func__));
 
 	s = uma_zalloc(smr_shared_zone, M_WAITOK);
 	smr = uma_zalloc_pcpu(smr_zone, M_WAITOK);
@@ -595,17 +619,22 @@ smr_create(const char *name, int limit, int flags)
 	s->s_name = name;
 	s->s_rd_seq = s->s_wr.seq = SMR_SEQ_INIT;
 	s->s_wr.ticks = ticks;
+	s->s_cpu = smr;
 
-	/* Initialize all CPUS, not just those running. */
-	for (i = 0; i <= mp_maxid; i++) {
-		c = zpcpu_get_cpu(smr, i);
-		c->c_seq = SMR_SEQ_INVALID;
-		c->c_shared = s;
-		c->c_deferred = 0;
-		c->c_limit = limit;
-		c->c_flags = flags;
+	smr_init_cpu(s, 0, limit, flags);
+	if (booted < BOOT_PCPU) {
+		/*
+		 * Per-CPU memory for APs might not be accessible at this point.
+		 * Defer initialization of the rest of the CPU sections.
+		 */
+		s->s_next = smr_init_list;
+		smr_init_list = s;
+	} else {
+		/* Initialize all CPUs, not just those running. */
+		for (i = 1; i <= mp_maxid; i++)
+			smr_init_cpu(s, i, limit, flags);
+		atomic_thread_fence_seq_cst();
 	}
-	atomic_thread_fence_seq_cst();
 
 	return (smr);
 }
@@ -622,12 +651,33 @@ smr_destroy(smr_t smr)
 /*
  * Initialize the UMA slab zone.
  */
-void
-smr_init(void)
+static void
+smr_init(void *arg __unused)
 {
 
 	smr_shared_zone = uma_zcreate("SMR SHARED", sizeof(struct smr_shared),
 	    NULL, NULL, NULL, NULL, (CACHE_LINE_SIZE * 2) - 1, 0);
 	smr_zone = uma_zcreate("SMR CPU", sizeof(struct smr),
 	    NULL, NULL, NULL, NULL, (CACHE_LINE_SIZE * 2) - 1, UMA_ZONE_PCPU);
+	booted = BOOT_ZONE;
 }
+SYSINIT(smr_init, SI_SUB_SMR, SI_ORDER_FIRST, smr_init, NULL);
+
+static void
+smr_init2(void *arg __unused)
+{
+	smr_shared_t s;
+	smr_t c0;
+	int i;
+
+	/*
+	 * Complete initialization of per-CPU sections, started in smr_create().
+	 */
+	for (s = smr_init_list; s != NULL; s = s->s_next) {
+		c0 = zpcpu_get_cpu(s->s_cpu, 0);
+		for (i = 1; i <= mp_maxid; i++)
+			smr_init_cpu(s, i, c0->c_limit, c0->c_flags);
+	}
+	booted = BOOT_PCPU;
+}
+SYSINIT(smr_init2, SI_SUB_CPU, SI_ORDER_ANY, smr_init2, NULL);

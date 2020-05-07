@@ -65,9 +65,11 @@ union s_wr {
 	uint64_t	_pair;
 };
 struct smr_shared {
-	const char	*s_name;	/* Name for debugging/reporting. */
 	union s_wr	s_wr;		/* Write sequence */
 	smr_seq_t	s_rd_seq;	/* Minimum observed read sequence. */
+	smr_t		s_cpu;		/* Per-CPU sections. */
+	struct smr_shared *s_next;	/* Deferred init list entry. */
+	const char	*s_name;	/* Name for debugging/reporting. */
 };
 typedef struct smr_shared *smr_shared_t;
 
@@ -254,8 +256,5 @@ smr_synchronize(smr_t smr)
 
         smr_wait(smr, smr_advance(smr));
 }
-
-/* Only at startup. */
-void smr_init(void);
 
 #endif	/* _SYS_SMR_H_ */
