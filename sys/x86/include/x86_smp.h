@@ -29,7 +29,6 @@ extern int boot_cpu_id;
 extern struct pcb stoppcbs[];
 extern int cpu_apic_ids[];
 extern int bootAP;
-extern void *dpcpu;
 extern char *bootSTK;
 extern void *bootstacks[];
 extern unsigned int boot_address;

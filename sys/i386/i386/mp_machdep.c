@@ -146,6 +146,9 @@ static int	start_ap(int apic_id);
 
 static char *ap_copyout_buf;
 static char *ap_tramp_stack_base;
+
+static void *dpcpu;
+
 /*
  * Initialize the IPI handlers and start up the AP's.
  */

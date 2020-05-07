@@ -768,6 +768,14 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 
 #ifdef __amd64__
 	/*
+	 * Mark the PCPU bootstrap region as allocated.  In practice most of
+	 * this region will be released back to the VM during boot.
+	 */
+	(void)vm_map_insert(m, NULL, 0, VM_PCPU_BASE_START,
+	    VM_PCPU_BASE_START + VM_PCPU_BASE_SIZE,
+	    VM_PROT_RW, VM_PROT_RW, MAP_NOFAULT);
+
+	/*
 	 * Mark KVA used for the page array as allocated.  Other platforms
 	 * that handle vm_page_array allocation can simply adjust virtual_avail
 	 * instead.

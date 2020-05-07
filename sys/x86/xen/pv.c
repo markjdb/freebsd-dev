@@ -365,7 +365,6 @@ start_xen_ap(int cpu)
 	mce_stack = (char *)kmem_malloc(PAGE_SIZE, M_WAITOK | M_ZERO);
 	nmi_stack = (char *)kmem_malloc(PAGE_SIZE, M_WAITOK | M_ZERO);
 	dbg_stack = (void *)kmem_malloc(PAGE_SIZE, M_WAITOK | M_ZERO);
-	dpcpu = (void *)kmem_malloc(DPCPU_SIZE, M_WAITOK | M_ZERO);
 
 	bootSTK = (char *)bootstacks[cpu] + kstack_pages * PAGE_SIZE - 8;
 	bootAP = cpu;

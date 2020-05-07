@@ -37,6 +37,7 @@
 
 #include <machine/segments.h>
 #include <machine/tss.h>
+#include <machine/vmparam.h>
 
 #define	PC_PTI_STACK_SZ	16
 
@@ -238,11 +239,23 @@ _Static_assert(sizeof(struct monitorbuf) == 128, "2x cache line");
 #define	PCPU_PTR(member)	__PCPU_PTR(pc_ ## member)
 #define	PCPU_SET(member, val)	__PCPU_SET(pc_ ## member, val)
 
+#define	DPCPU_BASE(pc)		((uintptr_t)((struct pcpu *)(pc) + 1))
+
+/*
+ * Kernel modules use a dynamically allocated region in the DPCPU area,
+ * so they must fall back to the indirection through pc_dynamic.
+ */
+#ifndef KLD_MODULE
+#define	DPCPU_BASE_OFFSET(pc)	(DPCPU_BASE(pc) - DPCPU_START)
+#endif
+
 #define	IS_BSP()	(PCPU_GET(cpuid) == 0)
 
-#define zpcpu_offset_cpu(cpu)	((uintptr_t)&__pcpu[0] + UMA_PCPU_ALLOC_SIZE * cpu)
-#define zpcpu_base_to_offset(base) (void *)((uintptr_t)(base) - (uintptr_t)&__pcpu[0])
-#define zpcpu_offset_to_base(base) (void *)((uintptr_t)(base) + (uintptr_t)&__pcpu[0])
+#define	zpcpu_offset_cpu(cpu)		((uintptr_t)cpuid_to_pcpu[cpu])
+#define	zpcpu_base_to_offset(base)	((void *)((uintptr_t)(base) -	\
+					    (uintptr_t)VM_PCPU_BASE_START))
+#define	zpcpu_offset_to_base(base)	((void *)((uintptr_t)(base) +	\
+					    (uintptr_t)VM_PCPU_BASE_START))
 
 #define zpcpu_sub_protected(base, n) do {				\
 	ZPCPU_ASSERT_PROTECTED();					\
