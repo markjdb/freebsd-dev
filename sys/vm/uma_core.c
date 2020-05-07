@@ -2228,6 +2228,9 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 		keg->uk_flags |= UMA_ZONE_ROUNDROBIN;
 #endif
 
+	KASSERT(booted >= BOOT_KVA || (keg->uk_flags & UMA_ZONE_PCPU) == 0,
+	    ("%s: early pcpu keg %s", __func__, keg->uk_name));
+
 	/*
 	 * If we haven't booted yet we need allocations to go through the
 	 * startup cache until the vm is ready.
@@ -2307,10 +2310,7 @@ zone_kva_available(uma_zone_t zone, void *unused)
 
 	if (keg->uk_allocf == startup_alloc) {
 		/* Switch to the real allocator. */
-		if (keg->uk_flags & UMA_ZONE_PCPU)
-			keg->uk_allocf = pcpu_page_alloc;
-		else if ((keg->uk_flags & UMA_ZONE_CONTIG) != 0 &&
-		    keg->uk_ppera > 1)
+		if ((keg->uk_flags & UMA_ZONE_CONTIG) != 0 && keg->uk_ppera > 1)
 			keg->uk_allocf = contig_alloc;
 		else
 			keg->uk_allocf = page_alloc;
@@ -2869,7 +2869,6 @@ uma_startup1(vm_offset_t virtual_avail)
 	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, UMA_ZFLAG_INTERNAL);
 
 	bucket_init();
-	smr_init();
 }
 
 #ifndef UMA_MD_SMALL_ALLOC
@@ -3312,7 +3311,7 @@ uma_zalloc_smr(uma_zone_t zone, int flags)
 #ifdef UMA_ZALLOC_DEBUG
 	void *item;
 
-	KASSERT((zone->uz_flags & UMA_ZONE_SMR) != 0,
+	KASSERT((zone->uz_flags & UMA_ZONE_SMR) != 0 || !smp_started,
 	    ("uma_zalloc_arg: called with non-SMR zone.\n"));
 	if (uma_zalloc_debug(zone, &item, NULL, flags) == EJUSTRETURN)
 		return (item);
@@ -4655,7 +4654,8 @@ void
 uma_zone_set_smr(uma_zone_t zone, smr_t smr)
 {
 
-	ZONE_ASSERT_COLD(zone);
+	if (smp_started)
+		ZONE_ASSERT_COLD(zone);
 
 	KASSERT(smr != NULL, ("Got NULL smr"));
 	KASSERT((zone->uz_flags & UMA_ZONE_SMR) == 0,

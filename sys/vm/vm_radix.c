@@ -375,9 +375,19 @@ vm_radix_zinit(void)
 
 	vm_radix_node_zone = uma_zcreate("RADIX NODE",
 	    sizeof(struct vm_radix_node), NULL, NULL, NULL, NULL,
-	    VM_RADIX_PAD, UMA_ZONE_VM | UMA_ZONE_SMR | UMA_ZONE_ZINIT);
-	vm_radix_smr = uma_zone_get_smr(vm_radix_node_zone);
+	    VM_RADIX_PAD, UMA_ZONE_VM | UMA_ZONE_ZINIT);
 }
+
+/*
+ * Attach SMR structures to the radix node zone.
+ */
+static void
+vm_radix_zinit2(void *arg __unused)
+{
+	vm_radix_smr = smr_create("RADIX NODE", 0, 0);
+	uma_zone_set_smr(vm_radix_node_zone, vm_radix_smr);
+}
+SYSINIT(vm_radix_zinit2, SI_SUB_SMR, SI_ORDER_ANY, vm_radix_zinit2, NULL);
 
 /*
  * Inserts the key-value pair into the trie.
