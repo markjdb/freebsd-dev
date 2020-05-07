@@ -79,6 +79,12 @@
 #define	UMA_MD_SMALL_ALLOC
 
 /*
+ * We provide a machine specific per-CPU allocator which returns 2MB mappings
+ * when possible.
+ */
+#define	UMA_MD_PCPU_ALLOC
+
+/*
  * The physical address space is densely populated.
  */
 #define	VM_PHYSSEG_DENSE
@@ -165,7 +171,8 @@
  *
  * Within the kernel map:
  *
- * 0xfffffe0000000000                        vm_page_array
+ * 0xfffffe0000000000                        bootstrap pcpu region
+ * 0xfffffe0020000000                        vm_page_array
  * 0xffffffff80000000                        KERNBASE
  */
 
@@ -191,6 +198,13 @@
 
 #define	VM_MAX_ADDRESS		UPT_MAX_ADDRESS
 #define	VM_MIN_ADDRESS		(0)
+
+#define	VM_PCPU_BASE_START	VM_MIN_KERNEL_ADDRESS
+#define	VM_PCPU_BASE_SIZE	(MAXCPU * NBPDR)
+#define	VM_PCPU_BOOTSTRAP_SIZE	NBPDR
+#define	VM_PCPU_ALIGN		NBPDR
+
+#define	VM_PAGE_ARRAY_START	(VM_PCPU_BASE_START + VM_PCPU_BASE_SIZE)
 
 /*
  * XXX Allowing dmaplimit == 0 is a temporary workaround for vt(4) efifb's

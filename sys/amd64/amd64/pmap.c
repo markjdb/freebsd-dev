@@ -1410,6 +1410,17 @@ allocpages(vm_paddr_t *firstaddr, int n)
 	return (ret);
 }
 
+static uint64_t
+alloc2mpage(vm_paddr_t *firstaddr)
+{
+	uint64_t ret;
+
+	ret = roundup2(*firstaddr, NBPDR);
+	bzero((void *)ret, NBPDR);
+	*firstaddr = ret + NBPDR;
+	return (ret);
+}
+
 CTASSERT(powerof2(NDMPML4E));
 
 /* number of kernel PDP slots */
@@ -1655,6 +1666,59 @@ create_pagetables(vm_paddr_t *firstaddr)
 	}
 }
 
+static void
+bootstrap_pcpu(vm_paddr_t pcpupg, vm_paddr_t pdppg)
+{
+	struct region_descriptor r_gdt;
+	struct pcpu *oldpc, *pc;
+	void *dpcpu;
+	vm_offset_t va;
+	pdp_entry_t *pdpe;
+	pd_entry_t *pde;
+
+	/*
+	 * Map the bootstrap per-CPU region.
+	 */
+	va = VM_PCPU_BASE_START;
+	pdpe = pmap_pdpe(kernel_pmap, va);
+	if ((*pdpe & X86_PG_V) != 0)
+		panic("pdpe for %#lx is already valid", va);
+	*pdpe = pdppg | X86_PG_V | X86_PG_RW | X86_PG_A | X86_PG_M;
+	pde = pmap_pde(kernel_pmap, va);
+	pde_store(pde, pcpupg | X86_PG_V | X86_PG_PS | X86_PG_RW | X86_PG_A |
+	    X86_PG_M | pg_nx | pg_g);
+
+	/*
+	 * Re-initialize PCPU area for BSP after switching.
+	 * Make hardware use gdt and common_tss from the new PCPU.
+	 * Copy dynamic PCPU data following the PCPU structure.
+	 */
+	STAILQ_INIT(&cpuhead);
+	pc = (struct pcpu *)va;
+	oldpc = get_pcpu();
+	wrmsr(MSR_GSBASE, (uintptr_t)pc);
+	pcpu_init(pc, 0, sizeof(struct pcpu));
+	amd64_bsp_pcpu_init1(pc);
+	amd64_bsp_ist_init(pc);
+	pc->pc_common_tss.tss_iobase = sizeof(struct amd64tss) +
+	    IOPERM_BITMAP_SIZE;
+	memcpy(pc->pc_gdt, oldpc->pc_gdt, NGDT *
+	    sizeof(struct user_segment_descriptor));
+	gdt_segs[GPROC0_SEL].ssd_base = (uintptr_t)&pc->pc_common_tss;
+	ssdtosyssd(&gdt_segs[GPROC0_SEL],
+	    (struct system_segment_descriptor *)&pc->pc_gdt[GPROC0_SEL]);
+	r_gdt.rd_limit = NGDT * sizeof(struct user_segment_descriptor) - 1;
+	r_gdt.rd_base = (long)pc->pc_gdt;
+	lgdt(&r_gdt);
+	wrmsr(MSR_GSBASE, (uintptr_t)pc);
+	ltr(GSEL(GPROC0_SEL, SEL_KPL));
+	pc->pc_acpi_id = oldpc->pc_acpi_id;
+
+	dpcpu = (void *)DPCPU_BASE(pc);
+	dpcpu_init(dpcpu, 0);
+	memcpy(dpcpu, (void *)DPCPU_BASE(oldpc), DPCPU_BYTES);
+}
+
 /*
  *	Bootstrap the system enough to run with virtual memory.
  *
@@ -1669,10 +1733,9 @@ void
 pmap_bootstrap(vm_paddr_t *firstaddr)
 {
 	vm_offset_t va;
-	pt_entry_t *pte, *pcpu_pte;
-	struct region_descriptor r_gdt;
-	uint64_t cr4, pcpu_phys;
-	u_long res;
+	pt_entry_t *pte;
+	uint64_t cr4;
+	u_long res, pcpupg, pdppg;
 	int i;
 
 	KERNend = *firstaddr;
@@ -1685,8 +1748,6 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 	 * Create an initial set of page tables to run the kernel in.
 	 */
 	create_pagetables(firstaddr);
-
-	pcpu_phys = allocpages(firstaddr, MAXCPU);
 
 	/*
 	 * Add a physical memory segment (vm_phys_seg) corresponding to the
@@ -1702,6 +1763,20 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 	 */
 	virtual_avail = (vm_offset_t)KERNBASE + round_2mpage(KERNend);
 	virtual_end = VM_MAX_KERNEL_ADDRESS;
+
+	/*
+	 * Reserve physical memory to bootstrap the per-CPU allocator, as well
+	 * as a PD page used to map it into the kernel map.  Minimize the amount
+	 * of memory wasted to maintain alignment.
+	 */
+	if ((*firstaddr & PDRMASK) != 0) {
+		pdppg = allocpages(firstaddr, 1);
+		pcpupg = alloc2mpage(firstaddr);
+	} else {
+		pcpupg = alloc2mpage(firstaddr);
+		pdppg = allocpages(firstaddr, 1);
+	}
+	vm_phys_early_add_seg(pcpupg, pcpupg + NBPDR);
 
 	/*
 	 * Enable PG_G global pages, then switch to the kernel page
@@ -1754,38 +1829,12 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 	 */
 	SYSMAP(caddr_t, CMAP1, crashdumpmap, MAXDUMPPGS)
 	CADDR1 = crashdumpmap;
-
-	SYSMAP(struct pcpu *, pcpu_pte, __pcpu, MAXCPU);
 	virtual_avail = va;
 
-	for (i = 0; i < MAXCPU; i++) {
-		pcpu_pte[i] = (pcpu_phys + ptoa(i)) | X86_PG_V | X86_PG_RW |
-		    pg_g | pg_nx | X86_PG_M | X86_PG_A;
-	}
-
 	/*
-	 * Re-initialize PCPU area for BSP after switching.
-	 * Make hardware use gdt and common_tss from the new PCPU.
+	 * Bootstrap the per-CPU allocator.
 	 */
-	STAILQ_INIT(&cpuhead);
-	wrmsr(MSR_GSBASE, (uint64_t)&__pcpu[0]);
-	pcpu_init(&__pcpu[0], 0, sizeof(struct pcpu));
-	amd64_bsp_pcpu_init1(&__pcpu[0]);
-	amd64_bsp_ist_init(&__pcpu[0]);
-	__pcpu[0].pc_common_tss.tss_iobase = sizeof(struct amd64tss) +
-	    IOPERM_BITMAP_SIZE;
-	memcpy(__pcpu[0].pc_gdt, temp_bsp_pcpu.pc_gdt, NGDT *
-	    sizeof(struct user_segment_descriptor));
-	gdt_segs[GPROC0_SEL].ssd_base = (uintptr_t)&__pcpu[0].pc_common_tss;
-	ssdtosyssd(&gdt_segs[GPROC0_SEL],
-	    (struct system_segment_descriptor *)&__pcpu[0].pc_gdt[GPROC0_SEL]);
-	r_gdt.rd_limit = NGDT * sizeof(struct user_segment_descriptor) - 1;
-	r_gdt.rd_base = (long)__pcpu[0].pc_gdt;
-	lgdt(&r_gdt);
-	wrmsr(MSR_GSBASE, (uint64_t)&__pcpu[0]);
-	ltr(GSEL(GPROC0_SEL, SEL_KPL));
-	__pcpu[0].pc_dynamic = temp_bsp_pcpu.pc_dynamic;
-	__pcpu[0].pc_acpi_id = temp_bsp_pcpu.pc_acpi_id;
+	bootstrap_pcpu(pcpupg, pdppg);
 
 	/*
 	 * Initialize the PAT MSR.
@@ -4104,7 +4153,7 @@ pmap_page_array_startup(long pages)
 
 	vm_page_array_size = pages;
 
-	start = VM_MIN_KERNEL_ADDRESS;
+	start = VM_PAGE_ARRAY_START;
 	end = start + pages * sizeof(struct vm_page);
 	for (va = start; va < end; va += NBPDR) {
 		pfn = first_page + (va - start) / sizeof(struct vm_page);
@@ -9813,6 +9862,7 @@ pmap_pti_init(void)
 {
 	vm_page_t pml4_pg;
 	pdp_entry_t *pdpe;
+	struct pcpu *pc;
 	vm_offset_t va;
 	int i;
 
@@ -9827,23 +9877,24 @@ pmap_pti_init(void)
 		pdpe = pmap_pti_pdpe(va);
 		pmap_pti_wire_pte(pdpe);
 	}
-	pmap_pti_add_kva_locked((vm_offset_t)&__pcpu[0],
-	    (vm_offset_t)&__pcpu[0] + sizeof(__pcpu[0]) * MAXCPU, false);
 	pmap_pti_add_kva_locked((vm_offset_t)idt, (vm_offset_t)idt +
 	    sizeof(struct gate_descriptor) * NIDT, false);
 	CPU_FOREACH(i) {
+		pc = cpuid_to_pcpu[i];
+		pmap_pti_add_kva_locked((vm_offset_t)pc, (vm_offset_t)(pc + 1),
+		    false);
 		/* Doublefault stack IST 1 */
-		va = __pcpu[i].pc_common_tss.tss_ist1;
+		va = pc->pc_common_tss.tss_ist1;
 		pmap_pti_add_kva_locked(va - PAGE_SIZE, va, false);
 		/* NMI stack IST 2 */
-		va = __pcpu[i].pc_common_tss.tss_ist2 + sizeof(struct nmi_pcpu);
+		va = pc->pc_common_tss.tss_ist2 + sizeof(struct nmi_pcpu);
 		pmap_pti_add_kva_locked(va - PAGE_SIZE, va, false);
 		/* MC# stack IST 3 */
-		va = __pcpu[i].pc_common_tss.tss_ist3 +
+		va = pc->pc_common_tss.tss_ist3 +
 		    sizeof(struct nmi_pcpu);
 		pmap_pti_add_kva_locked(va - PAGE_SIZE, va, false);
 		/* DB# stack IST 4 */
-		va = __pcpu[i].pc_common_tss.tss_ist4 + sizeof(struct nmi_pcpu);
+		va = pc->pc_common_tss.tss_ist4 + sizeof(struct nmi_pcpu);
 		pmap_pti_add_kva_locked(va - PAGE_SIZE, va, false);
 	}
 	pmap_pti_add_kva_locked((vm_offset_t)kernphys + KERNBASE,

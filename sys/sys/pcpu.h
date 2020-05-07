@@ -109,6 +109,10 @@ extern uintptr_t dpcpu_off[];
     static t DPCPU_NAME(n) __section(DPCPU_SETNAME) __used
 #endif
 
+#ifndef DPCPU_BASE_OFFSET
+#define	DPCPU_BASE_OFFSET(pc)	((pc)->pc_dynamic)
+#endif
+
 /*
  * Accessors with a given base.
  */
@@ -120,7 +124,7 @@ extern uintptr_t dpcpu_off[];
 /*
  * Accessors for the current cpu.
  */
-#define	DPCPU_PTR(n)		_DPCPU_PTR(PCPU_GET(dynamic), n)
+#define	DPCPU_PTR(n)		_DPCPU_PTR(DPCPU_BASE_OFFSET(get_pcpu()), n)
 #define	DPCPU_GET(n)		(*DPCPU_PTR(n))
 #define	DPCPU_SET(n, v)		(*DPCPU_PTR(n) = v)
 

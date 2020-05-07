@@ -280,11 +280,13 @@ void	uma_startup2(void);
 
 static void *noobj_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
 static void *page_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
+#ifndef UMA_MD_SMALL_ALLOC
 static void *pcpu_page_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
+static void pcpu_page_free(void *, vm_size_t, uint8_t);
+#endif
 static void *startup_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
 static void *contig_alloc(uma_zone_t, vm_size_t, int, uint8_t *, int);
 static void page_free(void *, vm_size_t, uint8_t);
-static void pcpu_page_free(void *, vm_size_t, uint8_t);
 static uma_slab_t keg_alloc_slab(uma_keg_t, uma_zone_t, int, int, int);
 static void cache_drain(uma_zone_t);
 static void bucket_drain(uma_zone_t, uma_bucket_t);
@@ -1514,6 +1516,7 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	uma_alloc allocf;
 	uma_slab_t slab;
 	unsigned long size;
+	int pperslab;
 	uint8_t *mem;
 	uint8_t sflags;
 	int i;
@@ -1569,10 +1572,18 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	else
 		slab_tohashslab(slab)->uhs_data = mem;
 
-	if (keg->uk_flags & UMA_ZFLAG_VTOSLAB)
-		for (i = 0; i < keg->uk_ppera; i++)
-			vsetzoneslab((vm_offset_t)mem + (i * PAGE_SIZE),
+	if ((keg->uk_flags & UMA_ZFLAG_VTOSLAB) != 0) {
+		/*
+		 * Per-CPU slabs have a special layout.  Only pages belonging to
+		 * the base of the allocation need to be marked, and the slab
+		 * may not be contiguous.
+		 */
+		pperslab = (keg->uk_flags & UMA_ZONE_PCPU) != 0 ?
+		    atop(UMA_PCPU_ALLOC_SIZE) : keg->uk_ppera;
+		for (i = 0; i < pperslab; i++)
+			vsetzoneslab((vm_offset_t)mem + i * PAGE_SIZE,
 			    zone, slab);
+	}
 
 	slab->us_freecount = keg->uk_ipers;
 	slab->us_flags = sflags;
@@ -1701,6 +1712,7 @@ page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
 	return (p);
 }
 
+#ifndef UMA_MD_PCPU_ALLOC
 static void *
 pcpu_page_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
     int wait)
@@ -1755,6 +1767,7 @@ fail:
 	}
 	return (NULL);
 }
+#endif
 
 /*
  * Allocates a number of pages from within an object
@@ -1856,6 +1869,7 @@ page_free(void *mem, vm_size_t size, uint8_t flags)
 	kmem_free((vm_offset_t)mem, size);
 }
 
+#ifndef UMA_MD_PCPU_ALLOC
 /*
  * Frees pcpu zone allocations
  *
@@ -1891,7 +1905,7 @@ pcpu_page_free(void *mem, vm_size_t size, uint8_t flags)
 	pmap_qremove(sva, size >> PAGE_SHIFT);
 	kva_free(sva, size);
 }
-
+#endif
 
 /*
  * Zero fill initializer
@@ -2243,7 +2257,11 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	if (booted < BOOT_KVA)
 		keg->uk_allocf = startup_alloc;
 	else if (keg->uk_flags & UMA_ZONE_PCPU)
+#ifdef UMA_MD_PCPU_ALLOC
+		keg->uk_allocf = uma_pcpu_alloc;
+#else
 		keg->uk_allocf = pcpu_page_alloc;
+#endif
 	else if ((keg->uk_flags & UMA_ZONE_CONTIG) != 0 && keg->uk_ppera > 1)
 		keg->uk_allocf = contig_alloc;
 	else
@@ -2254,7 +2272,11 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	else
 #endif
 	if (keg->uk_flags & UMA_ZONE_PCPU)
+#ifdef UMA_MD_PCPU_ALLOC
+		keg->uk_freef = uma_pcpu_free;
+#else
 		keg->uk_freef = pcpu_page_free;
+#endif
 	else
 		keg->uk_freef = page_free;
 
@@ -3108,10 +3130,21 @@ uma_zalloc_pcpu_arg(uma_zone_t zone, void *udata, int flags)
 	if (item == NULL)
 		return (NULL);
 	pcpu_item = zpcpu_base_to_offset(item);
-	if (flags & M_ZERO) {
+	if ((flags & M_ZERO) != 0) {
 #ifdef SMP
-		for (i = 0; i <= mp_maxid; i++)
+		for (i = 0; i <= mp_maxid; i++) {
 			bzero(zpcpu_get_cpu(pcpu_item, i), zone->uz_size);
+#ifdef UMA_MD_PCPU_ALLOC
+			if (__predict_false(booted < BOOT_RUNNING))
+				/*
+				 * Only CPU's 0 memory is accessible if the
+				 * per-CPU allocator is still being
+				 * bootstrapped.  The allocator guarantees that
+				 * early allocations will be zero-filled.
+				 */
+				break;
+#endif
+		}
 #else
 		bzero(item, zone->uz_size);
 #endif

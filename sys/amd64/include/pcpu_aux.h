@@ -42,10 +42,7 @@
 #endif
 
 /* Required for counters(9) to work on x86. */
-_Static_assert(sizeof(struct pcpu) == UMA_PCPU_ALLOC_SIZE, "fix pcpu size");
-
-extern struct pcpu *__pcpu;
-extern struct pcpu temp_bsp_pcpu;
+_Static_assert(sizeof(struct pcpu) % PAGE_SIZE == 0, "fix pcpu size");
 
 static __inline __pure2 struct thread *
 __curthread(void)

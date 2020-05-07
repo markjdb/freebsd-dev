@@ -94,7 +94,6 @@ int bootAP;
 
 /* Free these after use */
 void *bootstacks[MAXCPU];
-void *dpcpu;
 
 struct pcb stoppcbs[MAXCPU];
 struct susppcb **susppcbs;

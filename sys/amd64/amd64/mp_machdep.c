@@ -60,8 +60,13 @@ __FBSDID("$FreeBSD$");
 #include <vm/pmap.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_extern.h>
+#include <vm/vm_map.h>
+#include <vm/vm_object.h>
 #include <vm/vm_page.h>
 #include <vm/vm_phys.h>
+#include <vm/vm_pagequeue.h>
+#include <vm/uma.h>
+#include <vm/uma_int.h>
 
 #include <x86/apicreg.h>
 #include <machine/clock.h>
@@ -119,6 +124,173 @@ is_mpboot_good(vm_paddr_t start, vm_paddr_t end)
 {
 
 	return (start + AP_BOOTPT_SZ <= GiB(4) && atop(end) < Maxmem);
+}
+
+/*
+ * Initialize the bootstrap allocator for dynamic per-CPU memory allocations.
+ * 2MB is reserved by pmap_bootstrap() for the BSP, from which its pcpu and
+ * dpcpu regions are allocated.  The rest can be used by UMA to satisfy dynamic
+ * per-CPU allocations until SI_SUB_CPU, when the pcpu regions for the APs are
+ * laid out.  At that point, unused portions of the initial 2MB allocation may
+ * be used for APs as well as the BSP.
+ */
+static void
+pcpu_bootstrap(void *arg __unused)
+{
+	uma_pcpu_init1(VM_PCPU_BASE_START + sizeof(struct pcpu) + DPCPU_SIZE,
+	    VM_PCPU_BOOTSTRAP_SIZE - (sizeof(struct pcpu) + DPCPU_SIZE));
+}
+SYSINIT(pcpu_bootstrap, SI_SUB_VM, SI_ORDER_ANY, pcpu_bootstrap, NULL);
+
+static int
+pcpu_domidx(int domain)
+{
+	int bspdom;
+
+	bspdom = PCPU_GET(domain);
+	if (bspdom == 0)
+		return (domain);
+	if (domain == bspdom)
+		return (0);
+	return (domain > bspdom ? domain : domain + 1);
+}
+
+/*
+ * Place per-CPU structures.  Each AP requires a pcpu and dpcpu region.  The
+ * pcpu region of a CPU is its base pcpu address.  A pointer to per-CPU data is
+ * an offset relative to the base pcpu address, and UMA's per-CPU allocator
+ * ensures that adding that offset to the base address always gives the address
+ * of memory allocated for the corresponding CPU.
+ *
+ * The layout attempts to maximize use of 2MB mappings while also providing
+ * domain-local memory on NUMA systems.   It uses 2 parameters, N, the number of
+ * 4KB pages per CPU, and M, the number of 2MB pages per allocation quantum.  M
+ * is a multiple of vm_ndomains and they are usually equal.  N has a lower bound
+ * of L = sizeof(struct pcpu) + DPCPU_SIZE + uma_pcpu_bootstrap_used(), where
+ * the last term is the amount of memory used by the bootstrap per-CPU
+ * allocator.  Each 2MB page hosts per-CPU data for CPUs belonging to the domain
+ * from which the page was allocated, so we first compute M by determining the
+ * maximum number of CPUs per domain and multiplying that by L.  Then N is given
+ * by M*2MB divided by the number of CPUs per domain.
+ *
+ *                                __________ N 4KB pages __________
+ *                               /                                 \
+ * VM_PCPU_BASE_START -------> +----------+-----------+--------------+
+ *                             | BSP pcpu | BSP dpcpu | UMA data ... |\
+ *                             +----------+-----------+--------------+ |
+ *                             | AP1 pcpu | AP1 dpcpu | UMA data ... | |
+ *                             +----------+-----------+--------------+ |
+ *                             | ...                                 | | M 2MB
+ *                             +----------+--------------------------+ | pages
+ *                             | APi pcpu | APi dpcpu | UMA data ... | |
+ *                             +----------+-----------+--------------+ |
+ *                             | ...                                 | |
+ *                             | ...                                 |/
+ *                             +-------------------------------------+
+ *
+ * If the original region is exhausted, for example because a subsystem
+ * allocates many per-CPU counters, UMA allocaates another M*2MB region of KVA
+ * to mirror the base region.
+ */
+static void
+pcpu_layout(void)
+{
+	vm_offset_t addr;
+	vm_size_t size, used;
+	int count[MAXMEMDOM], domoff[MAXMEMDOM];
+	int domain, error, i, maxcpupdom, n2mpgpdom, n4kpgpcpu, nbpdom;
+
+	/*
+	 * Compute the maximum count of CPUs in a single domain.  Domains are
+	 * typically symmetric but this is not required.
+	 */
+	memset(count, 0, sizeof(count));
+	for (i = 0; i <= mp_maxid; i++) {
+		if (vm_ndomains > 1 && cpu_apic_ids[i] != -1)
+			domain = acpi_pxm_get_cpu_locality(cpu_apic_ids[i]);
+		else
+			domain = 0;
+		count[domain]++;
+	}
+	for (i = 0, maxcpupdom = -1; i < vm_ndomains; i++)
+		if (count[i] > maxcpupdom)
+			maxcpupdom = count[i];
+
+	/*
+	 * Compute layout parameters: the number of 4KB pages per CPU, and the
+	 * number of 2MB pages per domain.  The amount of memory already
+	 * allocated by the bootstrap allocator gives a lower bound for the
+	 * former, and we use that bound to compute the number of 2MB pages
+	 * per domain.
+	 */
+	used = uma_pcpu_bootstrap_used();
+	n2mpgpdom = howmany(atop(used) * maxcpupdom, NPDEPG);
+	n4kpgpcpu = atop(NBPDR * n2mpgpdom) / maxcpupdom;
+
+	/*
+	 * Assign a pcpu base address to each CPU.  Handle the possibility that
+	 * the BSP is not local to domain 0.
+	 */
+	memset(domoff, 0, sizeof(domoff));
+	for (i = 0; i <= mp_maxid; i++) {
+		if (vm_ndomains > 1 && cpu_apic_ids[i] != -1)
+			domain = acpi_pxm_get_cpu_locality(cpu_apic_ids[i]);
+		else
+			domain = 0;
+
+		addr = VM_PCPU_BASE_START +
+		    pcpu_domidx(domain) * n2mpgpdom * NBPDR +
+		    domoff[domain] * n4kpgpcpu * PAGE_SIZE;
+		cpuid_to_pcpu[i] = (struct pcpu *)addr;
+		domoff[domain]++;
+	}
+
+	/*
+	 * Ensure that the remaining bootstrap region is backed by physical
+	 * pages.
+	 */
+	nbpdom = n2mpgpdom * NBPDR;
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		addr = VM_PCPU_BASE_START + nbpdom * pcpu_domidx(domain);
+		size = nbpdom;
+		if (domain == PCPU_GET(domain)) {
+			/* This 2MB page was allocated by pmap_bootstrap(). */
+			addr += NBPDR;
+			size -= NBPDR;
+			if (size == 0)
+				continue;
+		}
+		if (VM_DOMAIN_EMPTY(domain))
+			error = kmem_back(kernel_object, addr, size,
+			    M_WAITOK | M_ZERO);
+		else
+			error = kmem_back_domain(domain, kernel_object, addr,
+			    size, M_WAITOK | M_ZERO);
+		if (error != KERN_SUCCESS)
+			panic("%s: failed to allocate memory: %d",
+			    __func__, error);
+	}
+
+	/*
+	 * Release reserved, unused KVA back to the system.
+	 */
+	vm_map_lock(kernel_map);
+	error = vm_map_delete(kernel_map,
+	    VM_PCPU_BASE_START + vm_ndomains * nbpdom,
+	    VM_PCPU_BASE_START + VM_PCPU_BASE_SIZE);
+	if (error != KERN_SUCCESS)
+		panic("%s: failed to release KVA: %d", __func__, error);
+	vm_map_unlock(kernel_map);
+
+	/*
+	 * Finally, provide layout parameters to the allocator so that it can
+	 * finish bootstrapping.
+	 */
+	uma_pcpu_init2(n4kpgpcpu, n2mpgpdom);
+
+	if (bootverbose)
+		printf("%s: %d 2MB pages per domain, %d 4KB pages per CPU\n",
+		    __func__, n2mpgpdom, n4kpgpcpu);
 }
 
 /*
@@ -260,6 +432,9 @@ cpu_mp_start(void)
 
 	assign_cpu_ids();
 
+	/* Place AP pcpu structures now that CPU IDs are defined. */
+	pcpu_layout();
+
 	/* Start each Application Processor */
 	init_ops.start_all_aps();
 
@@ -287,12 +462,9 @@ init_secondary(void)
 	/* Update microcode before doing anything else. */
 	ucode_load_ap(cpu);
 
-	/* Get per-cpu data and save  */
-	pc = &__pcpu[cpu];
-
-	/* prime data page for it to use */
+	pc = cpuid_to_pcpu[cpu];
 	pcpu_init(pc, cpu, sizeof(struct pcpu));
-	dpcpu_init(dpcpu, cpu);
+	dpcpu_init((void *)DPCPU_BASE(pc), cpu);
 	pc->pc_apic_id = cpu_apic_ids[cpu];
 	pc->pc_prvspace = pc;
 	pc->pc_curthread = 0;
@@ -310,7 +482,7 @@ init_secondary(void)
 	pc->pc_pcid_gen = 1;
 
 	/* Init tss */
-	pc->pc_common_tss = __pcpu[0].pc_common_tss;
+	pc->pc_common_tss = cpuid_to_pcpu[0]->pc_common_tss;
 	pc->pc_common_tss.tss_iobase = sizeof(struct amd64tss) +
 	    IOPERM_BITMAP_SIZE;
 	pc->pc_common_tss.tss_rsp0 = 0;
@@ -383,27 +555,6 @@ init_secondary(void)
  * local functions and data
  */
 
-#ifdef NUMA
-static void
-mp_realloc_pcpu(int cpuid, int domain)
-{
-	vm_page_t m;
-	vm_offset_t oa, na;
-
-	oa = (vm_offset_t)&__pcpu[cpuid];
-	if (_vm_phys_domain(pmap_kextract(oa)) == domain)
-		return;
-	m = vm_page_alloc_domain(NULL, 0, domain,
-	    VM_ALLOC_NORMAL | VM_ALLOC_NOOBJ);
-	if (m == NULL)
-		return;
-	na = PHYS_TO_DMAP(VM_PAGE_TO_PHYS(m));
-	pagecopy((void *)oa, (void *)na);
-	pmap_qenter((vm_offset_t)&__pcpu[cpuid], &m, 1);
-	/* XXX old pcpu page leaked. */
-}
-#endif
-
 /*
  * start each AP in our list
  */
@@ -451,16 +602,6 @@ native_start_all_aps(void)
 	outb(CMOS_REG, BIOS_RESET);
 	outb(CMOS_DATA, BIOS_WARM);	/* 'warm-start' */
 
-	/* Relocate pcpu areas to the correct domain. */
-#ifdef NUMA
-	if (vm_ndomains > 1)
-		for (cpu = 1; cpu < mp_ncpus; cpu++) {
-			apic_id = cpu_apic_ids[cpu];
-			domain = acpi_pxm_get_cpu_locality(apic_id);
-			mp_realloc_pcpu(cpu, domain);
-		}
-#endif
-
 	/* start each AP */
 	domain = 0;
 	for (cpu = 1; cpu < mp_ncpus; cpu++) {
@@ -479,8 +620,6 @@ native_start_all_aps(void)
 		    DOMAINSET_PREF(domain), PAGE_SIZE, M_WAITOK | M_ZERO);
 		dbg_stack = (char *)kmem_malloc_domainset(
 		    DOMAINSET_PREF(domain), PAGE_SIZE, M_WAITOK | M_ZERO);
-		dpcpu = (void *)kmem_malloc_domainset(DOMAINSET_PREF(domain),
-		    DPCPU_SIZE, M_WAITOK | M_ZERO);
 
 		bootSTK = (char *)bootstacks[cpu] +
 		    kstack_pages * PAGE_SIZE - 8;

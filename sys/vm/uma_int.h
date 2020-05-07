@@ -664,6 +664,7 @@ uma_total_inc(unsigned long size)
 		uma_reclaim_wakeup();
 }
 
+#ifdef UMA_MD_SMALL_ALLOC
 /*
  * The following two functions may be defined by architecture specific code
  * if they can provide more efficient allocation functions.  This is useful
@@ -672,6 +673,19 @@ uma_total_inc(unsigned long size)
 void *uma_small_alloc(uma_zone_t zone, vm_size_t bytes, int domain,
     uint8_t *pflag, int wait);
 void uma_small_free(void *mem, vm_size_t size, uint8_t flags);
+#endif
+
+#ifdef UMA_MD_PCPU_ALLOC
+void *uma_pcpu_alloc(uma_zone_t zone, vm_size_t bytes, int domain,
+    uint8_t *pflag, int wait);
+void uma_pcpu_free(void *mem, vm_size_t size, uint8_t flags);
+
+#ifdef __amd64__
+void	uma_pcpu_init1(vm_offset_t addr, vm_size_t size);
+void	uma_pcpu_init2(int ptpstride, int npdepdom);
+vm_size_t uma_pcpu_bootstrap_used(void);
+#endif
+#endif
 
 /* Set a global soft limit on UMA managed memory. */
 void uma_set_limit(unsigned long limit);

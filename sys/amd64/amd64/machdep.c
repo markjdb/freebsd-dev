@@ -216,9 +216,6 @@ struct kva_md_info kmi;
 static struct trapframe proc0_tf;
 struct region_descriptor r_idt;
 
-struct pcpu *__pcpu;
-struct pcpu temp_bsp_pcpu;
-
 struct mtx icu_lock;
 
 struct mem_range_softc mem_range_softc;
@@ -1670,13 +1667,20 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	 */
 	pmap_thread_init_invl_gen(&thread0);
 
-	pc = &temp_bsp_pcpu;
+	/*
+	 * Initialize the static and dynamic per-CPU areas.  The latter must
+	 * immediately follow the former.
+	 */
+	pc = (struct pcpu *)(physfree + KERNBASE);
+	physfree += sizeof(struct pcpu);
 	pcpu_init(pc, 0, sizeof(struct pcpu));
-	gdt = &temp_bsp_pcpu.pc_gdt[0];
+	dpcpu_init((void *)(physfree + KERNBASE), 0);
+	physfree += DPCPU_SIZE;
 
 	/*
 	 * make gdt memory segments
 	 */
+	gdt = &pc->pc_gdt[0];
 	for (x = 0; x < NGDT; x++) {
 		if (x != GPROC0_SEL && x != (GPROC0_SEL + 1) &&
 		    x != GUSERLDT_SEL && x != (GUSERLDT_SEL) + 1)
@@ -1694,8 +1698,6 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	wrmsr(MSR_GSBASE, (u_int64_t)pc);
 	wrmsr(MSR_KGSBASE, 0);		/* User value while in the kernel */
 
-	dpcpu_init((void *)(physfree + KERNBASE), 0);
-	physfree += DPCPU_SIZE;
 	amd64_bsp_pcpu_init1(pc);
 	/* Non-late cninit() and printf() can be moved up to here. */
 
