@@ -161,6 +161,7 @@ extern void	*dsmisstrap, *dsmisssize;
 
 extern void *ap_pcpu;
 extern void __restartkernel(vm_offset_t, vm_offset_t, vm_offset_t, void *, uint32_t, register_t offset, register_t msr);
+extern void __restartkernel_virtual(vm_offset_t, vm_offset_t, vm_offset_t, void *, uint32_t, register_t offset, register_t msr);
 
 void aim_early_init(vm_offset_t fdt, vm_offset_t toc, vm_offset_t ofentry,
     void *mdp, uint32_t mdp_cookie);
@@ -184,13 +185,22 @@ aim_early_init(vm_offset_t fdt, vm_offset_t toc, vm_offset_t ofentry, void *mdp,
 
 #ifdef __powerpc64__
 	/*
-	 * If in real mode, relocate to high memory so that the kernel
+	 * Relocate to high memory so that the kernel
 	 * can execute from the direct map.
+	 *
+	 * If we are in virtual mode already, use a special entry point
+	 * that sets up a temporary DMAP to execute from until we can
+	 * properly set up the MMU.
 	 */
-	if (!(mfmsr() & PSL_DR) &&
-	    (vm_offset_t)&aim_early_init < DMAP_BASE_ADDRESS)
-		__restartkernel(fdt, 0, ofentry, mdp, mdp_cookie,
-		    DMAP_BASE_ADDRESS, mfmsr());
+	if ((vm_offset_t)&aim_early_init < DMAP_BASE_ADDRESS) {
+		if (mfmsr() & PSL_DR) {
+			__restartkernel_virtual(fdt, 0, ofentry, mdp,
+			    mdp_cookie, DMAP_BASE_ADDRESS, mfmsr());
+		} else {
+			__restartkernel(fdt, 0, ofentry, mdp, mdp_cookie,
+			    DMAP_BASE_ADDRESS, mfmsr());
+		}
+	}
 #endif
 
 	/* Various very early CPU fix ups */
@@ -504,6 +514,32 @@ cpu_pcpu_init(struct pcpu *pcpu, int cpuid, size_t sz)
 memcpy(pcpu->pc_aim.slb, PCPU_GET(aim.slb), sizeof(pcpu->pc_aim.slb));
 #endif
 }
+
+/* Return 0 on handled success, otherwise signal number. */
+int
+cpu_machine_check(struct thread *td, struct trapframe *frame, int *ucode)
+{
+#ifdef __powerpc64__
+	/*
+	 * This block is 64-bit CPU specific currently.  Punt running in 32-bit
+	 * mode on 64-bit CPUs.
+	 */
+	/* Check if the important information is in DSISR */
+	if ((frame->srr1 & SRR1_MCHK_DATA) != 0) {
+		printf("Machine check, DSISR: %016lx\n", frame->cpu.aim.dsisr);
+		/* SLB multi-hit is recoverable. */
+		if ((frame->cpu.aim.dsisr & DSISR_MC_SLB_MULTIHIT) != 0)
+			return (0);
+		/* TODO: Add other machine check recovery procedures. */
+	} else {
+		if ((frame->srr1 & SRR1_MCHK_IFETCH_M) == SRR1_MCHK_IFETCH_SLBMH)
+			return (0);
+	}
+#endif
+	*ucode = BUS_OBJERR;
+	return (SIGBUS);
+}
+
 
 #ifndef __powerpc64__
 uint64_t
