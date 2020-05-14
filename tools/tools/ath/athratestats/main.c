@@ -64,7 +64,7 @@ static int do_loop = 0;
  * This needs to be big enough to fit the two TLVs, the rate table
  * and the rate statistics table for a single node.
  */
-#define	STATS_BUF_SIZE	8192
+#define	STATS_BUF_SIZE	65536
 
 #define	PRINTMSG(...) do {			\
 	if (do_loop == 0)			\
@@ -122,32 +122,29 @@ ath_sample_stats(struct ath_ratestats *r, struct ath_rateioctl_rt *rt,
 	    (long long) sn->ratemask);
 
 	for (y = 0; y < NUM_PACKET_SIZE_BINS; y++) {
-		PRINTATTR_ON(COLOR_PAIR(y+4) | A_BOLD);
+		PRINTATTR_ON(COLOR_PAIR(2 + (y % 4)) | A_BOLD);
 		PRINTMSG("[%4u] cur rate %d %s since switch: "
-		    "packets %d ticks %u\n",
+		    "packets %d ticks %u ",
 		    bin_to_size(y),
 		    dot11rate(rt, sn->current_rix[y]),
 		    dot11str(rt, sn->current_rix[y]),
 		    sn->packets_since_switch[y],
 		    sn->ticks_since_switch[y]);
 
-		PRINTMSG("[%4u] last sample (%d %s) cur sample (%d %s) "
-		    "packets sent %d\n",
-		    bin_to_size(y),
+		PRINTMSG("last sample (%d %s) cur sample (%d %s) "
+		    "packets sent %d ",
 		    dot11rate(rt, sn->last_sample_rix[y]),
 		    dot11str(rt, sn->last_sample_rix[y]),
 		    dot11rate(rt, sn->current_sample_rix[y]),
 		    dot11str(rt, sn->current_sample_rix[y]),
 		    sn->packets_sent[y]);
-		PRINTATTR_OFF(COLOR_PAIR(y+4) | A_BOLD);
+		PRINTATTR_OFF(COLOR_PAIR(2 + (y % 4)) | A_BOLD);
 		
-		PRINTATTR_ON(COLOR_PAIR(3) | A_BOLD);
-		PRINTMSG("[%4u] packets since sample %d sample tt %u\n",
-		    bin_to_size(y),
+		PRINTATTR_ON(COLOR_PAIR(1) | A_BOLD);
+		PRINTMSG("packets since sample %d sample tt %u\n",
 		    sn->packets_since_sample[y],
 		    sn->sample_tt[y]);
 		PRINTATTR_OFF(COLOR_PAIR(3) | A_BOLD);
-		PRINTMSG("\n");
 	}
 	PRINTMSG("   TX Rate     TXTOTAL:TXOK       EWMA          T/   F"
 	    "     avg last xmit\n");
@@ -158,9 +155,9 @@ ath_sample_stats(struct ath_ratestats *r, struct ath_rateioctl_rt *rt,
 			if (sn->stats[y][rix].total_packets == 0)
 				continue;
 			if (rix == sn->current_rix[y])
-				PRINTATTR_ON(COLOR_PAIR(y+4) | A_BOLD);
+				PRINTATTR_ON(COLOR_PAIR(2 + (y % 4)) | A_BOLD);
 			else if (rix == sn->last_sample_rix[y])
-				PRINTATTR_ON(COLOR_PAIR(3) | A_BOLD);
+				PRINTATTR_ON(COLOR_PAIR(1) | A_BOLD);
 #if 0
 			else if (sn->stats[y][rix].ewma_pct / 10 < 50)
 				PRINTATTR_ON(COLOR_PAIR(2) | A_BOLD);
@@ -181,9 +178,9 @@ ath_sample_stats(struct ath_ratestats *r, struct ath_rateioctl_rt *rt,
 			    sn->stats[y][rix].average_tx_time,
 			    sn->stats[y][rix].last_tx);
 			if (rix == sn->current_rix[y])
-				PRINTATTR_OFF(COLOR_PAIR(y+4) | A_BOLD);
+				PRINTATTR_OFF(COLOR_PAIR(2 + (y % 4)) | A_BOLD);
 			else if (rix == sn->last_sample_rix[y])
-				PRINTATTR_OFF(COLOR_PAIR(3) | A_BOLD);
+				PRINTATTR_OFF(COLOR_PAIR(1) | A_BOLD);
 #if 0
 			else if (sn->stats[y][rix].ewma_pct / 10 < 50)
 				PRINTATTR_OFF(COLOR_PAIR(2) | A_BOLD);
