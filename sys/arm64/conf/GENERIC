@@ -78,6 +78,11 @@ options 	RCTL			# Resource limits
 options 	SMP
 options 	INTRNG
 
+# Stuff for netgate
+options 	LINUX_BOOT_ABI
+options 	BOOTP
+options 	ROOTDEVNAME=\"nfs:192.168.2.55:/usr/home/markj/netgate/tftp\"
+
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.
 options 	KDB_TRACE		# Print a stack trace for a panic.
