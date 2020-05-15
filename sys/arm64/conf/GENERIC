@@ -330,6 +330,7 @@ device		aw_cir
 
 # Pseudo devices.
 device		crypto		# core crypto support
+device		cryptodev
 device		loop		# Network loopback
 device		ether		# Ethernet support
 device		vlan		# 802.1Q VLAN support
