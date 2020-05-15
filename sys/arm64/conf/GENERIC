@@ -280,6 +280,7 @@ device		uinput			# install /dev/uinput cdev
 
 # Pseudo devices.
 device		crypto		# core crypto support
+device		cryptodev
 device		loop		# Network loopback
 device		random		# Entropy device
 device		ether		# Ethernet support
