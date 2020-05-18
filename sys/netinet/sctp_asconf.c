@@ -1706,8 +1706,9 @@ sctp_handle_asconf_ack(struct mbuf *m, int offset,
 		char msg[SCTP_DIAG_INFO_LEN];
 
 		SCTPDBG(SCTP_DEBUG_ASCONF1, "handle_asconf_ack: got unexpected next serial number! Aborting asoc!\n");
-		snprintf(msg, sizeof(msg), "Never sent serial number %8.8x",
-		    serial_num);
+		if (snprintf(msg, sizeof(msg), "Never sent serial number %8.8x", serial_num) < 0) {
+			msg[0] = '\0';
+		}
 		op_err = sctp_generate_cause(SCTP_CAUSE_PROTOCOL_VIOLATION, msg);
 		sctp_abort_an_association(stcb->sctp_ep, stcb, op_err, SCTP_SO_NOT_LOCKED);
 		*abort_no_unlock = 1;
@@ -2212,7 +2213,6 @@ sctp_asconf_iterator_stcb(struct sctp_inpcb *inp, struct sctp_tcb *stcb,
 			struct sctp_nets *net;
 
 			TAILQ_FOREACH(net, &stcb->asoc.nets, sctp_next) {
-
 				/* delete this address if cached */
 				if (net->ro._s_addr == ifa) {
 					sctp_free_ifa(net->ro._s_addr);
