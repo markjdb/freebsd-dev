@@ -130,6 +130,8 @@ rescue_kernel_exec(void)
 	 */
 	rescue_kernel_cpu_switch();
 
+	printf("rescue: preparing to exec rescue kernel\n");
+
 	/*
 	 * Acknowledge any active interrupts to avoid leaving the PIC in an
 	 * indeterminate state.
