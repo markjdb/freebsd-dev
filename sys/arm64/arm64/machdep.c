@@ -958,7 +958,7 @@ rescue_preload_init(struct arm64_bootparams *abp)
 	kernend = mdstart + PAGE_SIZE;
 
 	md = preload_add_string(md, MODINFO_NAME, "kernel");
-	md = preload_add_string(md, MODINFO_TYPE, "elf64 kernel");
+	md = preload_add_string(md, MODINFO_TYPE, "elf kernel");
 	md = preload_add_u64(md, MODINFO_ADDR, VM_MIN_KERNEL_ADDRESS);
 	md = preload_add_u64(md, MODINFO_SIZE, (uintptr_t)&_end - KERNBASE);
 	md = preload_add_u64(md, MODINFO_METADATA | MODINFOMD_KERNEND, kernend);
