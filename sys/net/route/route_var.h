@@ -35,6 +35,7 @@
 #ifndef RNF_NORMAL
 #include <net/radix.h>
 #endif
+#include <sys/epoch.h>
 #include <netinet/in.h>		/* struct sockaddr_in */
 #include <sys/counter.h>
 
@@ -142,12 +143,12 @@ struct rtentry {
 	};
 
 	int		rt_flags;	/* up/down?, host/net */
-	int		rt_refcnt;	/* # held references */
 	u_long		rt_weight;	/* absolute weight */ 
 	u_long		rt_expire;	/* lifetime for route, e.g. redirect */
 #define	rt_endzero	rt_mtx
 	struct mtx	rt_mtx;		/* mutex for routing entry */
 	struct rtentry	*rt_chain;	/* pointer to next rtentry to delete */
+	struct epoch_context	rt_epoch_ctx;	/* net epoch tracker */
 };
 
 #define	RT_LOCK_INIT(_rt) \
@@ -159,36 +160,6 @@ struct rtentry {
 #define	RT_UNLOCK_COND(_rt)	do {				\
 	if (mtx_owned(&(_rt)->rt_mtx))				\
 		mtx_unlock(&(_rt)->rt_mtx);			\
-} while (0)
-
-#define	RT_ADDREF(_rt)	do {					\
-	RT_LOCK_ASSERT(_rt);					\
-	KASSERT((_rt)->rt_refcnt >= 0,				\
-		("negative refcnt %d", (_rt)->rt_refcnt));	\
-	(_rt)->rt_refcnt++;					\
-} while (0)
-
-#define	RT_REMREF(_rt)	do {					\
-	RT_LOCK_ASSERT(_rt);					\
-	KASSERT((_rt)->rt_refcnt > 0,				\
-		("bogus refcnt %d", (_rt)->rt_refcnt));	\
-	(_rt)->rt_refcnt--;					\
-} while (0)
-
-#define	RTFREE_LOCKED(_rt) do {					\
-	if ((_rt)->rt_refcnt <= 1)				\
-		rtfree(_rt);					\
-	else {							\
-		RT_REMREF(_rt);					\
-		RT_UNLOCK(_rt);					\
-	}							\
-	/* guard against invalid refs */			\
-	_rt = 0;						\
-} while (0)
-
-#define	RTFREE(_rt) do {					\
-	RT_LOCK(_rt);						\
-	RTFREE_LOCKED(_rt);					\
 } while (0)
 
 /*
