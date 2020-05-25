@@ -82,6 +82,8 @@ domainset_t __read_mostly all_domains = DOMAINSET_T_INITIALIZER(0x1);
 
 struct vm_phys_seg __read_mostly vm_phys_segs[VM_PHYSSEG_MAX];
 int __read_mostly vm_phys_nsegs;
+static struct vm_phys_seg vm_phys_early_segs[8];
+static int vm_phys_early_nsegs;
 
 struct vm_phys_fictitious_seg;
 static int vm_phys_fictitious_cmp(struct vm_phys_fictitious_seg *,
@@ -1611,6 +1613,21 @@ vm_phys_avail_split(vm_paddr_t pa, int i)
 	return (0);
 }
 
+void
+vm_phys_early_add_seg(vm_paddr_t start, vm_paddr_t end)
+{
+	struct vm_phys_seg *seg;
+
+	if (vm_phys_early_nsegs == -1)
+		panic("%s: called after initialization", __func__);
+	if (vm_phys_early_nsegs == nitems(vm_phys_early_segs))
+		panic("%s: ran out of early segments", __func__);
+
+	seg = &vm_phys_early_segs[vm_phys_early_nsegs++];
+	seg->start = start;
+	seg->end = end;
+}
+
 /*
  * This routine allocates NUMA node specific memory before the page
  * allocator is bootstrapped.
@@ -1699,6 +1716,7 @@ vm_phys_early_alloc(int domain, size_t alloc_size)
 void
 vm_phys_early_startup(void)
 {
+	struct vm_phys_seg *seg;
 	int i;
 
 	for (i = 0; phys_avail[i + 1] != 0; i += 2) {
@@ -1723,6 +1741,12 @@ vm_phys_early_startup(void)
 		}
 	}
 #endif
+
+	for (i = 0; i < vm_phys_early_nsegs; i++) {
+		seg = &vm_phys_early_segs[i];
+		vm_phys_add_seg(seg->start, seg->end);
+	}
+	vm_phys_early_nsegs = -1;
 }
 
 #ifdef DDB

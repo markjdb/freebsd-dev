@@ -2810,6 +2810,7 @@ uma_startup1(vm_offset_t virtual_avail)
 	size_t ksize, zsize, size;
 	uma_keg_t masterkeg;
 	uintptr_t m;
+	int domain;
 	uint8_t pflag;
 
 	bootstart = bootmem = virtual_avail;
@@ -2827,7 +2828,12 @@ uma_startup1(vm_offset_t virtual_avail)
 
 	/* Allocate the zone of zones, zone of kegs, and zone of zones keg. */
 	size = (zsize * 2) + ksize;
-	m = (uintptr_t)startup_alloc(NULL, size, 0, &pflag, M_NOWAIT | M_ZERO);
+	for (domain = 0; domain < vm_ndomains; domain++) {
+		m = (uintptr_t)startup_alloc(NULL, size, domain, &pflag,
+		    M_NOWAIT | M_ZERO);
+		if (m != 0)
+			break;
+	}
 	zones = (uma_zone_t)m;
 	m += zsize;
 	kegs = (uma_zone_t)m;
