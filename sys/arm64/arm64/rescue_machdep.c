@@ -209,11 +209,21 @@ rescue_kernel_init(void *arg __unused)
 	}
 
 	rescue_va = kmem_alloc_contig(kernel_arena, RESCUE_RESERV_SIZE,
-	    M_WAITOK, 0, ~(vm_paddr_t)0,
-	    RESCUE_RESERV_ALIGN, RESCUE_RESERV_BOUNDARY, VM_MEMATTR_DEFAULT);
+	    M_WAITOK, 0, (vm_paddr_t)1 << 32, RESCUE_RESERV_ALIGN,
+	    RESCUE_RESERV_BOUNDARY, VM_MEMATTR_DEFAULT);
 	if (rescue_va == 0) {
-		printf("rescue: failed to reserve contiguous memory\n");
-		goto out;
+		/*
+		 * Some devices require memory below 4GB for DMA, so the rescue
+		 * kernel may fail to boot.
+		 */
+		printf("rescue: warning: failed to allocate below 4GB\n");
+		rescue_va = kmem_alloc_contig(kernel_arena, RESCUE_RESERV_SIZE,
+		    M_WAITOK, 0, ~(vm_paddr_t)0, RESCUE_RESERV_ALIGN,
+		    RESCUE_RESERV_BOUNDARY, VM_MEMATTR_DEFAULT);
+		if (rescue_va == 0) {
+			printf("rescue: failed to reserve contiguous memory\n");
+			goto out;
+		}
 	}
 	rescue_pa = pmap_kextract(rescue_va);
 
