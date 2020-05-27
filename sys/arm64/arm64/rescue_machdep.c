@@ -33,6 +33,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bus.h>
 #include <sys/conf.h>
 #include <sys/cpuset.h>
+#include <sys/elf_common.h>
 #include <sys/intr.h>
 #include <sys/kernel.h>
 #include <sys/kerneldump.h>
@@ -123,7 +124,9 @@ rescue_kernel_exec(void)
 	static pd_entry_t pt_l2[Ln_ENTRIES] __aligned(PAGE_SIZE);
 	struct rescue_kernel_params *params;
 	void (*rescue)(u_long modulep);
+	Elf64_Ehdr *ehdr;
 	vm_paddr_t pa;
+	off_t entryoff;
 
 	/*
 	 * Switch to the boot CPU if we are not already on it.
@@ -162,12 +165,19 @@ rescue_kernel_exec(void)
 
 	cpu_setttb(pmap_kextract((vm_offset_t)pt_l0));
 
+	ehdr = (Elf64_Ehdr *)((char *)rescue_pa + RESCUE_RESERV_KERNEL_OFFSET);
+	if (ehdr->e_ident[0] == ELFMAG0 && ehdr->e_ident[1] == ELFMAG1 &&
+	    ehdr->e_ident[2] == ELFMAG2 && ehdr->e_ident[3] == ELFMAG3)
+		entryoff = ehdr->e_entry - KERNBASE;
+	else
+		entryoff = 0;
+
 	/*
 	 * Jump to the entry point.  Currently we pass a dummy module pointer to
 	 * ensure that locore maps some memory following the rescue kernel, but
 	 * this is really a hack to avoid modifying locore.
 	 */
-	rescue = (void *)(rescue_pa + RESCUE_RESERV_KERNEL_OFFSET + PAGE_SIZE);
+	rescue = (void *)(rescue_pa + RESCUE_RESERV_KERNEL_OFFSET + entryoff);
 	(rescue)(KERNBASE + RESCUE_RESERV_SIZE);
 }
 
@@ -190,7 +200,7 @@ rescue_kernel_init(void *arg __unused)
 	struct dumperinfo di;
 	struct rescue_kernel_params *params;
 	void *dtbp, *fdtp;
-	char *envp, *p;
+	char *envp, *kern, *p;
 	const uint32_t *addr_cellsp, *size_cellsp;
 	uint8_t *buf, *sb;
 	caddr_t kmdp;
@@ -338,9 +348,9 @@ rescue_kernel_init(void *arg __unused)
 	 * Copy the kernel image.  This must come last since the length does not
 	 * include that of allocated sections.
 	 */
+	kern = (char *)(uintptr_t)&__rescue_kernel_start;
 	kernlen = (u_long)&__rescue_kernel_end - (u_long)&__rescue_kernel_start;
-	memcpy((void *)(rescue_va + off), (void *)&__rescue_kernel_start,
-	    kernlen);
+	memcpy((void *)(rescue_va + off), kern, kernlen);
 	cpu_idcache_wbinv_range(rescue_va, RESCUE_RESERV_SIZE);
 
 	/*
