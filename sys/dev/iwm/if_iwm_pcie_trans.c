@@ -346,8 +346,10 @@ iwm_enable_rfkill_int(struct iwm_softc *sc)
 {
 	sc->sc_intmask = IWM_CSR_INT_BIT_RF_KILL;
 	IWM_WRITE(sc, IWM_CSR_INT_MASK, sc->sc_intmask);
-	IWM_SETBITS(sc, IWM_CSR_GP_CNTRL,
-	    IWM_CSR_GP_CNTRL_REG_FLAG_RFKILL_WAKE_L1A_EN);
+
+	if (sc->cfg->device_family >= IWM_DEVICE_FAMILY_9000)
+		IWM_SETBITS(sc, IWM_CSR_GP_CNTRL,
+		    IWM_CSR_GP_CNTRL_REG_FLAG_RFKILL_WAKE_L1A_EN);
 }
 
 int
