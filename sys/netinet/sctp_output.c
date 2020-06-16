@@ -60,7 +60,6 @@ __FBSDID("$FreeBSD$");
 #include <machine/in_cksum.h>
 
 
-
 #define SCTP_MAX_GAPS_INARRAY 4
 struct sack_track {
 	uint8_t right_edge;	/* mergable on the right edge */
@@ -3832,8 +3831,6 @@ sctp_add_cookie(struct mbuf *init, int init_offset,
 	struct mbuf *copy_init, *copy_initack, *m_at, *sig, *mret;
 	struct sctp_state_cookie *stc;
 	struct sctp_paramhdr *ph;
-	uint8_t *foo;
-	int sig_offset;
 	uint16_t cookie_sz;
 
 	mret = sctp_get_mbuf_for_msg((sizeof(struct sctp_state_cookie) +
@@ -3897,24 +3894,20 @@ sctp_add_cookie(struct mbuf *init, int init_offset,
 			break;
 		}
 	}
-	sig = sctp_get_mbuf_for_msg(SCTP_SECRET_SIZE, 0, M_NOWAIT, 1, MT_DATA);
+	sig = sctp_get_mbuf_for_msg(SCTP_SIGNATURE_SIZE, 0, M_NOWAIT, 1, MT_DATA);
 	if (sig == NULL) {
 		/* no space, so free the entire chain */
 		sctp_m_freem(mret);
 		return (NULL);
 	}
-	SCTP_BUF_LEN(sig) = 0;
 	SCTP_BUF_NEXT(m_at) = sig;
-	sig_offset = 0;
-	foo = (uint8_t *)(mtod(sig, caddr_t)+sig_offset);
-	memset(foo, 0, SCTP_SIGNATURE_SIZE);
-	*signature = foo;
-	SCTP_BUF_LEN(sig) += SCTP_SIGNATURE_SIZE;
+	SCTP_BUF_LEN(sig) = SCTP_SIGNATURE_SIZE;
 	cookie_sz += SCTP_SIGNATURE_SIZE;
 	ph->param_length = htons(cookie_sz);
+	*signature = (uint8_t *)mtod(sig, caddr_t);
+	memset(*signature, 0, SCTP_SIGNATURE_SIZE);
 	return (mret);
 }
-
 
 static uint8_t
 sctp_get_ect(struct sctp_tcb *stcb)
@@ -3990,8 +3983,7 @@ sctp_lowlevel_chunk_output(struct sctp_inpcb *inp,
     uint16_t port,
     union sctp_sockstore *over_addr,
     uint8_t mflowtype, uint32_t mflowid,
-    int so_locked SCTP_UNUSED
-)
+    int so_locked)
 {
 /* nofragment_flag to tell if IP_DF should be set (IPv4 only) */
 	/**
@@ -4636,9 +4628,7 @@ sctp_lowlevel_chunk_output(struct sctp_inpcb *inp,
 
 
 void
-sctp_send_initiate(struct sctp_inpcb *inp, struct sctp_tcb *stcb, int so_locked
-    SCTP_UNUSED
-)
+sctp_send_initiate(struct sctp_inpcb *inp, struct sctp_tcb *stcb, int so_locked)
 {
 	struct mbuf *m, *m_last;
 	struct sctp_nets *net;
@@ -5122,7 +5112,6 @@ sctp_arethere_unrecognized_parameters(struct mbuf *in_initpkt,
 					}
 				}
 				return (op_err);
-				break;
 			}
 		default:
 			/*
@@ -6572,9 +6561,7 @@ sctp_med_chunk_output(struct sctp_inpcb *inp,
     int *num_out,
     int *reason_code,
     int control_only, int from_where,
-    struct timeval *now, int *now_filled, int frag_point, int so_locked
-    SCTP_UNUSED
-);
+    struct timeval *now, int *now_filled, int frag_point, int so_locked);
 
 static void
 sctp_sendall_iterator(struct sctp_inpcb *inp, struct sctp_tcb *stcb, void *ptr,
@@ -7034,9 +7021,7 @@ all_done:
 }
 
 static void
-sctp_clean_up_ctl(struct sctp_tcb *stcb, struct sctp_association *asoc, int so_locked
-    SCTP_UNUSED
-)
+sctp_clean_up_ctl(struct sctp_tcb *stcb, struct sctp_association *asoc, int so_locked)
 {
 	struct sctp_tmit_chunk *chk, *nchk;
 
@@ -7141,9 +7126,7 @@ sctp_move_to_outqueue(struct sctp_tcb *stcb,
     int *giveup,
     int eeor_mode,
     int *bail,
-    int so_locked
-    SCTP_UNUSED
-)
+    int so_locked)
 {
 	/* Move from the stream to the send_queue keeping track of the total */
 	struct sctp_association *asoc;
@@ -7670,9 +7653,7 @@ out_of:
 
 static void
 sctp_fill_outqueue(struct sctp_tcb *stcb,
-    struct sctp_nets *net, int frag_point, int eeor_mode, int *quit_now, int so_locked
-    SCTP_UNUSED
-)
+    struct sctp_nets *net, int frag_point, int eeor_mode, int *quit_now, int so_locked)
 {
 	struct sctp_association *asoc;
 	struct sctp_stream_out *strq;
@@ -7791,9 +7772,7 @@ sctp_med_chunk_output(struct sctp_inpcb *inp,
     int *num_out,
     int *reason_code,
     int control_only, int from_where,
-    struct timeval *now, int *now_filled, int frag_point, int so_locked
-    SCTP_UNUSED
-)
+    struct timeval *now, int *now_filled, int frag_point, int so_locked)
 {
 	/**
 	 * Ok this is the generic chunk service queue. we must do the
@@ -9408,9 +9387,7 @@ static int
 sctp_chunk_retransmission(struct sctp_inpcb *inp,
     struct sctp_tcb *stcb,
     struct sctp_association *asoc,
-    int *cnt_out, struct timeval *now, int *now_filled, int *fr_done, int so_locked
-    SCTP_UNUSED
-)
+    int *cnt_out, struct timeval *now, int *now_filled, int *fr_done, int so_locked)
 {
 	/*-
 	 * send out one MTU of retransmission. If fast_retransmit is
@@ -9959,9 +9936,7 @@ void
 sctp_chunk_output(struct sctp_inpcb *inp,
     struct sctp_tcb *stcb,
     int from_where,
-    int so_locked
-    SCTP_UNUSED
-)
+    int so_locked)
 {
 	/*-
 	 * Ok this is the generic chunk service queue. we must do the
@@ -10478,9 +10453,7 @@ sctp_fill_in_rest:
 }
 
 void
-sctp_send_sack(struct sctp_tcb *stcb, int so_locked
-    SCTP_UNUSED
-)
+sctp_send_sack(struct sctp_tcb *stcb, int so_locked)
 {
 	/*-
 	 * Queue up a SACK or NR-SACK in the control queue.
@@ -10874,9 +10847,7 @@ sctp_send_sack(struct sctp_tcb *stcb, int so_locked
 }
 
 void
-sctp_send_abort_tcb(struct sctp_tcb *stcb, struct mbuf *operr, int so_locked
-    SCTP_UNUSED
-)
+sctp_send_abort_tcb(struct sctp_tcb *stcb, struct mbuf *operr, int so_locked)
 {
 	struct mbuf *m_abort, *m, *m_last;
 	struct mbuf *m_out, *m_end = NULL;
@@ -11292,9 +11263,7 @@ sctp_send_shutdown_complete2(struct sockaddr *src, struct sockaddr *dst,
 }
 
 void
-sctp_send_hb(struct sctp_tcb *stcb, struct sctp_nets *net, int so_locked
-    SCTP_UNUSED
-)
+sctp_send_hb(struct sctp_tcb *stcb, struct sctp_nets *net, int so_locked)
 {
 	struct sctp_tmit_chunk *chk;
 	struct sctp_heartbeat_chunk *hb;

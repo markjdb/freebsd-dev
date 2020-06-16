@@ -55,8 +55,6 @@ __FBSDID("$FreeBSD$");
 #endif
 #include <sys/smp.h>
 
-
-
 static void
 sctp_stop_all_cookie_timers(struct sctp_tcb *stcb)
 {
@@ -213,9 +211,7 @@ outnow:
  */
 
 int
-sctp_is_there_unsent_data(struct sctp_tcb *stcb, int so_locked
-    SCTP_UNUSED
-)
+sctp_is_there_unsent_data(struct sctp_tcb *stcb, int so_locked)
 {
 	int unsent_data;
 	unsigned int i;
@@ -5598,9 +5594,8 @@ trigger_send:
 	if (!TAILQ_EMPTY(&stcb->asoc.asconf_send_queue) ||
 	    cnt_ctrl_ready ||
 	    stcb->asoc.trigger_reset ||
-	    ((un_sent) &&
-	    (stcb->asoc.peers_rwnd > 0 ||
-	    (stcb->asoc.peers_rwnd <= 0 && stcb->asoc.total_flight == 0)))) {
+	    ((un_sent > 0) &&
+	    (stcb->asoc.peers_rwnd > 0 || stcb->asoc.total_flight == 0))) {
 		SCTPDBG(SCTP_DEBUG_INPUT3, "Calling chunk OUTPUT\n");
 		sctp_chunk_output(inp, stcb, SCTP_OUTPUT_FROM_CONTROL_PROC, SCTP_SO_NOT_LOCKED);
 		SCTPDBG(SCTP_DEBUG_INPUT3, "chunk OUTPUT returns\n");
@@ -5727,7 +5722,7 @@ out:
 	return;
 }
 
-#if defined(__FreeBSD__) && defined(SCTP_MCORE_INPUT) && defined(SMP)
+#if defined(SCTP_MCORE_INPUT) && defined(SMP)
 extern int *sctp_cpuarry;
 #endif
 
@@ -5739,7 +5734,7 @@ sctp_input(struct mbuf **mp, int *offp, int proto SCTP_UNUSED)
 
 	m = *mp;
 	off = *offp;
-#if defined(__FreeBSD__) && defined(SCTP_MCORE_INPUT) && defined(SMP)
+#if defined(SCTP_MCORE_INPUT) && defined(SMP)
 	if (mp_ncpus > 1) {
 		struct ip *ip;
 		struct sctphdr *sh;

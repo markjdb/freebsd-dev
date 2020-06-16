@@ -41,24 +41,9 @@ __FBSDID("$FreeBSD$");
 #include <machine/bus.h>
 
 #include <arm64/coresight/coresight.h>
-
-#include <dev/ofw/ofw_bus.h>
-#include <dev/ofw/ofw_bus_subr.h>
+#include <arm64/coresight/coresight_replicator.h>
 
 #include "coresight_if.h"
-
-#define	REPLICATOR_IDFILTER0	0x00
-#define	REPLICATOR_IDFILTER1	0x04
-
-static struct ofw_compat_data compat_data[] = {
-	{ "arm,coresight-dynamic-replicator",	1 },
-	{ NULL,					0 }
-};
-
-struct replicator_softc {
-	struct resource			*res;
-	struct coresight_platform_data	*pdata;
-};
 
 static struct resource_spec replicator_spec[] = {
 	{ SYS_RES_MEMORY,	0,	RF_ACTIVE },
@@ -111,21 +96,6 @@ replicator_disable(device_t dev, struct endpoint *endp,
 }
 
 static int
-replicator_probe(device_t dev)
-{
-
-	if (!ofw_bus_status_okay(dev))
-		return (ENXIO);
-
-	if (ofw_bus_search_compatible(dev, compat_data)->ocd_data == 0)
-		return (ENXIO);
-
-	device_set_desc(dev, "Coresight Dynamic Replicator");
-
-	return (BUS_PROBE_DEFAULT);
-}
-
-static int
 replicator_attach(device_t dev)
 {
 	struct replicator_softc *sc;
@@ -149,7 +119,6 @@ replicator_attach(device_t dev)
 
 static device_method_t replicator_methods[] = {
 	/* Device interface */
-	DEVMETHOD(device_probe,		replicator_probe),
 	DEVMETHOD(device_attach,	replicator_attach),
 
 	/* Coresight interface */
@@ -159,14 +128,5 @@ static device_method_t replicator_methods[] = {
 	DEVMETHOD_END
 };
 
-static driver_t replicator_driver = {
-	"replicator",
-	replicator_methods,
-	sizeof(struct replicator_softc),
-};
-
-static devclass_t replicator_devclass;
-
-DRIVER_MODULE(replicator, simplebus, replicator_driver, replicator_devclass,
-    0, 0);
-MODULE_VERSION(replicator, 1);
+DEFINE_CLASS_0(replicator, replicator_driver, replicator_methods,
+    sizeof(struct replicator_softc));
