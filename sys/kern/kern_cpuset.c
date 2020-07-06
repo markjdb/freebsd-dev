@@ -846,6 +846,7 @@ cpuset_which(cpuwhich_t which, id_t id, struct proc **pp, struct thread **tdp,
 	struct cpuset *set;
 	struct thread *td;
 	struct proc *p;
+	pid_t pid;
 	int error;
 
 	*pp = p = NULL;
@@ -871,6 +872,10 @@ cpuset_which(cpuwhich_t which, id_t id, struct proc **pp, struct thread **tdp,
 		td = tdfind(id, -1);
 		if (td == NULL)
 			return (ESRCH);
+		if (IN_CAPABILITY_MODE(curthread) && td->td_proc != curproc) {
+			PROC_UNLOCK(td->td_proc);
+			return (ECAPMODE);
+		}
 		p = td->td_proc;
 		break;
 	case CPU_WHICH_CPUSET:
@@ -1595,9 +1600,12 @@ cpuset_check_capabilities(struct thread *td, cpulevel_t level, cpuwhich_t which,
 			return (ECAPMODE);
 		if (which != CPU_WHICH_TID && which != CPU_WHICH_PID)
 			return (ECAPMODE);
-		if (id != -1 &&
-		    !(which == CPU_WHICH_TID && id == td->td_tid) &&
-		    !(which == CPU_WHICH_PID && id == td->td_proc->p_pid))
+
+		/*
+		 * Validation for CPU_WHICH_TID is handled in cpuset_which().
+		 */
+		if (id != -1 && which == CPU_WHICH_PID &&
+		    id != td->td_proc->p_pid)
 			return (ECAPMODE);
 	}
 	return (0);
