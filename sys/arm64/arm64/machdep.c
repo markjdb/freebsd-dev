@@ -172,7 +172,6 @@ cpu_startup(void *dummy)
 {
 
 	undef_init();
-	identify_cpu();
 	install_cpu_errata();
 
 	vm_ksubmap_init(&kmi);
@@ -181,6 +180,13 @@ cpu_startup(void *dummy)
 }
 
 SYSINIT(cpu, SI_SUB_CPU, SI_ORDER_FIRST, cpu_startup, NULL);
+
+static void
+late_ifunc_resolve(void *dummy __unused)
+{
+	link_elf_late_ireloc();
+}
+SYSINIT(late_ifunc_resolve, SI_SUB_CPU, SI_ORDER_ANY, late_ifunc_resolve, NULL);
 
 int
 cpu_idle_wakeup(int cpu)
@@ -1138,6 +1144,9 @@ initarm(struct arm64_bootparams *abp)
 	if (kmdp == NULL)
 		kmdp = preload_search_by_type("elf64 kernel");
 
+	identify_cpu(0);
+	update_special_regs(0);
+
 	link_elf_ireloc(kmdp);
 	try_load_dtb(kmdp);
 
@@ -1181,6 +1190,7 @@ initarm(struct arm64_bootparams *abp)
 	    "msr tpidr_el1, %0" :: "r"(pcpup));
 
 	PCPU_SET(curthread, &thread0);
+	PCPU_SET(midr, get_midr());
 
 	/* Do basic tuning, hz etc */
 	init_param1();
