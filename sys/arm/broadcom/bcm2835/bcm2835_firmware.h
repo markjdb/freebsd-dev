@@ -1,8 +1,10 @@
 /*-
- * Copyright (c) 2020 The FreeBSD Foundation
+ * SPDX-License-Identifier: BSD-2-Clause
  *
- * This software was developed by Emmanuel Vadot under sponsorship
- * from the FreeBSD Foundation.
+ * Copyright (c) 2020 Andrew Turner
+ *
+ * This work was supported by Innovate UK project 105694, "Digital Security
+ * by Design (DSbD) Technology Platform Prototype".
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -16,7 +18,7 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -28,38 +30,9 @@
  * $FreeBSD$
  */
 
-#ifndef __LINUX_OVERFLOW_H__
-#define	__LINUX_OVERFLOW_H__
+#ifndef _BCM2835_FIRMWARE_H_
+#define _BCM2835_FIRMWARE_H_
 
-#include <sys/stdint.h>
-#include <sys/types.h>
+int bcm2835_firmware_property(device_t, uint32_t, void *, size_t);
 
-#ifndef	__has_builtin
-#define	__has_builtin(x)	0
 #endif
-
-#if __has_builtin(__builtin_add_overflow)
-#define check_add_overflow(a, b, c)		\
-	__builtin_add_overflow(a, b, c)
-#else
-#error "Compiler does not support __builtin_add_overflow"
-#endif
-
-#if __has_builtin(__builtin_mul_overflow)
-#define check_mul_overflow(a, b, c)	\
-	__builtin_mul_overflow(a, b, c)
-
-static inline size_t
-array_size(size_t x, size_t y)
-{
-	size_t retval;
-
-	if (__builtin_mul_overflow(x, y, &retval))
-		retval = SIZE_MAX;
-	return (retval);
-}
-#else
-#error "Compiler does not support __builtin_mul_overflow"
-#endif
-
-#endif	/* __LINUX_OVERFLOW_H__ */
