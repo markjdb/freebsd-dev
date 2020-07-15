@@ -267,6 +267,7 @@ vm_sync_icache(vm_map_t map, vm_offset_t va, vm_offset_t sz)
 vm_object_t kstack_object;
 static uma_zone_t kstack_cache;
 static int kstack_cache_size;
+static vmem_t *kstack_kva;
 
 static int
 sysctl_kstack_cache_size(SYSCTL_HANDLER_ARGS)
@@ -301,13 +302,15 @@ vm_thread_stack_create(struct domainset *ds, int pages)
 	 * We need to align the kstack's mapped address to fit within
 	 * a single TLB entry.
 	 */
-	if (vmem_xalloc(kernel_arena, (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE,
+	if (vmem_xalloc(kstack_kva, (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE,
 	    PAGE_SIZE * 2, 0, 0, VMEM_ADDR_MIN, VMEM_ADDR_MAX,
 	    M_BESTFIT | M_NOWAIT, &ks)) {
 		ks = 0;
 	}
 #else
-	ks = kva_alloc((pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
+	if (vmem_alloc(kstack_kva, (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE,
+	    M_BESTFIT | M_NOWAIT, &ks) != 0)
+		ks = 0;
 #endif
 	if (ks == 0) {
 		printf("%s: kstack allocation failed\n", __func__);
@@ -350,7 +353,7 @@ vm_thread_stack_dispose(vm_offset_t ks, int pages)
 		vm_page_free(m);
 	}
 	VM_OBJECT_WUNLOCK(kstack_object);
-	kva_free(ks - (KSTACK_GUARD_PAGES * PAGE_SIZE),
+	vmem_free(kstack_kva, ks - (KSTACK_GUARD_PAGES * PAGE_SIZE),
 	    (pages + KSTACK_GUARD_PAGES) * PAGE_SIZE);
 }
 
@@ -477,6 +480,7 @@ kstack_cache_init(void *null)
 	    UMA_ZONE_FIRSTTOUCH);
 	kstack_cache_size = imax(128, mp_ncpus * 4);
 	uma_zone_set_maxcache(kstack_cache, kstack_cache_size);
+	kstack_kva = kva_arena_create("kstack", PAGE_SIZE, KVA_F_RELEASE);
 }
 SYSINIT(vm_kstacks, SI_SUB_KMEM, SI_ORDER_ANY, kstack_cache_init, NULL);
 

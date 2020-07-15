@@ -50,6 +50,9 @@ struct domainset;
 vm_offset_t kva_alloc(vm_size_t);
 void kva_free(vm_offset_t, vm_size_t);
 
+#define	KVA_F_RELEASE	0x01
+struct vmem *kva_arena_create(const char *name, vm_size_t quantum, int flags);
+
 /* These operate on pageable virtual addresses. */
 vm_offset_t kmap_alloc_wait(vm_map_t, vm_size_t);
 void kmap_free_wakeup(vm_map_t, vm_offset_t, vm_size_t);

@@ -733,6 +733,23 @@ kva_import_domain(void *arena, vmem_size_t size, int flags, vmem_addr_t *addrp)
 	    VMEM_ADDR_MAX, flags, addrp));
 }
 
+struct vmem *
+kva_arena_create(const char *name, vm_size_t quantum, int flags)
+{
+	vmem_t *vmem;
+	vmem_release_t *release;
+
+	if ((flags & KVA_F_RELEASE) != 0)
+		release = (vmem_release_t *)vmem_xfree;
+	else
+		release = NULL;
+
+	vmem = vmem_create("kernel arena domain", 0, 0, quantum, 0, M_WAITOK);
+	vmem_set_import(vmem, kva_import_domain, release, kernel_arena,
+	    KVA_QUANTUM);
+	return (vmem);
+}
+
 /*
  * 	kmem_init:
  *
@@ -786,10 +803,8 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 		 * are backed by memory from the same physical domain,
 		 * maximizing the potential for superpage promotion.
 		 */
-		vm_dom[domain].vmd_kernel_arena = vmem_create(
-		    "kernel arena domain", 0, 0, PAGE_SIZE, 0, M_WAITOK);
-		vmem_set_import(vm_dom[domain].vmd_kernel_arena,
-		    kva_import_domain, NULL, kernel_arena, KVA_QUANTUM);
+		vm_dom[domain].vmd_kernel_arena = kva_arena_create(
+		    "kernel arena domain", PAGE_SIZE, 0);
 
 		/*
 		 * In architectures with superpages, maintain separate arenas
@@ -798,11 +813,8 @@ kmem_init(vm_offset_t start, vm_offset_t end)
 		 * so as not to inhibit superpage promotion.
 		 */
 #if VM_NRESERVLEVEL > 0
-		vm_dom[domain].vmd_kernel_rwx_arena = vmem_create(
-		    "kernel rwx arena domain", 0, 0, PAGE_SIZE, 0, M_WAITOK);
-		vmem_set_import(vm_dom[domain].vmd_kernel_rwx_arena,
-		    kva_import_domain, (vmem_release_t *)vmem_xfree,
-		    kernel_arena, KVA_QUANTUM);
+		vm_dom[domain].vmd_kernel_rwx_arena = kva_arena_create(
+		    "kernel rwx arena domain", PAGE_SIZE, KVA_F_RELEASE);
 #else
 		vm_dom[domain].vmd_kernel_rwx_arena =
 		    vm_dom[domain].vmd_kernel_arena;
