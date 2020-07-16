@@ -37,7 +37,14 @@ SECTIONS
 	.text		:
 	{
 		*(.text .text.*)
-		. = ALIGN(CONSTANT(COMMONPAGESIZE));
+
+		/*
+		 * Pad to a page boundary.  As an optimization, if the
+		 * text section is already large, pad to a large page
+		 * boundary.
+		 */
+		. = ALIGN(. >= (CONSTANT(MAXPAGESIZE) / 2) ?
+		    CONSTANT(MAXPAGESIZE) : CONSTANT(COMMONPAGESIZE));
 	}
 
 	.rodata		:

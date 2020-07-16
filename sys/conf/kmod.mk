@@ -146,6 +146,7 @@ LDFLAGS+=	--build-id=sha1
 CFLAGS+=	${DEBUG_FLAGS}
 .if ${MACHINE_CPUARCH} == amd64
 CFLAGS+=	-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
+LDFLAGS+=	-z max-page-size=2097152
 .endif
 
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "riscv" || \
