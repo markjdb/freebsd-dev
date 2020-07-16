@@ -85,6 +85,14 @@ options 	ROOTDEVNAME=\"nfs:10.0.1.100:/usr/home/markj/netgate/tftp12\"
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.
 options 	KDB_TRACE		# Print a stack trace for a panic.
+options 	DDB
+options 	DEADLKRES
+options 	INVARIANTS
+options 	INVARIANT_SUPPORT
+options 	WITNESS
+options 	WITNESS_SKIPSPIN
+options 	ALT_BREAK_TO_DEBUGGER
+options 	VERBOSE_SYSINIT=0
 
 # Kernel dump features.
 options 	EKCD			# Support for encrypted kernel dumps
