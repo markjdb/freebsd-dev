@@ -1144,6 +1144,12 @@ safexcel_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
+static void
+safexcel_crypto_register(struct safexcel_softc *sc, int alg)
+{
+	(void)crypto_register(sc->sc_cid, alg, SAFEXCEL_MAX_REQUEST_SIZE, 0);
+}
+
 static int
 safexcel_attach(device_t dev)
 {
@@ -1211,6 +1217,26 @@ safexcel_attach(device_t dev)
 	if (sc->sc_cid < 0)
 		goto err2;
 
+	safexcel_crypto_register(sc, CRYPTO_AES_CBC);
+	safexcel_crypto_register(sc, CRYPTO_AES_ICM);
+	safexcel_crypto_register(sc, CRYPTO_AES_XTS);
+	safexcel_crypto_register(sc, CRYPTO_AES_CCM_16);
+	safexcel_crypto_register(sc, CRYPTO_AES_CCM_CBC_MAC);
+	safexcel_crypto_register(sc, CRYPTO_AES_NIST_GCM_16);
+	safexcel_crypto_register(sc, CRYPTO_AES_128_NIST_GMAC);
+	safexcel_crypto_register(sc, CRYPTO_AES_192_NIST_GMAC);
+	safexcel_crypto_register(sc, CRYPTO_AES_256_NIST_GMAC);
+	safexcel_crypto_register(sc, CRYPTO_SHA1);
+	safexcel_crypto_register(sc, CRYPTO_SHA1_HMAC);
+	safexcel_crypto_register(sc, CRYPTO_SHA2_224);
+	safexcel_crypto_register(sc, CRYPTO_SHA2_224_HMAC);
+	safexcel_crypto_register(sc, CRYPTO_SHA2_256);
+	safexcel_crypto_register(sc, CRYPTO_SHA2_256_HMAC);
+	safexcel_crypto_register(sc, CRYPTO_SHA2_384);
+	safexcel_crypto_register(sc, CRYPTO_SHA2_384_HMAC);
+	safexcel_crypto_register(sc, CRYPTO_SHA2_512);
+	safexcel_crypto_register(sc, CRYPTO_SHA2_512_HMAC);
+
 	return (0);
 
 err2:
@@ -1256,7 +1282,6 @@ safexcel_detach(device_t dev)
 static int
 safexcel_set_context(struct safexcel_request *req)
 {
-	const struct crypto_session_params *csp;
 	struct cryptop *crp;
 	struct safexcel_context_record *ctx;
 	struct safexcel_session *sess;
@@ -1264,58 +1289,51 @@ safexcel_set_context(struct safexcel_request *req)
 	int off;
 
 	crp = req->crp;
-	csp = crypto_get_params(crp->crp_session);
 	sess = req->sess;
 
 	ctx = (struct safexcel_context_record *)req->ctx.vaddr;
 	data = (uint8_t *)ctx->data;
-	if (csp->csp_cipher_alg != 0) {
-		if (crp->crp_cipher_key != NULL)
-			memcpy(data, crp->crp_cipher_key, sess->klen);
+	if (req->enc != NULL) {
+		if ((req->enc->crd_flags & CRD_F_KEY_EXPLICIT) != 0)
+			memcpy(data, req->enc->crd_key, sess->klen);
 		else
-			memcpy(data, csp->csp_cipher_key, sess->klen);
-		off = sess->klen;
-	} else if (csp->csp_auth_alg == CRYPTO_AES_NIST_GMAC) {
-		if (crp->crp_auth_key != NULL)
-			memcpy(data, crp->crp_auth_key, sess->klen);
-		else
-			memcpy(data, csp->csp_auth_key, sess->klen);
+			memcpy(data, sess->key, sess->klen);
 		off = sess->klen;
 	} else {
 		off = 0;
 	}
 
-	switch (csp->csp_cipher_alg) {
-	case CRYPTO_AES_NIST_GCM_16:
-		memcpy(data + off, sess->ghash_key, GMAC_BLOCK_LEN);
-		off += GMAC_BLOCK_LEN;
-		break;
-	case CRYPTO_AES_CCM_16:
-		memcpy(data + off, sess->xcbc_key,
-		    AES_BLOCK_LEN * 2 + sess->klen);
-		off += AES_BLOCK_LEN * 2 + sess->klen;
-		break;
-	case CRYPTO_AES_XTS:
-		memcpy(data + off, sess->tweak_key, sess->klen);
-		off += sess->klen;
-		break;
+	if (req->enc != NULL) {
+		switch (req->enc->crd_alg) {
+		case CRYPTO_AES_NIST_GCM_16:
+			memcpy(data + off, sess->ghash_key, GMAC_BLOCK_LEN);
+			off += GMAC_BLOCK_LEN;
+			break;
+		case CRYPTO_AES_CCM_16:
+			memcpy(data + off, sess->xcbc_key,
+			    AES_BLOCK_LEN * 2 + sess->klen);
+			off += AES_BLOCK_LEN * 2 + sess->klen;
+			break;
+		case CRYPTO_AES_XTS:
+			memcpy(data + off, sess->tweak_key, sess->klen);
+			off += sess->klen;
+			break;
+		}
 	}
 
-	switch (csp->csp_auth_alg) {
-	case CRYPTO_AES_NIST_GMAC:
-		memcpy(data + off, sess->ghash_key, GMAC_BLOCK_LEN);
-		off += GMAC_BLOCK_LEN;
-		break;
-	case CRYPTO_SHA1_HMAC:
-	case CRYPTO_SHA2_224_HMAC:
-	case CRYPTO_SHA2_256_HMAC:
-	case CRYPTO_SHA2_384_HMAC:
-	case CRYPTO_SHA2_512_HMAC:
-		memcpy(data + off, sess->hmac_ipad, sess->statelen);
-		off += sess->statelen;
-		memcpy(data + off, sess->hmac_opad, sess->statelen);
-		off += sess->statelen;
-		break;
+	if (req->mac != NULL) {
+		switch (req->mac->crd_alg) {
+		case CRYPTO_SHA1_HMAC:
+		case CRYPTO_SHA2_224_HMAC:
+		case CRYPTO_SHA2_256_HMAC:
+		case CRYPTO_SHA2_384_HMAC:
+		case CRYPTO_SHA2_512_HMAC:
+			memcpy(data + off, sess->hmac_ipad, sess->statelen);
+			off += sess->statelen;
+			memcpy(data + off, sess->hmac_opad, sess->statelen);
+			off += sess->statelen;
+			break;
+		}
 	}
 
 	return (off);
@@ -1331,14 +1349,12 @@ static void
 safexcel_set_command(struct safexcel_request *req,
     struct safexcel_cmd_descr *cdesc)
 {
-	const struct crypto_session_params *csp;
 	struct cryptop *crp;
 	struct safexcel_session *sess;
 	uint32_t ctrl0, ctrl1, ctxr_len;
 	int alg;
 
 	crp = req->crp;
-	csp = crypto_get_params(crp->crp_session);
 	sess = req->sess;
 
 	ctrl0 = sess->alg | sess->digest | sess->hash;
@@ -1347,13 +1363,14 @@ safexcel_set_command(struct safexcel_request *req,
 	ctxr_len = safexcel_set_context(req) / sizeof(uint32_t);
 	ctrl0 |= SAFEXCEL_CONTROL0_SIZE(ctxr_len);
 
-	alg = csp->csp_cipher_alg;
-	if (alg == 0)
-		alg = csp->csp_auth_alg;
+	if (req->enc != NULL)
+		alg = req->enc->crd_alg;
+	else
+		alg = req->mac->crd_alg;
 
 	switch (alg) {
 	case CRYPTO_AES_CCM_16:
-		if (CRYPTO_OP_IS_ENCRYPT(crp->crp_op)) {
+		if ((req->enc->crd_flags & CRD_F_ENCRYPT) != 0) {
 			ctrl0 |= SAFEXCEL_CONTROL0_TYPE_HASH_ENCRYPT_OUT |
 			    SAFEXCEL_CONTROL0_KEY_EN;
 		} else {
@@ -1366,23 +1383,23 @@ safexcel_set_command(struct safexcel_request *req,
 	case CRYPTO_AES_CBC:
 	case CRYPTO_AES_ICM:
 	case CRYPTO_AES_XTS:
-		if (CRYPTO_OP_IS_ENCRYPT(crp->crp_op)) {
+		if ((req->enc->crd_flags & CRD_F_ENCRYPT) != 0) {
 			ctrl0 |= SAFEXCEL_CONTROL0_TYPE_CRYPTO_OUT |
 			    SAFEXCEL_CONTROL0_KEY_EN;
-			if (csp->csp_auth_alg != 0)
+			if (req->mac != NULL)
 				ctrl0 |=
 				    SAFEXCEL_CONTROL0_TYPE_ENCRYPT_HASH_OUT;
 		} else {
 			ctrl0 |= SAFEXCEL_CONTROL0_TYPE_CRYPTO_IN |
 			    SAFEXCEL_CONTROL0_KEY_EN;
-			if (csp->csp_auth_alg != 0)
+			if (req->mac != NULL) {
 				ctrl0 |= SAFEXCEL_CONTROL0_TYPE_HASH_DECRYPT_IN;
+				ctrl1 |= SAFEXCEL_CONTROL1_HASH_STORE;
+			}
 		}
 		break;
 	case CRYPTO_AES_NIST_GCM_16:
-	case CRYPTO_AES_NIST_GMAC:
-		if (CRYPTO_OP_IS_ENCRYPT(crp->crp_op) ||
-		    csp->csp_auth_alg != 0) {
+		if ((req->enc->crd_flags & CRD_F_ENCRYPT) != 0) {
 			ctrl0 |= SAFEXCEL_CONTROL0_TYPE_CRYPTO_OUT |
 			    SAFEXCEL_CONTROL0_KEY_EN |
 			    SAFEXCEL_CONTROL0_TYPE_HASH_OUT;
@@ -1391,7 +1408,8 @@ safexcel_set_command(struct safexcel_request *req,
 			    SAFEXCEL_CONTROL0_KEY_EN |
 			    SAFEXCEL_CONTROL0_TYPE_HASH_DECRYPT_IN;
 		}
-		if (csp->csp_cipher_alg == CRYPTO_AES_NIST_GCM_16) {
+		if (req->enc != NULL &&
+		    req->enc->crd_alg == CRYPTO_AES_NIST_GCM_16) {
 			ctrl1 |= SAFEXCEL_CONTROL1_COUNTER_MODE |
 			    SAFEXCEL_CONTROL1_IV0 | SAFEXCEL_CONTROL1_IV1 |
 			    SAFEXCEL_CONTROL1_IV2;
@@ -1454,11 +1472,28 @@ safexcel_instr_insert_digest(struct safexcel_instr **instrp, int len)
 	*instrp = instr + 1;
 }
 
+static void
+safexcel_instr_retrieve_digest(struct safexcel_instr **instrp, struct safexcel_request *req, int len)
+{
+	struct safexcel_instr *instr;
+
+	instr = *instrp;
+
+	instr->opcode = SAFEXCEL_INSTR_OPCODE_INSERT;
+	instr->length = len;
+	instr->status = SAFEXCEL_INSTR_STATUS_LAST_HASH |
+	    SAFEXCEL_INSTR_STATUS_LAST_PACKET;
+	instr->instructions = SAFEXCEL_INSTR_INSERT_HASH_DIGEST |
+	    SAFEXCEL_INSTR_DEST_OUTPUT;
+
+	*instrp = instr + 1;
+}
+
 /*
  * Retrieve and verify a digest.
  */
 static void
-safexcel_instr_retrieve_digest(struct safexcel_instr **instrp, int len)
+safexcel_instr_verify_digest(struct safexcel_instr **instrp, int len)
 {
 	struct safexcel_instr *instr;
 
@@ -1507,13 +1542,9 @@ static void
 safexcel_instr_cipher(struct safexcel_request *req,
     struct safexcel_instr *instr, struct safexcel_cmd_descr *cdesc)
 {
-	struct cryptop *crp;
-
-	crp = req->crp;
-
 	/* Insert the payload. */
 	instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
-	instr->length = crp->crp_payload_length;
+	instr->length = req->enc->crd_len;
 	instr->status = SAFEXCEL_INSTR_STATUS_LAST_PACKET |
 	    SAFEXCEL_INSTR_STATUS_LAST_HASH;
 	instr->instructions = SAFEXCEL_INSTR_INS_LAST |
@@ -1526,42 +1557,27 @@ static void
 safexcel_instr_eta(struct safexcel_request *req, struct safexcel_instr *instr,
     struct safexcel_cmd_descr *cdesc)
 {
-	const struct crypto_session_params *csp;
-	struct cryptop *crp;
 	struct safexcel_instr *start;
 
-	crp = req->crp;
-	csp = crypto_get_params(crp->crp_session);
 	start = instr;
 
-	/* Insert the AAD. */
-	instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
-	instr->length = crp->crp_aad_length;
-	instr->status = crp->crp_payload_length == 0 ?
-	    SAFEXCEL_INSTR_STATUS_LAST_HASH : 0;
-	instr->instructions = SAFEXCEL_INSTR_INS_LAST |
-	    SAFEXCEL_INSTR_DEST_HASH;
-	instr++;
-
 	/* Encrypt any data left in the request. */
-	if (crp->crp_payload_length > 0) {
-		instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
-		instr->length = crp->crp_payload_length;
-		instr->status = SAFEXCEL_INSTR_STATUS_LAST_HASH;
-		instr->instructions = SAFEXCEL_INSTR_INS_LAST |
-		    SAFEXCEL_INSTR_DEST_CRYPTO |
-		    SAFEXCEL_INSTR_DEST_HASH |
-		    SAFEXCEL_INSTR_DEST_OUTPUT;
-		instr++;
-	}
+	instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
+	instr->length = req->enc->crd_len;
+	instr->status = SAFEXCEL_INSTR_STATUS_LAST_HASH;
+	instr->instructions = SAFEXCEL_INSTR_INS_LAST |
+	    SAFEXCEL_INSTR_DEST_CRYPTO |
+	    SAFEXCEL_INSTR_DEST_HASH |
+	    SAFEXCEL_INSTR_DEST_OUTPUT;
+	instr++;
 
 	/*
 	 * Compute the digest, or extract it and place it in the output stream.
 	 */
-	if (CRYPTO_OP_IS_ENCRYPT(crp->crp_op))
+	if ((req->enc->crd_flags & CRD_F_ENCRYPT) != 0)
 		safexcel_instr_insert_digest(&instr, req->sess->digestlen);
 	else
-		safexcel_instr_retrieve_digest(&instr, req->sess->digestlen);
+		safexcel_instr_retrieve_digest(&instr, req, req->sess->digestlen);
 	cdesc->additional_cdata_size = instr - start;
 }
 
@@ -1577,7 +1593,7 @@ safexcel_instr_sha_hash(struct safexcel_request *req,
 
 	/* Pass the input data to the hash engine. */
 	instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
-	instr->length = crp->crp_payload_length;
+	instr->length = req->mac->crd_len;
 	instr->status = SAFEXCEL_INSTR_STATUS_LAST_HASH;
 	instr->instructions = SAFEXCEL_INSTR_DEST_HASH;
 	instr++;
@@ -1624,7 +1640,7 @@ safexcel_instr_ccm(struct safexcel_request *req, struct safexcel_instr *instr,
 	 * Insert B0 and the AAD length into the input stream.
 	 */
 	instr->opcode = SAFEXCEL_INSTR_OPCODE_INSERT;
-	instr->length = blen + (crp->crp_aad_length > 0 ? 2 : 0);
+	instr->length = blen + (req->mac->crd_len > 0 ? 2 : 0);
 	instr->status = 0;
 	instr->instructions = SAFEXCEL_INSTR_DEST_HASH |
 	    SAFEXCEL_INSTR_INSERT_IMMEDIATE;
@@ -1635,33 +1651,33 @@ safexcel_instr_ccm(struct safexcel_request *req, struct safexcel_instr *instr,
 	b0[0] =
 	    L - 1 | /* payload length size */
 	    ((CCM_CBC_MAX_DIGEST_LEN - 2) / 2) << 3 /* digest length */ |
-	    (crp->crp_aad_length > 0 ? 1 : 0) << 6 /* AAD present bit */;
+	    (req->mac->crd_len > 0 ? 1 : 0) << 6 /* AAD present bit */;
 	memcpy(&b0[1], req->iv, AES_CCM_IV_LEN);
-	b0[14] = crp->crp_payload_length >> 8;
-	b0[15] = crp->crp_payload_length & 0xff;
+	b0[14] = req->enc->crd_len >> 8;
+	b0[15] = req->enc->crd_len & 0xff;
 	instr += blen / sizeof(*instr);
 
 	/* Insert the AAD length and data into the input stream. */
-	if (crp->crp_aad_length > 0) {
+	if (req->mac->crd_len > 0) {
 		alenp = (uint8_t *)instr;
-		alenp[0] = crp->crp_aad_length >> 8;
-		alenp[1] = crp->crp_aad_length & 0xff;
+		alenp[0] = req->mac->crd_len >> 8;
+		alenp[1] = req->mac->crd_len & 0xff;
 		alenp[2] = 0;
 		alenp[3] = 0;
 		instr++;
 
 		instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
-		instr->length = crp->crp_aad_length;
+		instr->length = req->mac->crd_len;
 		instr->status = 0;
 		instr->instructions = SAFEXCEL_INSTR_DEST_HASH;
 		instr++;
 
 		/* Insert zero padding. */
-		aalign = (crp->crp_aad_length + 2) & (blen - 1);
+		aalign = (req->mac->crd_len + 2) & (blen - 1);
 		instr->opcode = SAFEXCEL_INSTR_OPCODE_INSERT;
 		instr->length = aalign == 0 ? 0 :
-		    blen - ((crp->crp_aad_length + 2) & (blen - 1));
-		instr->status = crp->crp_payload_length == 0 ?
+		    blen - ((req->mac->crd_len + 2) & (blen - 1));
+		instr->status = req->enc->crd_len == 0 ?
 		    SAFEXCEL_INSTR_STATUS_LAST_HASH : 0;
 		instr->instructions = SAFEXCEL_INSTR_DEST_HASH;
 		instr++;
@@ -1670,10 +1686,10 @@ safexcel_instr_ccm(struct safexcel_request *req, struct safexcel_instr *instr,
 	safexcel_instr_temp_aes_block(&instr);
 
 	/* Insert the cipher payload into the input stream. */
-	if (crp->crp_payload_length > 0) {
+	if (req->enc->crd_len > 0) {
 		instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
-		instr->length = crp->crp_payload_length;
-		instr->status = (crp->crp_payload_length & (blen - 1)) == 0 ?
+		instr->length = req->enc->crd_len;
+		instr->status = (req->enc->crd_len & (blen - 1)) == 0 ?
 		    SAFEXCEL_INSTR_STATUS_LAST_HASH : 0;
 		instr->instructions = SAFEXCEL_INSTR_DEST_OUTPUT |
 		    SAFEXCEL_INSTR_DEST_CRYPTO |
@@ -1682,10 +1698,10 @@ safexcel_instr_ccm(struct safexcel_request *req, struct safexcel_instr *instr,
 		instr++;
 
 		/* Insert zero padding. */
-		if (crp->crp_payload_length & (blen - 1)) {
+		if (req->enc->crd_len & (blen - 1)) {
 			instr->opcode = SAFEXCEL_INSTR_OPCODE_INSERT;
 			instr->length = blen -
-			    (crp->crp_payload_length & (blen - 1));
+			    (req->enc->crd_len & (blen - 1));
 			instr->status = SAFEXCEL_INSTR_STATUS_LAST_HASH;
 			instr->instructions = SAFEXCEL_INSTR_DEST_HASH;
 			instr++;
@@ -1695,10 +1711,10 @@ safexcel_instr_ccm(struct safexcel_request *req, struct safexcel_instr *instr,
 	/*
 	 * Compute the digest, or extract it and place it in the output stream.
 	 */
-	if (CRYPTO_OP_IS_ENCRYPT(crp->crp_op))
+	if ((req->enc->crd_flags & CRD_F_ENCRYPT) != 0)
 		safexcel_instr_insert_digest(&instr, req->sess->digestlen);
 	else
-		safexcel_instr_retrieve_digest(&instr, req->sess->digestlen);
+		safexcel_instr_verify_digest(&instr, req->sess->digestlen);
 
 	cdesc->additional_cdata_size = instr - start;
 }
@@ -1718,8 +1734,8 @@ safexcel_instr_gcm(struct safexcel_request *req, struct safexcel_instr *instr,
 
 	/* Insert the AAD into the input stream. */
 	instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
-	instr->length = crp->crp_aad_length;
-	instr->status = crp->crp_payload_length == 0 ?
+	instr->length = req->mac->crd_len;
+	instr->status = req->enc->crd_len == 0 ?
 	    SAFEXCEL_INSTR_STATUS_LAST_HASH : 0;
 	instr->instructions = SAFEXCEL_INSTR_INS_LAST |
 	    SAFEXCEL_INSTR_DEST_HASH;
@@ -1728,9 +1744,9 @@ safexcel_instr_gcm(struct safexcel_request *req, struct safexcel_instr *instr,
 	safexcel_instr_temp_aes_block(&instr);
 
 	/* Insert the cipher payload into the input stream. */
-	if (crp->crp_payload_length > 0) {
+	if (req->enc->crd_len > 0) {
 		instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
-		instr->length = crp->crp_payload_length;
+		instr->length = req->enc->crd_len;
 		instr->status = SAFEXCEL_INSTR_STATUS_LAST_HASH;
 		instr->instructions = SAFEXCEL_INSTR_DEST_OUTPUT |
 		    SAFEXCEL_INSTR_DEST_CRYPTO | SAFEXCEL_INSTR_DEST_HASH |
@@ -1741,37 +1757,10 @@ safexcel_instr_gcm(struct safexcel_request *req, struct safexcel_instr *instr,
 	/*
 	 * Compute the digest, or extract it and place it in the output stream.
 	 */
-	if (CRYPTO_OP_IS_ENCRYPT(crp->crp_op))
+	if ((req->enc->crd_flags & CRD_F_ENCRYPT) != 0)
 		safexcel_instr_insert_digest(&instr, req->sess->digestlen);
 	else
-		safexcel_instr_retrieve_digest(&instr, req->sess->digestlen);
-
-	cdesc->additional_cdata_size = instr - start;
-}
-
-static void
-safexcel_instr_gmac(struct safexcel_request *req, struct safexcel_instr *instr,
-    struct safexcel_cmd_descr *cdesc)
-{
-	struct cryptop *crp;
-	struct safexcel_instr *start;
-
-	memcpy(cdesc->control_data.token, req->iv, AES_GCM_IV_LEN);
-	cdesc->control_data.token[3] = htobe32(1);
-
-	crp = req->crp;
-	start = instr;
-
-	instr->opcode = SAFEXCEL_INSTR_OPCODE_DIRECTION;
-	instr->length = crp->crp_payload_length;
-	instr->status = SAFEXCEL_INSTR_STATUS_LAST_HASH;
-	instr->instructions = SAFEXCEL_INSTR_INS_LAST |
-	    SAFEXCEL_INSTR_DEST_HASH;
-	instr++;
-
-	safexcel_instr_temp_aes_block(&instr);
-
-	safexcel_instr_insert_digest(&instr, req->sess->digestlen);
+		safexcel_instr_verify_digest(&instr, req->sess->digestlen);
 
 	cdesc->additional_cdata_size = instr - start;
 }
@@ -1779,13 +1768,11 @@ safexcel_instr_gmac(struct safexcel_request *req, struct safexcel_instr *instr,
 static void
 safexcel_set_token(struct safexcel_request *req)
 {
-	const struct crypto_session_params *csp;
 	struct safexcel_cmd_descr *cdesc;
 	struct safexcel_instr *instr;
 	struct safexcel_softc *sc;
 	int ringidx;
 
-	csp = crypto_get_params(req->crp->crp_session);
 	cdesc = req->cdesc;
 	sc = req->sc;
 	ringidx = req->sess->ringidx;
@@ -1797,8 +1784,7 @@ safexcel_set_token(struct safexcel_request *req)
 	 * in the token itself.  Otherwise we use an additional token descriptor
 	 * and the embedded instruction space is used to store the IV.
 	 */
-	if (csp->csp_cipher_alg == 0 &&
-	    csp->csp_auth_alg != CRYPTO_AES_NIST_GMAC) {
+	if (req->enc == NULL) {
 		instr = (void *)cdesc->control_data.token;
 	} else {
 		instr = (void *)(sc->sc_ring[ringidx].dma_atok.vaddr +
@@ -1807,30 +1793,32 @@ safexcel_set_token(struct safexcel_request *req)
 		cdesc->control_data.options |= SAFEXCEL_OPTION_4_TOKEN_IV_CMD;
 	}
 
-	switch (csp->csp_cipher_alg) {
-	case CRYPTO_AES_NIST_GCM_16:
-		safexcel_instr_gcm(req, instr, cdesc);
-		break;
-	case CRYPTO_AES_CCM_16:
-		safexcel_instr_ccm(req, instr, cdesc);
-		break;
-	case CRYPTO_AES_XTS:
-		memcpy(cdesc->control_data.token, req->iv, AES_XTS_IV_LEN);
-		memset(cdesc->control_data.token +
-		    AES_XTS_IV_LEN / sizeof(uint32_t), 0, AES_XTS_IV_LEN);
+	if (req->enc != NULL) {
+		switch (req->enc->crd_alg) {
+		case CRYPTO_AES_NIST_GCM_16:
+			safexcel_instr_gcm(req, instr, cdesc);
+			break;
+		case CRYPTO_AES_CCM_16:
+			safexcel_instr_ccm(req, instr, cdesc);
+			break;
+		case CRYPTO_AES_XTS:
+			memcpy(cdesc->control_data.token, req->iv, AES_XTS_IV_LEN);
+			memset(cdesc->control_data.token +
+			    AES_XTS_IV_LEN / sizeof(uint32_t), 0, AES_XTS_IV_LEN);
 
-		safexcel_instr_cipher(req, instr, cdesc);
-		break;
-	case CRYPTO_AES_CBC:
-	case CRYPTO_AES_ICM:
-		memcpy(cdesc->control_data.token, req->iv, AES_BLOCK_LEN);
-		if (csp->csp_auth_alg != 0)
-			safexcel_instr_eta(req, instr, cdesc);
-		else
 			safexcel_instr_cipher(req, instr, cdesc);
-		break;
-	default:
-		switch (csp->csp_auth_alg) {
+			break;
+		case CRYPTO_AES_CBC:
+		case CRYPTO_AES_ICM:
+			memcpy(cdesc->control_data.token, req->iv, AES_BLOCK_LEN);
+			if (req->mac != NULL)
+				safexcel_instr_eta(req, instr, cdesc);
+			else
+				safexcel_instr_cipher(req, instr, cdesc);
+			break;
+		}
+	} else {
+		switch (req->mac->crd_alg) {
 		case CRYPTO_SHA1:
 		case CRYPTO_SHA1_HMAC:
 		case CRYPTO_SHA2_224:
@@ -1843,13 +1831,9 @@ safexcel_set_token(struct safexcel_request *req)
 		case CRYPTO_SHA2_512_HMAC:
 			safexcel_instr_sha_hash(req, instr);
 			break;
-		case CRYPTO_AES_NIST_GMAC:
-			safexcel_instr_gmac(req, instr, cdesc);
-			break;
 		default:
-			panic("unhandled auth request %d", csp->csp_auth_alg);
+			panic("unhandled auth request %d", req->mac->crd_alg);
 		}
-		break;
 	}
 }
 
@@ -1978,13 +1962,14 @@ safexcel_append_segs(bus_dma_segment_t *segs, int nseg, struct sglist *sg,
 		len -= seglen;
 		start = 0;
 	}
+
+	KASSERT(len == 0, ("%s: %d residual bytes", __func__, len));
 }
 
 static void
 safexcel_create_chain_cb(void *arg, bus_dma_segment_t *segs, int nseg,
     int error)
 {
-	const struct crypto_session_params *csp;
 	struct cryptop *crp;
 	struct safexcel_cmd_descr *cdesc;
 	struct safexcel_request *req;
@@ -2002,7 +1987,6 @@ safexcel_create_chain_cb(void *arg, bus_dma_segment_t *segs, int nseg,
 	}
 
 	crp = req->crp;
-	csp = crypto_get_params(crp->crp_session);
 	sess = req->sess;
 	ring = &req->sc->sc_ring[sess->ringidx];
 
@@ -2021,23 +2005,30 @@ safexcel_create_chain_cb(void *arg, bus_dma_segment_t *segs, int nseg,
 	 */
 	sglist_reset(ring->cmd_data);
 	sglist_reset(ring->res_data);
-	if (crp->crp_aad_length != 0) {
+	if (req->mac != NULL && (req->enc == NULL ||
+	    req->enc->crd_alg == CRYPTO_AES_NIST_GCM_16 ||
+	    req->enc->crd_alg == CRYPTO_AES_CCM_16)) {
 		safexcel_append_segs(segs, nseg, ring->cmd_data,
-		    crp->crp_aad_start, crp->crp_aad_length);
+		    req->mac->crd_skip, req->mac->crd_len);
 	}
-	safexcel_append_segs(segs, nseg, ring->cmd_data,
-	    crp->crp_payload_start, crp->crp_payload_length);
-	if (csp->csp_cipher_alg != 0) {
+	if (req->enc != NULL) {
+		safexcel_append_segs(segs, nseg, ring->cmd_data,
+		    req->enc->crd_skip, req->enc->crd_len);
 		safexcel_append_segs(segs, nseg, ring->res_data,
-		    crp->crp_payload_start, crp->crp_payload_length);
+		    req->enc->crd_skip, req->enc->crd_len);
 	}
 	if (sess->digestlen > 0) {
-		if ((crp->crp_op & CRYPTO_OP_VERIFY_DIGEST) != 0) {
+		if (req->enc == NULL ||
+		    (req->enc->crd_flags & CRD_F_ENCRYPT) != 0)
+			safexcel_append_segs(segs, nseg, ring->res_data,
+			    req->mac->crd_inject, sess->digestlen);
+		else if (req->enc->crd_alg == CRYPTO_AES_NIST_GCM_16 ||
+		    req->enc->crd_alg == CRYPTO_AES_CCM_16) {
 			safexcel_append_segs(segs, nseg, ring->cmd_data,
-			    crp->crp_digest_start, sess->digestlen);
+			    req->mac->crd_inject, sess->digestlen);
 		} else {
 			safexcel_append_segs(segs, nseg, ring->res_data,
-			    crp->crp_digest_start, sess->digestlen);
+			    req->mac->crd_inject, sess->digestlen);
 		}
 	}
 
@@ -2097,43 +2088,42 @@ safexcel_create_chain_cb(void *arg, bus_dma_segment_t *segs, int nseg,
 	req->rdescs = sg->sg_nseg;
 }
 
+static void
+safexcel_create_chain_cb2(void *arg, bus_dma_segment_t *segs, int nseg,
+    bus_size_t mapsize __unused, int error)
+{
+	safexcel_create_chain_cb(arg, segs, nseg, error);
+}
+
+#include <sys/uio.h>
 static int
 safexcel_create_chain(struct safexcel_ring *ring, struct safexcel_request *req)
 {
+	struct cryptop *crp;
 	int error;
 
 	req->error = 0;
 	req->cdescs = req->rdescs = 0;
+	crp = req->crp;
 
-	error = bus_dmamap_load_crp(ring->data_dtag, req->dmap, req->crp,
-	    safexcel_create_chain_cb, req, BUS_DMA_NOWAIT);
+	if ((crp->crp_flags & CRYPTO_F_IOV) != 0) {
+		error = bus_dmamap_load_uio(ring->data_dtag, req->dmap,
+		    (struct uio *)crp->crp_buf, safexcel_create_chain_cb2,
+		    req, BUS_DMA_NOWAIT);
+	} else if ((crp->crp_flags & CRYPTO_F_IMBUF) != 0) {
+		error = bus_dmamap_load_mbuf(ring->data_dtag, req->dmap,
+		    (struct mbuf *)crp->crp_buf, safexcel_create_chain_cb2,
+		    req, BUS_DMA_NOWAIT);
+	} else {
+		error = bus_dmamap_load(ring->data_dtag, req->dmap,
+		    crp->crp_buf, crp->crp_ilen,
+		    safexcel_create_chain_cb, req, BUS_DMA_NOWAIT);
+	}
 	if (error == 0)
 		req->dmap_loaded = true;
-
-	if (req->error != 0)
+	else if (req->error != 0)
 		error = req->error;
-
 	return (error);
-}
-
-static bool
-safexcel_probe_cipher(const struct crypto_session_params *csp)
-{
-	switch (csp->csp_cipher_alg) {
-	case CRYPTO_AES_CBC:
-	case CRYPTO_AES_ICM:
-		if (csp->csp_ivlen != AES_BLOCK_LEN)
-			return (false);
-		break;
-	case CRYPTO_AES_XTS:
-		if (csp->csp_ivlen != AES_XTS_IV_LEN)
-			return (false);
-		break;
-	default:
-		return (false);
-	}
-
-	return (true);
 }
 
 /*
@@ -2141,19 +2131,41 @@ safexcel_probe_cipher(const struct crypto_session_params *csp)
  * parameters.
  */
 static int
-safexcel_probesession(device_t dev, const struct crypto_session_params *csp)
+safexcel_probesession(struct cryptoini *enc, struct cryptoini *mac)
 {
-	switch (csp->csp_mode) {
-	case CSP_MODE_CIPHER:
-		if (!safexcel_probe_cipher(csp))
-			return (EINVAL);
-		break;
-	case CSP_MODE_DIGEST:
-		switch (csp->csp_auth_alg) {
-		case CRYPTO_AES_NIST_GMAC:
-			if (csp->csp_ivlen != AES_GCM_IV_LEN)
+	if (enc != NULL) {
+		switch (enc->cri_alg) {
+		case CRYPTO_AES_NIST_GCM_16:
+			if (mac == NULL ||
+			    (mac->cri_alg != CRYPTO_AES_128_NIST_GMAC &&
+			     mac->cri_alg != CRYPTO_AES_192_NIST_GMAC &&
+			     mac->cri_alg != CRYPTO_AES_256_NIST_GMAC))
 				return (EINVAL);
 			break;
+		case CRYPTO_AES_CCM_16:
+			if (mac == NULL ||
+			    mac->cri_alg != CRYPTO_AES_CCM_CBC_MAC)
+				return (EINVAL);
+			break;
+		case CRYPTO_AES_CBC:
+		case CRYPTO_AES_ICM:
+			if (mac != NULL &&
+			    mac->cri_alg != CRYPTO_SHA1_HMAC &&
+			    mac->cri_alg != CRYPTO_SHA2_224_HMAC &&
+			    mac->cri_alg != CRYPTO_SHA2_256_HMAC &&
+			    mac->cri_alg != CRYPTO_SHA2_384_HMAC &&
+			    mac->cri_alg != CRYPTO_SHA2_512_HMAC)
+				return (EINVAL);
+			break;
+		case CRYPTO_AES_XTS:
+			if (mac != NULL)
+				return (EINVAL);
+			break;
+		default:
+			return (EINVAL);
+		}
+	} else {
+		switch (mac->cri_alg) {
 		case CRYPTO_SHA1:
 		case CRYPTO_SHA1_HMAC:
 		case CRYPTO_SHA2_224:
@@ -2168,47 +2180,9 @@ safexcel_probesession(device_t dev, const struct crypto_session_params *csp)
 		default:
 			return (EINVAL);
 		}
-		break;
-	case CSP_MODE_AEAD:
-		switch (csp->csp_cipher_alg) {
-		case CRYPTO_AES_NIST_GCM_16:
-			if (csp->csp_ivlen != AES_GCM_IV_LEN)
-				return (EINVAL);
-			break;
-		case CRYPTO_AES_CCM_16:
-			if (csp->csp_ivlen != AES_CCM_IV_LEN)
-				return (EINVAL);
-			break;
-		default:
-			return (EINVAL);
-		}
-		break;
-	case CSP_MODE_ETA:
-		if (!safexcel_probe_cipher(csp))
-			return (EINVAL);
-		switch (csp->csp_cipher_alg) {
-		case CRYPTO_AES_CBC:
-		case CRYPTO_AES_ICM:
-			/*
-			 * The EIP-97 does not support combining AES-XTS with
-			 * hash operations.
-			 */
-			if (csp->csp_auth_alg != CRYPTO_SHA1_HMAC &&
-			    csp->csp_auth_alg != CRYPTO_SHA2_224_HMAC &&
-			    csp->csp_auth_alg != CRYPTO_SHA2_256_HMAC &&
-			    csp->csp_auth_alg != CRYPTO_SHA2_384_HMAC &&
-			    csp->csp_auth_alg != CRYPTO_SHA2_512_HMAC)
-				return (EINVAL);
-			break;
-		default:
-			return (EINVAL);
-		}
-		break;
-	default:
-		return (EINVAL);
 	}
 
-	return (CRYPTODEV_PROBE_HARDWARE);
+	return (0);
 }
 
 /*
@@ -2286,20 +2260,64 @@ safexcel_setkey_hmac_digest(struct auth_hash *ahash, union authctx *ctx,
 	}
 }
 
+static void
+safexcel_hmac_init_pad(struct auth_hash *axf, const char *key, int klen,
+    union authctx *auth_ctx, uint8_t padval)
+{
+	uint8_t hmac_key[HMAC_MAX_BLOCK_LEN];
+	u_int i;
+
+	memset(hmac_key, 0, sizeof(hmac_key));
+	if (klen > axf->blocksize) {
+		axf->Init(auth_ctx);
+		axf->Update(auth_ctx, key, klen);
+		axf->Final(hmac_key, auth_ctx);
+		klen = axf->hashsize;
+	} else {
+		memcpy(hmac_key, key, klen);
+	}
+
+	for (i = 0; i < axf->blocksize; i++)
+		hmac_key[i] ^= padval;
+
+	axf->Init(auth_ctx);
+	axf->Update(auth_ctx, hmac_key, axf->blocksize);
+	explicit_bzero(hmac_key, sizeof(hmac_key));
+}
+
 /*
  * Pre-compute the inner and outer digests used in the HMAC algorithm.
  */
 static void
-safexcel_setkey_hmac(const struct crypto_session_params *csp,
-    struct safexcel_session *sess, const uint8_t *key, int klen)
+safexcel_setkey_hmac(struct safexcel_session *sess, int alg, const uint8_t *key,
+    int klen)
 {
 	union authctx ctx;
 	struct auth_hash *ahash;
 
-	ahash = crypto_auth_hash(csp);
-	hmac_init_ipad(ahash, key, klen, &ctx);
+	switch (alg) {
+	case CRYPTO_SHA1_HMAC:
+		ahash = &auth_hash_hmac_sha1;
+		break;
+	case CRYPTO_SHA2_224_HMAC:
+		ahash = &auth_hash_hmac_sha2_224;
+		break;
+	case CRYPTO_SHA2_256_HMAC:
+		ahash = &auth_hash_hmac_sha2_256;
+		break;
+	case CRYPTO_SHA2_384_HMAC:
+		ahash = &auth_hash_hmac_sha2_384;
+		break;
+	case CRYPTO_SHA2_512_HMAC:
+		ahash = &auth_hash_hmac_sha2_512;
+		break;
+	default:
+		panic("%s: unknown algorithm %d", __func__, alg);
+	}
+
+	safexcel_hmac_init_pad(ahash, key, klen, &ctx, HMAC_IPAD_VAL);
 	safexcel_setkey_hmac_digest(ahash, &ctx, sess->hmac_ipad);
-	hmac_init_opad(ahash, key, klen, &ctx);
+	safexcel_hmac_init_pad(ahash, key, klen, &ctx, HMAC_OPAD_VAL);
 	safexcel_setkey_hmac_digest(ahash, &ctx, sess->hmac_opad);
 	explicit_bzero(&ctx, ahash->ctxsize);
 }
@@ -2310,63 +2328,15 @@ safexcel_setkey_xts(struct safexcel_session *sess, const uint8_t *key, int klen)
 	memcpy(sess->tweak_key, key + klen / 2, klen / 2);
 }
 
-static void
-safexcel_setkey(struct safexcel_session *sess,
-    const struct crypto_session_params *csp, struct cryptop *crp)
-{
-	const uint8_t *akey, *ckey;
-	int aklen, cklen;
-
-	aklen = csp->csp_auth_klen;
-	cklen = csp->csp_cipher_klen;
-	akey = ckey = NULL;
-	if (crp != NULL) {
-		akey = crp->crp_auth_key;
-		ckey = crp->crp_cipher_key;
-	}
-	if (akey == NULL)
-		akey = csp->csp_auth_key;
-	if (ckey == NULL)
-		ckey = csp->csp_cipher_key;
-
-	sess->klen = cklen;
-	switch (csp->csp_cipher_alg) {
-	case CRYPTO_AES_NIST_GCM_16:
-		safexcel_setkey_ghash(sess, ckey, cklen);
-		break;
-	case CRYPTO_AES_CCM_16:
-		safexcel_setkey_xcbcmac(sess, ckey, cklen);
-		break;
-	case CRYPTO_AES_XTS:
-		safexcel_setkey_xts(sess, ckey, cklen);
-		sess->klen /= 2;
-		break;
-	}
-
-	switch (csp->csp_auth_alg) {
-	case CRYPTO_SHA1_HMAC:
-	case CRYPTO_SHA2_224_HMAC:
-	case CRYPTO_SHA2_256_HMAC:
-	case CRYPTO_SHA2_384_HMAC:
-	case CRYPTO_SHA2_512_HMAC:
-		safexcel_setkey_hmac(csp, sess, akey, aklen);
-		break;
-	case CRYPTO_AES_NIST_GMAC:
-		sess->klen = aklen;
-		safexcel_setkey_ghash(sess, akey, aklen);
-		break;
-	}
-}
-
 static uint32_t
 safexcel_aes_algid(int keylen)
 {
 	switch (keylen) {
-	case 16:
+	case 128:
 		return (SAFEXCEL_CONTROL0_CRYPTO_ALG_AES128);
-	case 24:
+	case 192:
 		return (SAFEXCEL_CONTROL0_CRYPTO_ALG_AES192);
-	case 32:
+	case 256:
 		return (SAFEXCEL_CONTROL0_CRYPTO_ALG_AES256);
 	default:
 		panic("invalid AES key length %d", keylen);
@@ -2377,11 +2347,11 @@ static uint32_t
 safexcel_aes_ccm_hashid(int keylen)
 {
 	switch (keylen) {
-	case 16:
+	case 128:
 		return (SAFEXCEL_CONTROL0_HASH_ALG_XCBC128);
-	case 24:
+	case 192:
 		return (SAFEXCEL_CONTROL0_HASH_ALG_XCBC192);
-	case 32:
+	case 256:
 		return (SAFEXCEL_CONTROL0_HASH_ALG_XCBC256);
 	default:
 		panic("invalid AES key length %d", keylen);
@@ -2458,79 +2428,159 @@ safexcel_sha_statelen(int alg)
 	}
 }
 
+static bool
+safexcel_is_hash(int alg)
+{
+	switch (alg) {
+	case CRYPTO_SHA1:
+	case CRYPTO_SHA1_HMAC:
+	case CRYPTO_SHA2_224:
+	case CRYPTO_SHA2_224_HMAC:
+	case CRYPTO_SHA2_256:
+	case CRYPTO_SHA2_256_HMAC:
+	case CRYPTO_SHA2_384:
+	case CRYPTO_SHA2_384_HMAC:
+	case CRYPTO_SHA2_512:
+	case CRYPTO_SHA2_512_HMAC:
+	case CRYPTO_AES_128_NIST_GMAC:
+	case CRYPTO_AES_192_NIST_GMAC:
+	case CRYPTO_AES_256_NIST_GMAC:
+	case CRYPTO_AES_CCM_CBC_MAC:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
 static int
-safexcel_newsession(device_t dev, crypto_session_t cses,
-    const struct crypto_session_params *csp)
+safexcel_newsession(device_t dev, crypto_session_t cses, struct cryptoini *cri)
 {
 	struct safexcel_session *sess;
 	struct safexcel_softc *sc;
+	struct cryptoini *enc, *mac;
+	int error;
 
 	sc = device_get_softc(dev);
 	sess = crypto_get_driver_session(cses);
 
-	switch (csp->csp_auth_alg) {
-	case CRYPTO_SHA1:
-	case CRYPTO_SHA2_224:
-	case CRYPTO_SHA2_256:
-	case CRYPTO_SHA2_384:
-	case CRYPTO_SHA2_512:
-		sess->digest = SAFEXCEL_CONTROL0_DIGEST_PRECOMPUTED;
-		sess->hash = safexcel_sha_hashid(csp->csp_auth_alg);
-		sess->digestlen = safexcel_sha_hashlen(csp->csp_auth_alg);
-		sess->statelen = safexcel_sha_statelen(csp->csp_auth_alg);
-		break;
-	case CRYPTO_SHA1_HMAC:
-	case CRYPTO_SHA2_224_HMAC:
-	case CRYPTO_SHA2_256_HMAC:
-	case CRYPTO_SHA2_384_HMAC:
-	case CRYPTO_SHA2_512_HMAC:
-		sess->digest = SAFEXCEL_CONTROL0_DIGEST_HMAC;
-		sess->hash = safexcel_sha_hashid(csp->csp_auth_alg);
-		sess->digestlen = safexcel_sha_hashlen(csp->csp_auth_alg);
-		sess->statelen = safexcel_sha_statelen(csp->csp_auth_alg);
-		break;
-	case CRYPTO_AES_NIST_GMAC:
-		sess->digest = SAFEXCEL_CONTROL0_DIGEST_GMAC;
-		sess->digestlen = GMAC_DIGEST_LEN;
-		sess->hash = SAFEXCEL_CONTROL0_HASH_ALG_GHASH;
-		sess->alg = safexcel_aes_algid(csp->csp_auth_klen);
-		sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_GCM;
-		break;
+	enc = mac = NULL;
+	if (safexcel_is_hash(cri->cri_alg))
+		mac = cri;
+	else
+		enc = cri;
+	cri = cri->cri_next;
+
+	if (cri != NULL) {
+		if (enc == NULL && !safexcel_is_hash(cri->cri_alg))
+			enc = cri;
+		if (mac == NULL && safexcel_is_hash(cri->cri_alg))
+			mac = cri;
+		if (cri->cri_next != NULL || !(enc != NULL && mac != NULL))
+			return (EINVAL);
 	}
 
-	switch (csp->csp_cipher_alg) {
-	case CRYPTO_AES_NIST_GCM_16:
-		sess->digest = SAFEXCEL_CONTROL0_DIGEST_GMAC;
-		sess->digestlen = GMAC_DIGEST_LEN;
-		sess->hash = SAFEXCEL_CONTROL0_HASH_ALG_GHASH;
-		sess->alg = safexcel_aes_algid(csp->csp_cipher_klen);
-		sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_GCM;
-		break;
-	case CRYPTO_AES_CCM_16:
-		sess->hash = safexcel_aes_ccm_hashid(csp->csp_cipher_klen);
-		sess->digest = SAFEXCEL_CONTROL0_DIGEST_CCM;
-		sess->digestlen = CCM_CBC_MAX_DIGEST_LEN;
-		sess->alg = safexcel_aes_algid(csp->csp_cipher_klen);
-		sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_CCM;
-		break;
-	case CRYPTO_AES_CBC:
-		sess->alg = safexcel_aes_algid(csp->csp_cipher_klen);
-		sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_CBC;
-		break;
-	case CRYPTO_AES_ICM:
-		sess->alg = safexcel_aes_algid(csp->csp_cipher_klen);
-		sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_CTR;
-		break;
-	case CRYPTO_AES_XTS:
-		sess->alg = safexcel_aes_algid(csp->csp_cipher_klen / 2);
-		sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_XTS;
-		break;
+	error = safexcel_probesession(enc, mac);
+	if (error != 0)
+		return (error);
+
+	if (mac != NULL) {
+		switch (mac->cri_alg) {
+		case CRYPTO_SHA1:
+		case CRYPTO_SHA2_224:
+		case CRYPTO_SHA2_256:
+		case CRYPTO_SHA2_384:
+		case CRYPTO_SHA2_512:
+			sess->digest = SAFEXCEL_CONTROL0_DIGEST_PRECOMPUTED;
+			sess->hash = safexcel_sha_hashid(mac->cri_alg);
+			sess->digestlen = safexcel_sha_hashlen(mac->cri_alg);
+			sess->statelen = safexcel_sha_statelen(mac->cri_alg);
+			break;
+		case CRYPTO_SHA1_HMAC:
+		case CRYPTO_SHA2_224_HMAC:
+		case CRYPTO_SHA2_256_HMAC:
+		case CRYPTO_SHA2_384_HMAC:
+		case CRYPTO_SHA2_512_HMAC:
+			sess->digest = SAFEXCEL_CONTROL0_DIGEST_HMAC;
+			sess->hash = safexcel_sha_hashid(mac->cri_alg);
+			sess->digestlen = safexcel_sha_hashlen(mac->cri_alg);
+			sess->statelen = safexcel_sha_statelen(mac->cri_alg);
+			break;
+		}
 	}
 
-	if (csp->csp_auth_mlen != 0)
-		sess->digestlen = csp->csp_auth_mlen;
+	if (enc != NULL) {
+		switch (enc->cri_alg) {
+		case CRYPTO_AES_NIST_GCM_16:
+			sess->digest = SAFEXCEL_CONTROL0_DIGEST_GMAC;
+			sess->digestlen = GMAC_DIGEST_LEN;
+			sess->hash = SAFEXCEL_CONTROL0_HASH_ALG_GHASH;
+			sess->alg = safexcel_aes_algid(enc->cri_klen);
+			sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_GCM;
+			sess->ivlen = AES_GCM_IV_LEN;
+			break;
+		case CRYPTO_AES_CCM_16:
+			sess->hash = safexcel_aes_ccm_hashid(enc->cri_klen);
+			sess->digest = SAFEXCEL_CONTROL0_DIGEST_CCM;
+			sess->digestlen = CCM_CBC_MAX_DIGEST_LEN;
+			sess->alg = safexcel_aes_algid(enc->cri_klen);
+			sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_CCM;
+			sess->ivlen = AES_CCM_IV_LEN;
+			break;
+		case CRYPTO_AES_CBC:
+			sess->alg = safexcel_aes_algid(enc->cri_klen);
+			sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_CBC;
+			sess->ivlen = AES_BLOCK_LEN;
+			break;
+		case CRYPTO_AES_ICM:
+			sess->alg = safexcel_aes_algid(enc->cri_klen);
+			sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_CTR;
+			sess->ivlen = AES_BLOCK_LEN;
+			break;
+		case CRYPTO_AES_XTS:
+			sess->alg = safexcel_aes_algid(enc->cri_klen / 2);
+			sess->mode = SAFEXCEL_CONTROL1_CRYPTO_MODE_XTS;
+			sess->ivlen = AES_XTS_IV_LEN;
+			break;
+		}
+	}
 
-	safexcel_setkey(sess, csp, NULL);
+	if (mac != NULL && mac->cri_mlen != 0)
+		sess->digestlen = mac->cri_mlen;
+
+	if (enc != NULL) {
+		if (enc->cri_key != NULL) {
+			sess->klen = enc->cri_klen / 8;
+			memcpy(sess->key, enc->cri_key, sess->klen);
+			switch (enc->cri_alg) {
+			case CRYPTO_AES_NIST_GCM_16:
+				safexcel_setkey_ghash(sess, sess->key,
+				    sess->klen);
+				break;
+			case CRYPTO_AES_CCM_16:
+				safexcel_setkey_xcbcmac(sess, sess->key,
+				    sess->klen);
+				break;
+			case CRYPTO_AES_XTS:
+				safexcel_setkey_xts(sess, sess->key,
+				    sess->klen);
+				sess->klen /= 2;
+				break;
+			}
+		}
+	}
+
+	if (mac != NULL) {
+		switch (mac->cri_alg) {
+		case CRYPTO_SHA1_HMAC:
+		case CRYPTO_SHA2_224_HMAC:
+		case CRYPTO_SHA2_256_HMAC:
+		case CRYPTO_SHA2_384_HMAC:
+		case CRYPTO_SHA2_512_HMAC:
+			safexcel_setkey_hmac(sess, mac->cri_alg, mac->cri_key,
+			    mac->cri_klen / 8);
+			break;
+		}
+	}
 
 	/* Bind each session to a fixed ring to minimize lock contention. */
 	sess->ringidx = atomic_fetchadd_int(&sc->sc_ringidx, 1);
@@ -2542,26 +2592,73 @@ safexcel_newsession(device_t dev, crypto_session_t cses,
 static int
 safexcel_process(device_t dev, struct cryptop *crp, int hint)
 {
-	const struct crypto_session_params *csp;
 	struct safexcel_request *req;
 	struct safexcel_ring *ring;
 	struct safexcel_session *sess;
 	struct safexcel_softc *sc;
+	struct cryptodesc *crd, *enc, *mac;
 	int error;
 
 	sc = device_get_softc(dev);
 	sess = crypto_get_driver_session(crp->crp_session);
-	csp = crypto_get_params(crp->crp_session);
 
-	if (__predict_false(crypto_buffer_len(&crp->crp_buf) >
-	    SAFEXCEL_MAX_REQUEST_SIZE)) {
+	if (crp->crp_ilen > SAFEXCEL_MAX_REQUEST_SIZE ||
+	    crp->crp_olen > SAFEXCEL_MAX_REQUEST_SIZE) {
 		crp->crp_etype = E2BIG;
 		crypto_done(crp);
 		return (0);
 	}
 
-	if (crp->crp_cipher_key != NULL || crp->crp_auth_key != NULL)
-		safexcel_setkey(sess, csp, crp);
+	crd = crp->crp_desc;
+
+	enc = mac = NULL;
+	if (safexcel_is_hash(crd->crd_alg))
+		mac = crd;
+	else
+		enc = crd;
+	crd = crd->crd_next;
+
+	if (crd != NULL) {
+		if (enc == NULL && !safexcel_is_hash(crd->crd_alg))
+			enc = crd;
+		if (mac == NULL && safexcel_is_hash(crd->crd_alg))
+			mac = crd;
+		if (crd->crd_next != NULL || !(enc != NULL && mac != NULL))
+			return (EINVAL);
+	}
+
+	if ((enc != NULL && (enc->crd_flags & CRD_F_KEY_EXPLICIT) != 0) ||
+	    (mac != NULL && (mac->crd_flags & CRD_F_KEY_EXPLICIT) != 0)) {
+		if (enc != NULL) {
+			switch (enc->crd_alg) {
+			case CRYPTO_AES_NIST_GCM_16:
+				safexcel_setkey_ghash(sess, enc->crd_key,
+				    enc->crd_klen / 8);
+				break;
+			case CRYPTO_AES_CCM_16:
+				safexcel_setkey_xcbcmac(sess, enc->crd_key,
+				    enc->crd_klen / 8);
+				break;
+			case CRYPTO_AES_XTS:
+				safexcel_setkey_xts(sess, enc->crd_key,
+				    enc->crd_klen / 8);
+				break;
+			}
+		}
+
+		if (mac != NULL) {
+			switch (mac->crd_alg) {
+			case CRYPTO_SHA1_HMAC:
+			case CRYPTO_SHA2_224_HMAC:
+			case CRYPTO_SHA2_256_HMAC:
+			case CRYPTO_SHA2_384_HMAC:
+			case CRYPTO_SHA2_512_HMAC:
+				safexcel_setkey_hmac(sess, mac->crd_alg,
+				    mac->crd_key, mac->crd_klen / 8);
+				break;
+			}
+		}
+	}
 
 	ring = &sc->sc_ring[sess->ringidx];
 	mtx_lock(&ring->mtx);
@@ -2575,9 +2672,28 @@ safexcel_process(device_t dev, struct cryptop *crp, int hint)
 	}
 
 	req->crp = crp;
+	req->enc = enc;
+	req->mac = mac;
 	req->sess = sess;
 
-	crypto_read_iv(crp, req->iv);
+	if (enc != NULL && (enc->crd_flags & CRD_F_ENCRYPT) != 0) {
+		if ((enc->crd_flags & CRD_F_IV_EXPLICIT) != 0)
+			memcpy(req->iv, enc->crd_iv, sess->ivlen);
+		else
+			arc4rand(req->iv, sess->ivlen, 0);
+
+		if ((enc->crd_flags & CRD_F_IV_PRESENT) == 0) {
+			crypto_copyback(crp->crp_flags, crp->crp_buf,
+			    enc->crd_inject, sess->ivlen, req->iv);
+		}
+	} else if (enc != NULL) {
+		if ((enc->crd_flags & CRD_F_IV_EXPLICIT) != 0) {
+			memcpy(req->iv, enc->crd_iv, sess->ivlen);
+		} else {
+			crypto_copydata(crp->crp_flags, crp->crp_buf,
+			    enc->crd_inject, sess->ivlen, req->iv);
+		}
+	}
 
 	error = safexcel_create_chain(ring, req);
 	if (__predict_false(error != 0)) {
@@ -2617,7 +2733,6 @@ static device_method_t safexcel_methods[] = {
 	DEVMETHOD(device_detach,	safexcel_detach),
 
 	/* Cryptodev interface */
-	DEVMETHOD(cryptodev_probesession, safexcel_probesession),
 	DEVMETHOD(cryptodev_newsession,	safexcel_newsession),
 	DEVMETHOD(cryptodev_process,	safexcel_process),
 

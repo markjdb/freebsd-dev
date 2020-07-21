@@ -271,6 +271,11 @@ struct safexcel_instr {
 #define	SAFEXCEL_INSTR_VERIFY_HASH		(1u << 16)
 #define	SAFEXCEL_INSTR_VERIFY_PADDING		(1u << 5)
 
+#define	SAFEXCEL_INSTR_CTX_ACCESS_WRITE		(1u << 11)
+#define	SAFEXCEL_INSTR_CTX_ACCESS_PASS		(1u << 12)
+#define	SAFEXCEL_INSTR_CTX_ACCESS_FAIL		(1u << 13)
+#define	SAFEXCEL_INSTR_CTX_ACCESS_HASHRES	(0x1c)
+
 #define	SAFEXCEL_TOKEN_TYPE_BYPASS	0x0
 #define	SAFEXCEL_TOKEN_TYPE_AUTONOMOUS	0x3
 
@@ -341,7 +346,9 @@ struct safexcel_session {
 	uint32_t		mode;		/* cipher mode of operation */
 	unsigned int		digestlen;	/* digest length */
 	unsigned int		statelen;	/* HMAC hash state length */
+	uint8_t			key[AES_MAX_KEY * 2];
 	unsigned int		klen;		/* cipher key length */
+	unsigned int		ivlen;
 	union {
 		uint32_t	ghash_key[AES_BLOCK_LEN / sizeof(uint32_t)];
 		uint32_t	xcbc_key[(AES_BLOCK_LEN * 2 + AES_MAX_KEY) /
@@ -367,6 +374,7 @@ struct safexcel_request {
 	struct safexcel_dma_mem		ctx;
 	struct safexcel_session		*sess;
 	struct cryptop			*crp;
+	struct cryptodesc		*enc, *mac;
 	struct safexcel_softc		*sc;
 };
 
