@@ -106,6 +106,7 @@ extern vm_offset_t kernel_vm_end;
  */
 #define	PMAP_ENTER_NOSLEEP	0x00000100
 #define	PMAP_ENTER_WIRED	0x00000200
+#define	PMAP_ENTER_LARGEPAGE	0x00000400
 #define	PMAP_ENTER_RESERVED	0xFF000000
 
 /*
@@ -170,6 +171,9 @@ void		 pmap_zero_page_area(vm_page_t, int off, int size);
 
 #define	pmap_resident_count(pm)	((pm)->pm_stats.resident_count)
 #define	pmap_wired_count(pm)	((pm)->pm_stats.wired_count)
+
+extern u_long pmap_superpagesize[];
+extern u_int pmap_superpagesize_nitems;
 
 #endif /* _KERNEL */
 #endif /* _PMAP_VM_ */
