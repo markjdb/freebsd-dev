@@ -419,7 +419,6 @@ STATNODE_COUNTER(numcachehv, "Number of namecache entries with vnodes held");
 STATNODE_COUNTER(numdrops, "Number of dropped entries due to reaching the limit");
 STATNODE_COUNTER(dothits, "Number of '.' hits");
 STATNODE_COUNTER(dotdothits, "Number of '..' hits");
-STATNODE_COUNTER(numchecks, "Number of checks in lookup");
 STATNODE_COUNTER(nummiss, "Number of cache misses");
 STATNODE_COUNTER(nummisszap, "Number of cache misses we do not want to cache");
 STATNODE_COUNTER(numposzaps,
@@ -491,14 +490,22 @@ cache_assert_vnode_locked(struct vnode *vp)
 	cache_assert_vlp_locked(vlp);
 }
 
+/*
+ * TODO: With the value stored we can do better than computing the hash based
+ * on the address and the choice of FNV should also be revisisted.
+ */
+static void
+cache_prehash(struct vnode *vp)
+{
+
+	vp->v_nchash = fnv_32_buf(&vp, sizeof(vp), FNV1_32_INIT);
+}
+
 static uint32_t
 cache_get_hash(char *name, u_char len, struct vnode *dvp)
 {
-	uint32_t hash;
 
-	hash = fnv_32_buf(name, len, FNV1_32_INIT);
-	hash = fnv_32_buf(&dvp, sizeof(dvp), hash);
-	return (hash);
+	return (fnv_32_buf(name, len, dvp->v_nchash));
 }
 
 static inline struct rwlock *
@@ -1315,7 +1322,6 @@ retry:
 	rw_wlock(blp);
 
 	CK_LIST_FOREACH(ncp, (NCHHASH(hash)), nc_hash) {
-		counter_u64_add(numchecks, 1);
 		if (ncp->nc_dvp == dvp && ncp->nc_nlen == cnp->cn_namelen &&
 		    !bcmp(ncp->nc_name, cnp->cn_nameptr, ncp->nc_nlen))
 			break;
@@ -1460,7 +1466,6 @@ retry_hashed:
 	}
 
 	CK_LIST_FOREACH(ncp, (NCHHASH(hash)), nc_hash) {
-		counter_u64_add(numchecks, 1);
 		if (ncp->nc_dvp == dvp && ncp->nc_nlen == cnp->cn_namelen &&
 		    !bcmp(ncp->nc_name, cnp->cn_nameptr, ncp->nc_nlen))
 			break;
@@ -2072,6 +2077,16 @@ nchinit(void *dummy __unused)
 	mtx_init(&ncneg_shrink_lock, "ncnegs", NULL, MTX_DEF);
 }
 SYSINIT(vfs, SI_SUB_VFS, SI_ORDER_SECOND, nchinit, NULL);
+
+void
+cache_vnode_init(struct vnode *vp)
+{
+
+	LIST_INIT(&vp->v_cache_src);
+	TAILQ_INIT(&vp->v_cache_dst);
+	vp->v_cache_dd = NULL;
+	cache_prehash(vp);
+}
 
 void
 cache_changesize(u_long newmaxvnodes)
@@ -2893,24 +2908,24 @@ cache_fpl_handle_root(struct nameidata *ndp, struct vnode **dpp)
  * need restoring in case fast path lookup fails.
  */
 struct nameidata_saved {
-	int cn_flags;
 	long cn_namelen;
 	char *cn_nameptr;
 	size_t ni_pathlen;
+	int cn_flags;
 };
 
 struct cache_fpl {
-	int line;
-	enum cache_fpl_status status;
-	bool in_smr;
 	struct nameidata *ndp;
-	struct nameidata_saved snd;
 	struct componentname *cnp;
-	struct vnode *dvp;
-	seqc_t dvp_seqc;
-	struct vnode *tvp;
-	seqc_t tvp_seqc;
 	struct pwd *pwd;
+	struct vnode *dvp;
+	struct vnode *tvp;
+	seqc_t dvp_seqc;
+	seqc_t tvp_seqc;
+	struct nameidata_saved snd;
+	int line;
+	enum cache_fpl_status status:8;
+	bool in_smr;
 };
 
 static void
@@ -3366,7 +3381,6 @@ cache_fplookup_next(struct cache_fpl *fpl)
 	hash = cache_get_hash(cnp->cn_nameptr, cnp->cn_namelen, dvp);
 
 	CK_LIST_FOREACH(ncp, (NCHHASH(hash)), nc_hash) {
-		counter_u64_add(numchecks, 1);
 		if (ncp->nc_dvp == dvp && ncp->nc_nlen == cnp->cn_namelen &&
 		    !bcmp(ncp->nc_name, cnp->cn_nameptr, ncp->nc_nlen))
 			break;
@@ -3452,7 +3466,7 @@ cache_fplookup_mp_supported(struct mount *mp)
  * By the end of successful walk we are guaranteed the reached state was
  * indeed present at least at some point which matches the regular lookup.
  */
-static int
+static int __noinline
 cache_fplookup_climb_mount(struct cache_fpl *fpl)
 {
 	struct mount *mp, *prev_mp;
@@ -3461,9 +3475,8 @@ cache_fplookup_climb_mount(struct cache_fpl *fpl)
 
 	vp = fpl->tvp;
 	vp_seqc = fpl->tvp_seqc;
-	if (vp->v_type != VDIR)
-		return (0);
 
+	VNPASS(vp->v_type == VDIR || vp->v_type == VBAD, vp);
 	mp = atomic_load_ptr(&vp->v_mountedhere);
 	if (mp == NULL)
 		return (0);
@@ -3505,6 +3518,26 @@ cache_fplookup_climb_mount(struct cache_fpl *fpl)
 	fpl->tvp = vp;
 	fpl->tvp_seqc = vp_seqc;
 	return (0);
+}
+
+static bool
+cache_fplookup_need_climb_mount(struct cache_fpl *fpl)
+{
+	struct mount *mp;
+	struct vnode *vp;
+
+	vp = fpl->tvp;
+
+	/*
+	 * Hack: while this is a union, the pointer tends to be NULL so save on
+	 * a branch.
+	 */
+	mp = atomic_load_ptr(&vp->v_mountedhere);
+	if (mp == NULL)
+		return (false);
+	if (vp->v_type == VDIR)
+		return (true);
+	return (false);
 }
 
 /*
@@ -3693,9 +3726,11 @@ cache_fplookup_impl(struct vnode *dvp, struct cache_fpl *fpl)
 
 		VNPASS(!seqc_in_modify(fpl->tvp_seqc), fpl->tvp);
 
-		error = cache_fplookup_climb_mount(fpl);
-		if (__predict_false(error != 0)) {
-			break;
+		if (cache_fplookup_need_climb_mount(fpl)) {
+			error = cache_fplookup_climb_mount(fpl);
+			if (__predict_false(error != 0)) {
+				break;
+			}
 		}
 
 		VNPASS(!seqc_in_modify(fpl->tvp_seqc), fpl->tvp);
