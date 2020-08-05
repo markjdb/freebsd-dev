@@ -4146,7 +4146,7 @@ vgonel(struct vnode *vp)
 	 * Delete from old mount point vnode list.
 	 */
 	delmntque(vp);
-	cache_purge(vp);
+	cache_purge_vgone(vp);
 	/*
 	 * Done with purge, reset to the standard lock and invalidate
 	 * the vnode.
@@ -5299,14 +5299,12 @@ vaccess_vexec_smr(mode_t file_mode, uid_t file_uid, gid_t file_gid, struct ucred
 
 /*
  * Common filesystem object access control check routine.  Accepts a
- * vnode's type, "mode", uid and gid, requested access mode, credentials,
- * and optional call-by-reference privused argument allowing vaccess()
- * to indicate to the caller whether privilege was used to satisfy the
- * request (obsoleted).  Returns 0 on success, or an errno on failure.
+ * vnode's type, "mode", uid and gid, requested access mode, and credentials.
+ * Returns 0 on success, or an errno on failure.
  */
 int
 vaccess(enum vtype type, mode_t file_mode, uid_t file_uid, gid_t file_gid,
-    accmode_t accmode, struct ucred *cred, int *privused)
+    accmode_t accmode, struct ucred *cred)
 {
 	accmode_t dac_granted;
 	accmode_t priv_granted;
@@ -5320,9 +5318,6 @@ vaccess(enum vtype type, mode_t file_mode, uid_t file_uid, gid_t file_gid,
 	 * Look for a normal, non-privileged way to access the file/directory
 	 * as requested.  If it exists, go with that.
 	 */
-
-	if (privused != NULL)
-		*privused = 0;
 
 	dac_granted = 0;
 
@@ -5409,9 +5404,6 @@ privcheck:
 		priv_granted |= VADMIN;
 
 	if ((accmode & (priv_granted | dac_granted)) == accmode) {
-		/* XXX audit: privilege used */
-		if (privused != NULL)
-			*privused = 1;
 		return (0);
 	}
 
@@ -6881,16 +6873,28 @@ vn_dir_check_exec(struct vnode *vp, struct componentname *cnp)
 	return (VOP_ACCESS(vp, VEXEC, cnp->cn_cred, cnp->cn_thread));
 }
 
+/*
+ * Do not use this variant unless you have means other than the hold count
+ * to prevent the vnode from getting freed.
+ */
+void
+vn_seqc_write_begin_unheld_locked(struct vnode *vp)
+{
+
+	ASSERT_VI_LOCKED(vp, __func__);
+	VNPASS(vp->v_seqc_users >= 0, vp);
+	vp->v_seqc_users++;
+	if (vp->v_seqc_users == 1)
+		seqc_sleepable_write_begin(&vp->v_seqc);
+}
+
 void
 vn_seqc_write_begin_locked(struct vnode *vp)
 {
 
 	ASSERT_VI_LOCKED(vp, __func__);
 	VNPASS(vp->v_holdcnt > 0, vp);
-	VNPASS(vp->v_seqc_users >= 0, vp);
-	vp->v_seqc_users++;
-	if (vp->v_seqc_users == 1)
-		seqc_sleepable_write_begin(&vp->v_seqc);
+	vn_seqc_write_begin_unheld_locked(vp);
 }
 
 void
@@ -6899,6 +6903,15 @@ vn_seqc_write_begin(struct vnode *vp)
 
 	VI_LOCK(vp);
 	vn_seqc_write_begin_locked(vp);
+	VI_UNLOCK(vp);
+}
+
+void
+vn_seqc_write_begin_unheld(struct vnode *vp)
+{
+
+	VI_LOCK(vp);
+	vn_seqc_write_begin_unheld_locked(vp);
 	VI_UNLOCK(vp);
 }
 
