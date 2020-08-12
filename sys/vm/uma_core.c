@@ -1404,6 +1404,49 @@ keg_free_slab(uma_keg_t keg, uma_slab_t slab, int start)
 	uma_total_dec(PAGE_SIZE * keg->uk_ppera);
 }
 
+static void
+keg_drain_domain(uma_keg_t keg, int domain)
+{
+	struct slabhead freeslabs;
+	uma_domain_t dom;
+	uma_slab_t slab, tmp;
+	int n, skip;
+
+	dom = &keg->uk_domain[domain];
+	LIST_INIT(&freeslabs);
+
+	CTR4(KTR_UMA, "keg_drain %s(%p) domain %d free items: %u",
+	    keg->uk_name, keg, i, dom->ud_free_items);
+
+	KEG_LOCK(keg, domain);
+	if ((keg->uk_flags & UMA_ZFLAG_HASH) != 0) {
+		skip = keg->uk_reserve;
+		LIST_FOREACH(slab, &dom->ud_free_slab, us_link) {
+			if (skip > 0)
+				skip -= keg->uk_ipers;
+			else
+				UMA_HASH_REMOVE(&keg->uk_hash, slab);
+		}
+	}
+	LIST_SWAP(&freeslabs, &dom->ud_free_slab, uma_slab, us_link);
+	n = dom->ud_free_slabs;
+	for (skip = keg->uk_reserve; skip > 0; skip -= keg->uk_ipers) {
+		slab = LIST_FIRST(&freeslabs);
+		if (slab == NULL)
+			break;
+		LIST_REMOVE(slab, us_link);
+		LIST_INSERT_HEAD(&dom->ud_free_slab, slab, us_link);
+		n--;
+	}
+	dom->ud_free_slabs -= n;
+	dom->ud_free_items -= n * keg->uk_ipers;
+	dom->ud_pages -= n * keg->uk_ppera;
+	KEG_UNLOCK(keg, domain);
+
+	LIST_FOREACH_SAFE(slab, &freeslabs, us_link, tmp)
+		keg_free_slab(keg, slab, keg->uk_ipers);
+}
+
 /*
  * Frees pages from a keg back to the system.  This is done on demand from
  * the pageout daemon.
@@ -1413,35 +1456,12 @@ keg_free_slab(uma_keg_t keg, uma_slab_t slab, int start)
 static void
 keg_drain(uma_keg_t keg)
 {
-	struct slabhead freeslabs;
-	uma_domain_t dom;
-	uma_slab_t slab, tmp;
-	int i, n;
+	int i;
 
-	if (keg->uk_flags & UMA_ZONE_NOFREE || keg->uk_freef == NULL)
+	if ((keg->uk_flags & UMA_ZONE_NOFREE) != 0)
 		return;
-
-	for (i = 0; i < vm_ndomains; i++) {
-		CTR4(KTR_UMA, "keg_drain %s(%p) domain %d free items: %u",
-		    keg->uk_name, keg, i, dom->ud_free_items);
-		dom = &keg->uk_domain[i];
-		LIST_INIT(&freeslabs);
-
-		KEG_LOCK(keg, i);
-		if ((keg->uk_flags & UMA_ZFLAG_HASH) != 0) {
-			LIST_FOREACH(slab, &dom->ud_free_slab, us_link)
-				UMA_HASH_REMOVE(&keg->uk_hash, slab);
-		}
-		n = dom->ud_free_slabs;
-		LIST_SWAP(&freeslabs, &dom->ud_free_slab, uma_slab, us_link);
-		dom->ud_free_slabs = 0;
-		dom->ud_free_items -= n * keg->uk_ipers;
-		dom->ud_pages -= n * keg->uk_ppera;
-		KEG_UNLOCK(keg, i);
-
-		LIST_FOREACH_SAFE(slab, &freeslabs, us_link, tmp)
-			keg_free_slab(keg, slab, keg->uk_ipers);
-	}
+	for (i = 0; i < vm_ndomains; i++)
+		keg_drain_domain(keg, i);
 }
 
 static void
