@@ -351,10 +351,6 @@ bool vm_map_range_valid_KBI(vm_map_t map, vm_offset_t start, vm_offset_t end);
 long vmspace_resident_count(struct vmspace *vmspace);
 #endif	/* _KERNEL */
 
-
-/* XXX: number of kernel maps to statically allocate */
-#define MAX_KMAP	10
-
 /*
  * Copy-on-write flags for vm_map operations
  */
