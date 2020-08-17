@@ -141,10 +141,6 @@ static int	max_pending_per_proc = 128;
 SYSCTL_INT(_kern_sigqueue, OID_AUTO, max_pending_per_proc, CTLFLAG_RW,
     &max_pending_per_proc, 0, "Max pending signals per proc");
 
-static int	preallocate_siginfo = 1024;
-SYSCTL_INT(_kern_sigqueue, OID_AUTO, preallocate, CTLFLAG_RDTUN,
-    &preallocate_siginfo, 0, "Preallocated signal memory size");
-
 static int	signal_overflow = 0;
 SYSCTL_INT(_kern_sigqueue, OID_AUTO, overflow, CTLFLAG_RD,
     &signal_overflow, 0, "Number of signals overflew");
@@ -250,8 +246,7 @@ static void
 sigqueue_start(void)
 {
 	ksiginfo_zone = uma_zcreate("ksiginfo", sizeof(ksiginfo_t),
-		NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
-	uma_prealloc(ksiginfo_zone, preallocate_siginfo);
+	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
 	p31b_setcfg(CTL_P1003_1B_REALTIME_SIGNALS, _POSIX_REALTIME_SIGNALS);
 	p31b_setcfg(CTL_P1003_1B_RTSIG_MAX, SIGRTMAX - SIGRTMIN + 1);
 	p31b_setcfg(CTL_P1003_1B_SIGQUEUE_MAX, max_pending_per_proc);
