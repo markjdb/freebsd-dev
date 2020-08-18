@@ -65,7 +65,7 @@ __FBSDID("$FreeBSD$");
 
 MALLOC_DEFINE(M_KCOV_INFO, "kcovinfo", "KCOV info type");
 
-#define	KCOV_ELEMENT_SIZE	sizeof(uint64_t)
+#define	KCOV_ENTRIES_PER_CMP	4
 
 /*
  * To know what the code can safely perform at any point in time we use a
@@ -78,9 +78,9 @@ MALLOC_DEFINE(M_KCOV_INFO, "kcovinfo", "KCOV info type");
  *  +-----------------------------+
  *
  * The states are:
- *  OPEN:   The kcov fd has been opened, but no buffer is available to store
+ * OPEN:    The kcov fd has been opened, but no buffer is available to store
  *          coverage data.
- *  READY:  The buffer to store coverage data has been allocated. Userspace
+ * READY:   The buffer to store coverage data has been allocated. Userspace
  *          can set this by using ioctl(fd, KIOSETBUFSIZE, entries);. When
  *          this has been set the buffer can be written to by the kernel,
  *          and mmaped by userspace.
@@ -160,7 +160,7 @@ SYSCTL_UINT(_kern_kcov, OID_AUTO, max_entries, CTLFLAG_RW,
     "Maximum number of entries in the kcov buffer");
 
 static struct mtx kcov_lock;
-static int active_count;
+static u_int active_count;
 
 static struct kcov_info *
 get_kinfo(struct thread *td)
@@ -174,6 +174,7 @@ get_kinfo(struct thread *td)
 	/*
 	 * We are in an interrupt, stop tracing as it is not explicitly
 	 * part of a syscall.
+	 * XXXMJ this does not catch SMP rendezvous operations
 	 */
 	if (td->td_intr_nesting_level > 0 || td->td_intr_frame != NULL)
 		return (NULL);
@@ -181,7 +182,7 @@ get_kinfo(struct thread *td)
 	/*
 	 * If info is NULL or the state is not running we are not tracing.
 	 */
-	info = td->td_kcov_info;
+	info = atomic_load_ptr(&td->td_kcov_info);
 	if (info == NULL ||
 	    atomic_load_acq_int(&info->state) != KCOV_STATE_RUNNING)
 		return (NULL);
@@ -212,13 +213,12 @@ trace_pc(uintptr_t ret)
 
 	buf = (uint64_t *)info->kvaddr;
 
-	/* The first entry of the buffer holds the index */
-	index = buf[0];
-	if (index + 2 > info->entries)
+	/* The first entry of the buffer holds the index. */
+	index = atomic_load_64(&buf[0]);
+	if (index + 1 >= info->entries)
 		return;
-
 	buf[index + 1] = ret;
-	buf[0] = index + 1;
+	atomic_store_64(&buf[0], index + 1);
 }
 
 static bool
@@ -244,24 +244,15 @@ trace_cmp(uint64_t type, uint64_t arg1, uint64_t arg2, uint64_t ret)
 
 	buf = (uint64_t *)info->kvaddr;
 
-	/* The first entry of the buffer holds the index */
-	index = buf[0];
-
-	/* Check we have space to store all elements */
-	if (index * 4 + 4 + 1 > info->entries)
+	/* The first entry of the buffer holds the index. */
+	index = atomic_load_64(&buf[0]);
+	if ((index + 1) * KCOV_ENTRIES_PER_CMP + 1 >= info->entries)
 		return (false);
-
-	while (1) {
-		buf[index * 4 + 1] = type;
-		buf[index * 4 + 2] = arg1;
-		buf[index * 4 + 3] = arg2;
-		buf[index * 4 + 4] = ret;
-
-		if (atomic_cmpset_64(&buf[0], index, index + 1))
-			break;
-		buf[0] = index;
-	}
-
+	buf[index * KCOV_ENTRIES_PER_CMP + 1] = type;
+	buf[index * KCOV_ENTRIES_PER_CMP + 2] = arg1;
+	buf[index * KCOV_ENTRIES_PER_CMP + 3] = arg2;
+	buf[index * KCOV_ENTRIES_PER_CMP + 4] = ret;
+	atomic_store_64(&buf[0], index + 1);
 	return (true);
 }
 
@@ -275,6 +266,7 @@ kcov_mmap_cleanup(void *arg)
 	struct thread *thread;
 
 	mtx_lock_spin(&kcov_lock);
+
 	/*
 	 * Move to KCOV_STATE_DYING to stop adding new entries.
 	 *
@@ -350,7 +342,7 @@ kcov_mmap_single(struct cdev *dev, vm_ooffset_t *offset, vm_size_t size,
 	if ((error = devfs_get_cdevpriv((void **)&info)) != 0)
 		return (error);
 
-	if (info->kvaddr == 0 || size / KCOV_ELEMENT_SIZE != info->entries)
+	if (info->kvaddr == 0 || size / KCOV_ENTRY_SIZE != info->entries)
 		return (EINVAL);
 
 	vm_object_reference(info->bufobj);
@@ -373,7 +365,7 @@ kcov_alloc(struct kcov_info *info, size_t entries)
 		return (EINVAL);
 
 	/* Align to page size so mmap can't access other kernel memory */
-	info->bufsize = roundup2(entries * KCOV_ELEMENT_SIZE, PAGE_SIZE);
+	info->bufsize = roundup2(entries * KCOV_ENTRY_SIZE, PAGE_SIZE);
 	pages = info->bufsize / PAGE_SIZE;
 
 	if ((info->kvaddr = kva_alloc(info->bufsize)) == 0)
@@ -438,7 +430,7 @@ kcov_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag __unused,
 		if (info->state != KCOV_STATE_OPEN) {
 			return (EBUSY);
 		}
-		error = kcov_alloc(info, *(u_int *)data);
+		error = kcov_alloc(info, *(size_t *)data);
 		if (error == 0)
 			info->state = KCOV_STATE_READY;
 		return (error);
@@ -460,10 +452,10 @@ kcov_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag __unused,
 			error = EINVAL;
 			break;
 		}
-
-		/* Lets hope nobody opens this 2 billion times */
-		KASSERT(active_count < INT_MAX,
-		    ("%s: Open too many times", __func__));
+		if (active_count == UINT_MAX) {
+			error = EAGAIN;
+			break;
+		}
 		active_count++;
 		if (active_count == 1) {
 			cov_register_pc(&trace_pc);
@@ -500,6 +492,7 @@ kcov_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag __unused,
 		/*
 		 * Ensure we have exited the READY state before clearing the
 		 * rest of the info struct.
+		 * XXX
 		 */
 		atomic_thread_fence_rel();
 		info->mode = -1;
@@ -577,5 +570,4 @@ kcov_init(const void *unused)
 	EVENTHANDLER_REGISTER(thread_dtor, kcov_thread_dtor, NULL,
 	    EVENTHANDLER_PRI_ANY);
 }
-
 SYSINIT(kcovdev, SI_SUB_LAST, SI_ORDER_ANY, kcov_init, NULL);

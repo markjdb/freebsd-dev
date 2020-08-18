@@ -68,5 +68,6 @@ LINT: ${NOTES} ${MAKELINT_SED}
 	echo "nodevice mlx5" >> ${.TARGET}
 	echo "nodevice mlx5en" >> ${.TARGET}
 	echo "nodevice mlx5ib" >> ${.TARGET}
+	echo "nooptions	KCOV" >> ${.TARGET}
 	echo "nooptions	RATELIMIT" >> ${.TARGET}
 .endif
