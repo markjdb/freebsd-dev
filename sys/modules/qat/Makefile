@@ -13,4 +13,6 @@ SRCS=	qat.c		\
 	qat_hw15.c	\
 	qat_hw17.c
 
+SRCS+=	bus_if.h cryptodev_if.h device_if.h pci_if.h
+
 .include <bsd.kmod.mk>

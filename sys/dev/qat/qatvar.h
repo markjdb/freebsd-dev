@@ -85,7 +85,10 @@
 #define	CLR(t, f)	((t) &= ~(f))
 #endif
 
+/* XXXMJ */
+#if 0
 #define QAT_EVENT_COUNTERS
+#endif
 
 #ifdef QAT_EVENT_COUNTERS
 #define QAT_EVCNT_ATTACH(sc, ev, type, name, fmt, args...)		\
@@ -199,7 +202,7 @@ struct qat_ring {
 	void *qr_cb_arg;
 
 	const char *qr_name;
-	kmutex_t qr_ring_mtx;   /* Lock per ring */
+	struct mtx qr_ring_mtx;   /* Lock per ring */
 
 #ifdef QAT_EVENT_COUNTERS
 	char qr_ev_rxintr_name[QAT_EV_NAME_SIZE];
@@ -222,7 +225,7 @@ struct qat_bank {
 #define COALESCING_TIME_INTERVAL_MIN		500
 #define COALESCING_TIME_INTERVAL_MAX		0xfffff
 	uint32_t qb_bank;		/* bank index */
-	kmutex_t qb_bank_mtx;
+	struct mtx qb_bank_mtx;
 	void *qb_ih_cookie;
 
 #ifdef QAT_EVENT_COUNTERS
@@ -252,7 +255,7 @@ struct qat_ae_page {
 
 struct qat_ae_region {
 	struct qat_ae_page *qar_loaded_page;
-	SIMPLEQ_HEAD(, qat_ae_page) qar_waiting_pages;
+	STAILQ_HEAD(, qat_ae_page) qar_waiting_pages;
 };
 
 struct qat_ae_slice {
@@ -297,10 +300,10 @@ struct qat_ae_batch_init {
 	u_int qabi_addr;
 	u_int *qabi_value;
 	u_int qabi_size;
-	SIMPLEQ_ENTRY(qat_ae_batch_init) qabi_next;
+	STAILQ_ENTRY(qat_ae_batch_init) qabi_next;
 };
 
-SIMPLEQ_HEAD(qat_ae_batch_init_list, qat_ae_batch_init);
+STAILQ_HEAD(qat_ae_batch_init_list, qat_ae_batch_init);
 
 /* overwritten struct uof_uword_block */
 struct qat_uof_uword_block {
@@ -596,7 +599,9 @@ struct qat_sym_cookie {
 CTASSERT(offsetof(struct qat_sym_cookie,
     u.qsc_bulk_cookie.qsbc_req_params_buf) % QAT_OPTIMAL_ALIGN == 0);
 CTASSERT(offsetof(struct qat_sym_cookie, qsc_buf_list) % QAT_OPTIMAL_ALIGN == 0);
+#if 0 /* XXXMJ crazy layout */
 CTASSERT(sizeof(struct buffer_list_desc) == 16);
+#endif
 
 #define MAX_CIPHER_SETUP_BLK_SZ						\
 		(sizeof(struct hw_cipher_config) +			\
@@ -651,7 +656,7 @@ struct qat_session {
 #define QAT_SESSION_STATUS_FREEING	(1 << 1)
 	uint32_t qs_inflight;
 
-	kmutex_t qs_session_mtx;
+	struct mtx qs_session_mtx;
 };
 
 CTASSERT(offsetof(struct qat_session, qs_dec_desc) % QAT_OPTIMAL_ALIGN == 0);
@@ -667,7 +672,7 @@ struct qat_crypto_bank {
 	struct qat_sym_cookie *qcb_symck_free[QAT_NSYMCOOKIE];
 	uint32_t qcb_symck_free_count;
 
-	kmutex_t qcb_bank_mtx;
+	struct mtx qcb_bank_mtx;
 
 	struct qat_crypto *qcb_crypto;
 
@@ -693,7 +698,7 @@ struct qat_crypto {
 	struct qat_session *qcy_session_free[QAT_NSESSION];
 	uint32_t qcy_session_free_count;
 
-	kmutex_t qcy_crypto_mtx;
+	struct mtx qcy_crypto_mtx;
 
 #ifdef QAT_EVENT_COUNTERS
 	char qcy_ev_new_sess_name[QAT_EV_NAME_SIZE];
@@ -719,10 +724,10 @@ struct qat_hw {
 	size_t qhw_crypto_opaque_offset;
 	void (*qhw_crypto_setup_req_params)(struct qat_crypto_bank *,
 	    struct qat_session *, struct qat_crypto_desc const *,
-	    struct qat_sym_cookie *, struct cryptodesc *, struct cryptodesc *,
+	    struct qat_sym_cookie *, /*struct cryptodesc *, struct cryptodesc **/struct cryptop *,
 	    bus_addr_t);
 	void (*qhw_crypto_setup_desc)(struct qat_crypto *, struct qat_session *,
-	    struct qat_crypto_desc *, struct cryptoini *, struct cryptoini *);
+	    struct qat_crypto_desc *, /*struct cryptoini *, struct cryptoini **/struct cryptop *);
 
 	uint8_t qhw_num_banks;			/* max number of banks */
 	uint8_t qhw_num_ap_banks;		/* max number of AutoPush banks */
@@ -807,7 +812,7 @@ struct qat_hw {
 #define QAT_DEFAULT_PVL			0
 
 struct qat_softc {
-	struct device *sc_dev;
+	device_t sc_dev;
 
 	pci_chipset_tag_t sc_pc;
 	pcitag_t sc_pcitag;
@@ -937,7 +942,7 @@ qat_bar_write_4(struct qat_softc *sc, int baroff, bus_size_t offset,
     uint32_t value)
 {
 
-	KASSERT(baroff >= 0 && baroff < MAX_BARS);
+	MPASS(baroff >= 0 && baroff < MAX_BARS);
 
 	bus_space_write_4(sc->sc_csrt[baroff],
 	    sc->sc_csrh[baroff], offset, value);
@@ -950,7 +955,7 @@ static inline uint32_t
 qat_bar_read_4(struct qat_softc *sc, int baroff, bus_size_t offset)
 {
 
-	KASSERT(baroff >= 0 && baroff < MAX_BARS);
+	MPASS(baroff >= 0 && baroff < MAX_BARS);
 
 	return bus_space_read_4(sc->sc_csrt[baroff],
 	    sc->sc_csrh[baroff], offset);
@@ -1156,12 +1161,12 @@ void		qat_memcpy_htobe64(void *, const void *, size_t);
 void		qat_memcpy_htobe32(void *, const void *, size_t);
 void		qat_memcpy_htobe(void *, const void *, size_t, uint32_t);
 void		qat_crypto_hmac_precompute(struct qat_crypto_desc *,
-		    struct cryptoini *cria, struct qat_sym_hash_def const *,
+		    /*struct cryptoini *cria*/struct cryptop *, struct qat_sym_hash_def const *,
 		    uint8_t *, uint8_t *);
 uint16_t	qat_crypto_load_cipher_cryptoini(
-		    struct qat_crypto_desc *, struct cryptoini *);
+		    struct qat_crypto_desc *, /*struct cryptoini **/struct cryptop *);
 uint16_t	qat_crypto_load_auth_cryptoini(
-		    struct qat_crypto_desc *, struct cryptoini *,
+		    struct qat_crypto_desc *, /*struct cryptoini **/struct cryptop *,
 		    struct qat_sym_hash_def const **);
 
 #endif

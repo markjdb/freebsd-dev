@@ -62,33 +62,41 @@ __FBSDID("$FreeBSD");
 __KERNEL_RCSID(0, "$NetBSD: qat.c,v 1.6 2020/06/14 23:23:12 riastradh Exp $");
 #endif
 
+/* XXXMJ */
+#include "netbsd_compat.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/bus.h>
 #include <sys/kernel.h>
-#include <sys/device.h>
+//#include <sys/device.h>
 #include <sys/module.h>
-#include <sys/kmem.h>
+//#include <sys/kmem.h>
 #include <sys/mutex.h>
-#include <sys/bitops.h>
-#include <sys/atomic.h>
+//#include <sys/bitops.h>
+//#include <sys/atomic.h>
 #include <sys/mbuf.h>
-#include <sys/cprng.h>
+//#include <sys/cprng.h>
 #include <sys/cpu.h>
 #include <sys/interrupt.h>
 #include <sys/md5.h>
-#include <sys/sha1.h>
-#include <sys/sha2.h>
+//#include <sys/sha1.h>
+//#include <sys/sha2.h>
+
+#include <machine/bus.h>
 
 #include <opencrypto/cryptodev.h>
-#include <opencrypto/cryptosoft.h>
+//#include <opencrypto/cryptosoft.h>
 #include <opencrypto/xform.h>
 
+#include "cryptodev_if.h"
+
 /* XXX same as sys/arch/x86/x86/via_padlock.c */
-#include <opencrypto/cryptosoft_xform.c>
+//#include <opencrypto/cryptosoft_xform.c>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
-#include <dev/pci/pcidevs.h>
+//#include <dev/pci/pcidevs.h>
 
 #include "qatreg.h"
 #include "qatvar.h"
@@ -99,9 +107,18 @@ extern struct qat_hw qat_hw_c3xxx;
 extern struct qat_hw qat_hw_c62x;
 extern struct qat_hw qat_hw_d15xx;
 
+#define	PCI_VENDOR_INTEL			0x8086
+#define	PCI_PRODUCT_INTEL_C2000_IQIA_PHYS	0x1f18
+#define	PCI_PRODUCT_INTEL_C3K_QAT		0x19e2
+#define	PCI_PRODUCT_INTEL_C3K_QAT_VF		0x19e3
+#define	PCI_PRODUCT_INTEL_C620_QAT		0x37c8
+#define	PCI_PRODUCT_INTEL_C620_QAT_VF		0x37c9
+#define	PCI_PRODUCT_INTEL_XEOND_QAT		0x6f54
+#define	PCI_PRODUCT_INTEL_XEOND_QAT_VF		0x6f55
+
 static const struct qat_product {
-	pci_vendor_id_t qatp_vendor;
-	pci_product_id_t qatp_product;
+	uint16_t qatp_vendor;
+	uint16_t qatp_product;
 	const char *qatp_name;
 	enum qat_chip_type qatp_chip;
 	const struct qat_hw *qatp_hw;
@@ -193,6 +210,8 @@ static const uint8_t sha512_initial_state[QAT_HASH_SHA512_STATE_SIZE] = {
 
 /* Hash Algorithm specific structure */
 
+/* XXXMJ */
+#if 0
 static const struct qat_sym_hash_alg_info md5_info = {
 	QAT_HASH_MD5_DIGEST_SIZE,
 	QAT_HASH_MD5_BLOCK_SIZE,
@@ -304,17 +323,16 @@ static const struct qat_sym_hash_def qat_sym_hash_defs[] = {
 	[QAT_SYM_HASH_SHA512] = { &sha512_info, &sha512_config },
 	[QAT_SYM_HASH_AES_GCM] = { &aes_gcm_info, &aes_gcm_config },
 };
+#endif
 
-const struct qat_product *
-		qat_lookup(const struct pci_attach_args *);
-int		qat_match(struct device *, struct cfdata *, void *);
-void		qat_attach(struct device *, struct device *, void *);
+static const struct qat_product *qat_lookup(device_t);
+static int	qat_probe(device_t);
+static int	qat_attach(device_t);
 void		qat_init(struct device *);
 int		qat_start(struct device *);
-int		qat_detach(struct device *, int);
+static int	qat_detach(device_t);
 
-int		qat_alloc_msix_intr(struct qat_softc *,
-		    struct pci_attach_args *);
+static int	qat_alloc_msix_intr(struct qat_softc *);
 void *		qat_establish_msix_intr(struct qat_softc *, pci_intr_handle_t,
 			int (*)(void *), void *, const char *, int);
 int		qat_setup_msix_intr(struct qat_softc *);
@@ -344,11 +362,13 @@ int		qat_crypto_load_buf(struct qat_softc *, struct cryptop *,
 		    struct qat_sym_cookie *, struct qat_crypto_desc const *,
 		    uint8_t *, int, bus_addr_t *);
 int		qat_crypto_load_iv(struct qat_sym_cookie *, struct cryptop *,
-		    struct cryptodesc *, struct qat_crypto_desc const *);
+		    /*struct cryptodesc **/struct cryptop *, struct qat_crypto_desc const *);
 int		qat_crypto_process(void *, struct cryptop *, int);
 int		qat_crypto_setup_ring(struct qat_softc *,
 		    struct qat_crypto_bank *);
-int		qat_crypto_new_session(void *, uint32_t *, struct cryptoini *);
+#if 0 /* XXXMJ */
+static int	qat_crypto_newsession(void *, uint32_t *, struct cryptoini *);
+#endif
 int		qat_crypto_free_session0(struct qat_crypto *,
 		    struct qat_session *);
 void		qat_crypto_check_free_session(struct qat_crypto *,
@@ -360,8 +380,57 @@ int		qat_crypto_init(struct qat_softc *);
 int		qat_crypto_start(struct qat_softc *);
 int		qat_crypto_sym_rxintr(struct qat_softc *, void *, void *);
 
+#if 0
 CFATTACH_DECL_NEW(qat, sizeof(struct qat_softc),
     qat_match, qat_attach, qat_detach, NULL);
+#endif
+
+static int
+qat_probesession(device_t dev, const struct crypto_session_params *csp)
+{
+	return ENXIO;
+}
+
+static int
+qat_newsession(device_t dev, crypto_session_t cses,
+    const struct crypto_session_params *csp)
+{
+	return ENXIO;
+}
+
+static int
+qat_process(device_t dev, struct cryptop *crp, int hint)
+{
+	return ENXIO;
+}
+
+static device_method_t qat_methods[] = {
+	/* Device interface */
+	DEVMETHOD(device_probe,		qat_probe),
+	DEVMETHOD(device_attach,	qat_attach),
+	DEVMETHOD(device_detach,	qat_detach),
+
+	/* Cryptodev interface */
+	DEVMETHOD(cryptodev_probesession, qat_probesession),
+	DEVMETHOD(cryptodev_newsession,	qat_newsession),
+	DEVMETHOD(cryptodev_process,	qat_process),
+
+	DEVMETHOD_END
+};
+
+static devclass_t qat_devclass;
+
+static driver_t qat_driver = {
+	.name		= "qat",
+	.methods	= qat_methods,
+	.size		= sizeof(struct qat_softc),
+};
+
+DRIVER_MODULE(qat, pci, qat_driver, qat_devclass, 0, 0);
+MODULE_VERSION(qat, 1);
+MODULE_DEPEND(qat, crypto, 1, 1, 1); /* XXXMJ pci too? */
+
+static MALLOC_DEFINE(M_QAT, "qat", "Intel QAT driver");
 
 struct qat_softc *gsc = NULL;
 
@@ -369,59 +438,68 @@ struct qat_softc *gsc = NULL;
 int qat_dump = QAT_DUMP;
 #endif
 
-const struct qat_product *
-qat_lookup(const struct pci_attach_args *pa)
+static const struct qat_product *
+qat_lookup(device_t dev)
 {
 	const struct qat_product *qatp;
 
 	for (qatp = qat_products; qatp->qatp_name != NULL; qatp++) {
-		if (PCI_VENDOR(pa->pa_id) == qatp->qatp_vendor &&
-		    PCI_PRODUCT(pa->pa_id) == qatp->qatp_product)
+		if (pci_get_vendor(dev) == qatp->qatp_vendor &&
+		    pci_get_device(dev) == qatp->qatp_product)
 			return qatp;
 	}
 	return NULL;
 }
 
-int
-qat_match(struct device *parent, struct cfdata *cf, void *aux)
+static int
+qat_probe(device_t dev)
 {
-	struct pci_attach_args *pa = aux;
-
-	if (qat_lookup(pa) != NULL)
-		return 1;
-
-	return 0;
+	if (qat_lookup(dev) != NULL)
+		/* XXXMJ set description */
+		return BUS_PROBE_DEFAULT;
+	return ENXIO;
 }
 
-void
-qat_attach(struct device *parent, struct device *self, void *aux)
+static int
+qat_attach(device_t dev)
 {
-	struct qat_softc *sc = device_private(self);
+	struct qat_softc *sc = device_get_softc(dev);
+#if 0
 	struct pci_attach_args *pa = aux;
 	pci_chipset_tag_t pc = pa->pa_pc;
+#endif
 	const struct qat_product *qatp;
+#if 0
 	char cap[256];
-	pcireg_t cmd, memtype, msixoff, fusectl;
+	pcireg_t  memtype, msixoff, fusectl;
 	bus_size_t msixtbl_offset;
-	int i, bar, msixtbl_bar;
+	int bar, msixtbl_bar;
+#endif
+	int i;
 
-	sc->sc_dev = self;
+	sc->sc_dev = dev;
+#if 0
 	sc->sc_pc = pc;
 	sc->sc_pcitag = pa->pa_tag;
+#endif
 
 	gsc = sc; /* for debug */
 
-	qatp = qat_lookup(pa);
-	KASSERT(qatp != NULL);
+	qatp = qat_lookup(dev);
+	MPASS(qatp != NULL);
 
+#if 0 /* XXX */
 	if (pci_dma64_available(pa))
 		sc->sc_dmat = pa->pa_dmat64;
 	else
 		sc->sc_dmat = pa->pa_dmat;
+#endif
 
+#if 0 /* XXX sc_rev */
 	aprint_naive(": Crypto processor\n");
 	sc->sc_rev = PCI_REVISION(pa->pa_class);
 	aprint_normal(": %s (rev. 0x%02x)\n", qatp->qatp_name, sc->sc_rev);
+#endif
 
 	memcpy(&sc->sc_hw, qatp->qatp_hw, sizeof(struct qat_hw));
 
@@ -442,45 +520,48 @@ qat_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	if (!sc->sc_accel_mask || (sc->sc_ae_mask & 0x01) == 0) {
-		aprint_error_dev(sc->sc_dev, "couldn't find acceleration");
+		device_printf(sc->sc_dev, "couldn't find acceleration");
 		goto fail;
 	}
 
-	KASSERT(sc->sc_accel_num <= MAX_NUM_ACCEL);
-	KASSERT(sc->sc_ae_num <= MAX_NUM_AE);
+	MPASS(sc->sc_accel_num <= MAX_NUM_ACCEL);
+	MPASS(sc->sc_ae_num <= MAX_NUM_AE);
 
 	/* Determine SKU and capabilities */
 	sc->sc_sku = sc->sc_hw.qhw_get_sku(sc);
 	sc->sc_accel_cap = sc->sc_hw.qhw_get_accel_cap(sc);
 	sc->sc_fw_uof_name = sc->sc_hw.qhw_get_fw_uof_name(sc);
 
-	aprint_normal_dev(sc->sc_dev,
+#if 0 /* XXXMJ */
+	device_printf(sc->sc_dev,
 	    "sku %d accel %d accel_mask 0x%x ae %d ae_mask 0x%x\n",
 	    sc->sc_sku, sc->sc_accel_num, sc->sc_accel_mask,
 	    sc->sc_ae_num, sc->sc_ae_mask);
 	snprintb(cap, sizeof(cap), QAT_ACCEL_CAP_BITS, sc->sc_accel_cap);
-	aprint_normal_dev(sc->sc_dev, "accel capabilities %s\n", cap);
+	device_printf(sc->sc_dev, "accel capabilities %s\n", cap);
+#endif
 
 	/* Map BARs */
-
+#if 0
 	msixtbl_bar = 0;
 	msixtbl_offset = 0;
-	if (pci_get_capability(pc, pa->pa_tag, PCI_CAP_MSIX, &msixoff, NULL)) {
-		pcireg_t msixtbl;
-		msixtbl = pci_conf_read(pc, pa->pa_tag,
-		    msixoff + PCI_MSIX_TBLOFFSET);
-		msixtbl_offset = msixtbl & PCI_MSIX_TBLOFFSET_MASK;
+	if (pci_find_cap(dev, PCIY_MSIX, &msixoff, NULL)) {
+		uint32_t msixtbl;
+		msixtbl = pci_read_config(dev, msixoff + PCIR_MSIX_TABLE, 4);
+		msixtbl_offset = msixtbl & ~PCIM_MSIX_BIR_MASK;
 		msixtbl_bar = PCI_MAPREG_START +
 		    ((msixtbl & PCI_MSIX_TBLBIR_MASK) << 2);
 	}
+#endif
 
 	i = 0;
 	if (sc->sc_hw.qhw_sram_bar_id != NO_PCI_REG) {
-		KASSERT(sc->sc_hw.qhw_sram_bar_id == 0);
-		fusectl = pci_conf_read(sc->sc_pc, sc->sc_pcitag, FUSECTL_REG);
+		MPASS(sc->sc_hw.qhw_sram_bar_id == 0);
+		uint32_t fusectl = pci_read_config(dev, FUSECTL_REG, 4);
 		/* Skip SRAM BAR */
 		i = (fusectl & FUSECTL_MASK) ? 1 : 0;
 	}
+#if 0 /* XXXMJ */
 	for (bar = PCI_MAPREG_START; bar <= PCI_MAPREG_END; bar += 4) {
 		bus_size_t size;
 		bus_addr_t addr;
@@ -499,7 +580,7 @@ qat_attach(struct device *parent, struct device *self, void *aux)
 
 		if (pci_mapreg_submap(pa, bar, memtype, 0, size, 0,
 		    &sc->sc_csrt[i], &sc->sc_csrh[i], &addr, &sc->sc_csrs[i])) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "couldn't map bar 0x%02x\n", bar);
 			goto fail;
 		}
@@ -514,74 +595,91 @@ qat_attach(struct device *parent, struct device *self, void *aux)
 		if (PCI_MAPREG_MEM_TYPE(memtype) == PCI_MAPREG_MEM_TYPE_64BIT)
 			bar += 4;
 	}
+#endif
 
 	/* XXX Enable advanced error reporting */
 
 	/* Enable bus mastering */
+#if 0
 	cmd = pci_conf_read(pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
 	cmd |= PCI_COMMAND_MASTER_ENABLE;
 	pci_conf_write(pc, pa->pa_tag, PCI_COMMAND_STATUS_REG, cmd);
+#endif
+	pci_enable_busmaster(dev);
 
-	if (qat_alloc_msix_intr(sc, pa))
+	if (qat_alloc_msix_intr(sc))
 		goto fail;
 
+#if 0 /* XXXMJ config intrhooks? */
 	config_mountroot(self, qat_init);
+#endif
 
 fail:
-	/* XXX */
-	return;
+	return ENXIO;
 }
 
 void
-qat_init(struct device *self)
+qat_init(device_t dev)
 {
 	int error;
-	struct qat_softc *sc = device_private(self);
+	struct qat_softc *sc = device_get_softc(dev);
 
+#if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev, "Initializing ETR\n");
+#endif
 	error = qat_etr_init(sc);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not initialize ETR: %d\n", error);
 		return;
 	}
 
+#if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev, "Initializing admin comms\n");
+#endif
 	if (sc->sc_hw.qhw_init_admin_comms != NULL &&
 	    (error = sc->sc_hw.qhw_init_admin_comms(sc)) != 0) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not initialize admin comms: %d\n", error);
 		return;
 	}
 
+#if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev, "Initializing hw arbiter\n");
+#endif
 	if (sc->sc_hw.qhw_init_arb != NULL &&
 	    (error = sc->sc_hw.qhw_init_arb(sc)) != 0) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not initialize hw arbiter: %d\n", error);
 		return;
 	}
 
+#if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev, "Initializing acceleration engine\n");
+#endif
 	error = qat_ae_init(sc);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not initialize Acceleration Engine: %d\n", error);
 		return;
 	}
 
+#if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev, "Loading acceleration engine firmware\n");
+#endif
 	error = qat_aefw_load(sc);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not load firmware: %d\n", error);
 		return;
 	}
 
+#if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev, "Establishing interrupts\n");
+#endif
 	error = qat_setup_msix_intr(sc);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not setup interrupts: %d\n", error);
 		return;
 	}
@@ -590,35 +688,39 @@ qat_init(struct device *self)
 
 	error = qat_crypto_init(sc);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not initialize service: %d\n", error);
 		return;
 	}
 
+#if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev, "Enabling error correction\n");
+#endif
 	if (sc->sc_hw.qhw_enable_error_correction != NULL)
 		sc->sc_hw.qhw_enable_error_correction(sc);
 
+#if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev, "Initializing watchdog timer\n");
+#endif
 	if (sc->sc_hw.qhw_set_ssm_wdtimer != NULL &&
 	    (error = sc->sc_hw.qhw_set_ssm_wdtimer(sc)) != 0) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not initialize watchdog timer: %d\n", error);
 		return;
 	}
 
-	error = qat_start(self);
+	error = qat_start(dev);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not start: %d\n", error);
 		return;
 	}
 }
 
 int
-qat_start(struct device *self)
+qat_start(device_t dev)
 {
-	struct qat_softc *sc = device_private(self);
+	struct qat_softc *sc = device_get_softc(dev);
 	int error;
 
 	error = qat_ae_start(sc);
@@ -637,28 +739,23 @@ qat_start(struct device *self)
 	return 0;
 }
 
-int
-qat_detach(struct device *self, int flags)
+static int
+qat_detach(device_t dev)
 {
-
+	/* XXXMJ really? */
 	return 0;
 }
 
 void *
 qat_alloc_mem(size_t size)
 {
-	size_t *sptr;
-	sptr = kmem_zalloc(size + sizeof(size), KM_SLEEP);
-	*sptr = size;
-	return ++sptr;
+	return (malloc(size, M_QAT, M_WAITOK));
 }
 
 void
 qat_free_mem(void *ptr)
 {
-	size_t *sptr = ptr, size;
-	size = *(--sptr);
-	kmem_free(sptr, size + sizeof(size));
+	free(ptr, M_QAT);
 }
 
 void
@@ -669,28 +766,29 @@ qat_free_dmamem(struct qat_softc *sc, struct qat_dmamem *qdm)
 	bus_dmamap_destroy(sc->sc_dmat, qdm->qdm_dma_map);
 	bus_dmamem_unmap(sc->sc_dmat, qdm->qdm_dma_vaddr, qdm->qdm_dma_size);
 	bus_dmamem_free(sc->sc_dmat, &qdm->qdm_dma_seg, 1);
-	explicit_memset(qdm, 0, sizeof(*qdm));
+	explicit_bzero(qdm, sizeof(*qdm));
 }
 
 int
 qat_alloc_dmamem(struct qat_softc *sc, struct qat_dmamem *qdm,
 	bus_size_t size, bus_size_t alignment)
 {
+#if 0
 	int error = 0, nseg;
 
 	error = bus_dmamem_alloc(sc->sc_dmat, size, alignment,
 	    0, &qdm->qdm_dma_seg, 1, &nseg, BUS_DMA_NOWAIT);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "couldn't allocate dmamem, error = %d\n", error);
 		goto fail_0;
 	}
-	KASSERT(nseg == 1);
+	MPASS(nseg == 1);
 	error = bus_dmamem_map(sc->sc_dmat, &qdm->qdm_dma_seg,
 	    nseg, size, &qdm->qdm_dma_vaddr,
 	    BUS_DMA_COHERENT | BUS_DMA_NOWAIT);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "couldn't map dmamem, error = %d\n", error);
 		goto fail_1;
 	}
@@ -698,14 +796,14 @@ qat_alloc_dmamem(struct qat_softc *sc, struct qat_dmamem *qdm,
 	error = bus_dmamap_create(sc->sc_dmat, size, nseg, size,
 	    0, BUS_DMA_NOWAIT, &qdm->qdm_dma_map);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "couldn't create dmamem map, error = %d\n", error);
 		goto fail_2;
 	}
 	error = bus_dmamap_load(sc->sc_dmat, qdm->qdm_dma_map,
 	    qdm->qdm_dma_vaddr, size, NULL, BUS_DMA_NOWAIT);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "couldn't load dmamem map, error = %d\n", error);
 		goto fail_3;
 	}
@@ -722,10 +820,13 @@ fail_1:
 	bus_dmamem_free(sc->sc_dmat, &qdm->qdm_dma_seg, 1);
 fail_0:
 	return error;
+#endif
+	device_printf(sc->sc_dev, "%s: implement me\n", __func__);
+	return ENXIO;
 }
 
-int
-qat_alloc_msix_intr(struct qat_softc *sc, struct pci_attach_args *pa)
+static int
+qat_alloc_msix_intr(struct qat_softc *sc)
 {
 	u_int *ih_map, vec;
 	int error, count, ihi;
@@ -743,7 +844,7 @@ qat_alloc_msix_intr(struct qat_softc *sc, struct pci_attach_args *pa)
 	error = pci_msix_alloc_map(pa, &sc->sc_ih, ih_map, count);
 	qat_free_mem(ih_map);
 	if (error) {
-		aprint_error_dev(sc->sc_dev, "couldn't allocate msix %d: %d\n",
+		device_printf(sc->sc_dev, "couldn't allocate msix %d: %d\n",
 		    count, error);
 	}
 
@@ -752,9 +853,9 @@ qat_alloc_msix_intr(struct qat_softc *sc, struct pci_attach_args *pa)
 
 void *
 qat_establish_msix_intr(struct qat_softc *sc, pci_intr_handle_t ih,
-	int (*func)(void *), void *arg,
-	const char *name, int index)
+	int (*func)(void *), void *arg, const char *name, int index)
 {
+#if 0 /* XXXMJ */
 	kcpuset_t *affinity;
 	int error;
 	char buf[PCI_INTRSTR_LEN];
@@ -779,12 +880,15 @@ qat_establish_msix_intr(struct qat_softc *sc, pci_intr_handle_t ih,
 	kcpuset_set(affinity, index % ncpu);
 	error = interrupt_distribute(cookie, affinity, NULL);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "couldn't distribute interrupt: %s%d\n", name, index);
 	}
 	kcpuset_destroy(affinity);
 
 	return cookie;
+#endif
+	device_printf(sc->sc_dev, "%s: implement me\n", __func__);
+	return NULL;
 }
 
 int
@@ -856,9 +960,9 @@ qat_etr_bank_init(struct qat_softc *sc, int bank)
 	struct qat_bank *qb = &sc->sc_etr_banks[bank];
 	int i, tx_rx_gap = sc->sc_hw.qhw_tx_rx_gap;
 
-	KASSERT(bank < sc->sc_hw.qhw_num_banks);
+	MPASS(bank < sc->sc_hw.qhw_num_banks);
 
-	mutex_init(&qb->qb_bank_mtx, MUTEX_DEFAULT, IPL_NET);
+	mtx_init(&qq->qq_bank_mtx, "qb bank", NULL, MTX_DEF);
 
 	qb->qb_sc = sc;
 	qb->qb_bank = bank;
@@ -971,7 +1075,7 @@ qat_etr_ap_bank_setup_ring(struct qat_softc *sc, struct qat_ring *qr)
 		return;
 
 	ap_bank = ETR_RING_AP_BANK_NUMBER(qr->qr_ring);
-	KASSERT(ap_bank < sc->sc_hw.qhw_num_ap_banks);
+	MPASS(ap_bank < sc->sc_hw.qhw_num_ap_banks);
 	qab = &sc->sc_etr_ap_banks[ap_bank];
 
 	if (qr->qr_cb == NULL) {
@@ -1018,7 +1122,7 @@ qat_etr_setup_ring(struct qat_softc *sc, int bank, uint32_t ring,
 	uint32_t wm_nf = ETR_RING_CONFIG_NEAR_WM_512;
 	uint32_t wm_ne = ETR_RING_CONFIG_NEAR_WM_0;
 
-	KASSERT(bank < sc->sc_hw.qhw_num_banks);
+	MPASS(bank < sc->sc_hw.qhw_num_banks);
 
 	/* Allocate a ring from specified bank */
 	qb = &sc->sc_etr_banks[bank];
@@ -1064,11 +1168,12 @@ qat_etr_setup_ring(struct qat_softc *sc, int bank, uint32_t ring,
 	if (error)
 		return error;
 
-	KASSERT(qr->qr_dma.qdm_dma_map->dm_nsegs == 1);
+	MPASS(qr->qr_dma.qdm_dma_map->dm_nsegs == 1);
 
 	qr->qr_ring_vaddr = qr->qr_dma.qdm_dma_vaddr;
 	qr->qr_ring_paddr = qr->qr_dma.qdm_dma_map->dm_segs[0].ds_addr;
 
+#if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev,
 	    "allocate ring %d of bank %d for %s "
 	    "size %d %d at vaddr %p paddr 0x%llx\n",
@@ -1076,6 +1181,7 @@ qat_etr_setup_ring(struct qat_softc *sc, int bank, uint32_t ring,
 	    (int)qr->qr_dma.qdm_dma_map->dm_segs[0].ds_len,
 	    qr->qr_ring_vaddr,
 	    (unsigned long long)qr->qr_ring_paddr);
+#endif
 
 	memset(qr->qr_ring_vaddr, QAT_RING_PATTERN,
 	    qr->qr_dma.qdm_dma_map->dm_segs[0].ds_len);
@@ -1085,7 +1191,7 @@ qat_etr_setup_ring(struct qat_softc *sc, int bank, uint32_t ring,
 	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 
 	if (((uintptr_t)qr->qr_ring_paddr & (ring_size_bytes - 1)) != 0) {
-		aprint_error_dev(sc->sc_dev, "ring address not aligned\n");
+		device_printf(sc->sc_dev, "ring address not aligned\n");
 		return EFAULT;
 	}
 
@@ -1103,7 +1209,7 @@ qat_etr_setup_ring(struct qat_softc *sc, int bank, uint32_t ring,
 	if (sc->sc_hw.qhw_init_arb != NULL)
 		qat_arb_update(sc, qb);
 
-	mutex_init(&qr->qr_ring_mtx, MUTEX_DEFAULT, IPL_NET);
+	mtx_init(&qr->qr_ring_mtx, "qr ring", NULL, MTX_DEF);
 
 	qat_etr_ap_bank_setup_ring(sc, qr);
 
@@ -1113,10 +1219,12 @@ qat_etr_setup_ring(struct qat_softc *sc, int bank, uint32_t ring,
 		qb->qb_intr_mask |= qr->qr_ring_mask;
 		intr_mask = qb->qb_intr_mask;
 
+#if 0 /* XXXMJ */
 		aprint_verbose_dev(sc->sc_dev,
 		    "update intr mask for bank %d "
 		    "(coalescing time %dns): 0x%08x\n",
 		    bank, qb->qb_coalescing_time, intr_mask);
+#endif
 		qat_etr_bank_write_4(sc, bank, ETR_INT_COL_EN,
 		    intr_mask);
 		qat_etr_bank_write_4(sc, bank, ETR_INT_COL_CTL,
@@ -1142,13 +1250,13 @@ qat_etr_put_msg(struct qat_softc *sc, struct qat_ring *qr, uint32_t *msg)
 	uint32_t inflight;
 	uint32_t *addr;
 
-	mutex_spin_enter(&qr->qr_ring_mtx);
+	mtx_lock(&qr->qr_ring_mtx);
 
-	inflight = atomic_inc_32_nv(qr->qr_inflight);
+	inflight = atomic_fetchadd_32(qr->qr_inflight, 1) + 1;
 	if (inflight > QAT_MAX_INFLIGHTS(qr->qr_ring_size, qr->qr_msg_size)) {
-		atomic_dec_32(qr->qr_inflight);
+		atomic_subtract_32(qr->qr_inflight, 1);
 		QAT_EVCNT_INCR(&qr->qr_ev_txfull);
-		mutex_spin_exit(&qr->qr_ring_mtx);
+		mtx_unlock(&qr->qr_ring_mtx);
 		return EBUSY;
 	}
 	QAT_EVCNT_INCR(&qr->qr_ev_txmsg);
@@ -1172,7 +1280,7 @@ qat_etr_put_msg(struct qat_softc *sc, struct qat_ring *qr, uint32_t *msg)
 	qat_etr_bank_ring_write_4(sc, qr->qr_bank, qr->qr_ring,
 	    ETR_RING_TAIL_OFFSET, qr->qr_tail);
 
-	mutex_spin_exit(&qr->qr_ring_mtx);
+	mtx_unlock(&qr->qr_ring_mtx);
 
 	return 0;
 }
@@ -1185,7 +1293,7 @@ qat_etr_ring_intr(struct qat_softc *sc, struct qat_bank *qb,
 	uint32_t *msg;
 	uint32_t nmsg = 0;
 
-	mutex_spin_enter(&qr->qr_ring_mtx);
+	mtx_lock(&qr->qr_ring_mtx);
 
 	QAT_EVCNT_INCR(&qr->qr_ev_rxintr);
 
@@ -1196,13 +1304,13 @@ qat_etr_ring_intr(struct qat_softc *sc, struct qat_bank *qb,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	while (*msg != ETR_RING_EMPTY_ENTRY_SIG) {
-		atomic_dec_32(qr->qr_inflight);
+		atomic_subtract_32(qr->qr_inflight, 1);
 		QAT_EVCNT_INCR(&qr->qr_ev_rxmsg);
 
 		if (qr->qr_cb != NULL) {
-			mutex_spin_exit(&qr->qr_ring_mtx);
+			mtx_unlock(&qr->qr_ring_mtx);
 			handled |= qr->qr_cb(sc, qr->qr_cb_arg, msg);
-			mutex_spin_enter(&qr->qr_ring_mtx);
+			mtx_lock(&qr->qr_ring_mtx);
 		}
 
 		*msg = ETR_RING_EMPTY_ENTRY_SIG;
@@ -1228,7 +1336,7 @@ qat_etr_ring_intr(struct qat_softc *sc, struct qat_bank *qb,
 		    ETR_RING_HEAD_OFFSET, qr->qr_head);
 	}
 
-	mutex_spin_exit(&qr->qr_ring_mtx);
+	mtx_unlock(&qr->qr_ring_mtx);
 
 	return handled;
 }
@@ -1241,7 +1349,7 @@ qat_etr_bank_intr(void *arg)
 	uint32_t estat;
 	int i, handled = 0;
 
-	mutex_spin_enter(&qb->qb_bank_mtx);
+	mtx_lock(&qb->qb_bank_mtx);
 
 	QAT_EVCNT_INCR(&qb->qb_ev_rxintr);
 
@@ -1254,7 +1362,7 @@ qat_etr_bank_intr(void *arg)
 	qat_etr_bank_write_4(sc, qb->qb_bank, ETR_INT_COL_CTL,
 	    ETR_INT_COL_CTL_ENABLE | qb->qb_coalescing_time);
 
-	mutex_spin_exit(&qb->qb_bank_mtx);
+	mtx_unlock(&qb->qb_bank_mtx);
 
 	while ((i = ffs32(estat)) != 0) {
 		struct qat_ring *qr = &qb->qb_et_rings[--i];
@@ -1278,17 +1386,17 @@ qat_crypto_alloc_sym_cookie(struct qat_crypto_bank *qcb)
 {
 	struct qat_sym_cookie *qsc;
 
-	mutex_spin_enter(&qcb->qcb_bank_mtx);
+	mtx_lock(&qcb->qcb_bank_mtx);
 
 	if (qcb->qcb_symck_free_count == 0) {
 		QAT_EVCNT_INCR(&qcb->qcb_ev_no_symck);
-		mutex_spin_exit(&qcb->qcb_bank_mtx);
+		mtx_unlock(&qcb->qcb_bank_mtx);
 		return NULL;
 	}
 
 	qsc = qcb->qcb_symck_free[--qcb->qcb_symck_free_count];
 
-	mutex_spin_exit(&qcb->qcb_bank_mtx);
+	mtx_unlock(&qcb->qcb_bank_mtx);
 
 	return qsc;
 }
@@ -1297,9 +1405,9 @@ void
 qat_crypto_free_sym_cookie(struct qat_crypto_bank *qcb, struct qat_sym_cookie *qsc)
 {
 
-	mutex_spin_enter(&qcb->qcb_bank_mtx);
+	mtx_lock(&qcb->qcb_bank_mtx);
 	qcb->qcb_symck_free[qcb->qcb_symck_free_count++] = qsc;
-	mutex_spin_exit(&qcb->qcb_bank_mtx);
+	mtx_unlock(&qcb->qcb_bank_mtx);
 }
 
 
@@ -1310,7 +1418,7 @@ qat_memcpy_htobe64(void *dst, const void *src, size_t len)
 	const uint64_t *src0 = src;
 	size_t i;
 
-	KASSERT(len % sizeof(*dst0) == 0);
+	MPASS(len % sizeof(*dst0) == 0);
 
 	for (i = 0; i < len / sizeof(*dst0); i++)
 		*(dst0 + i) = htobe64(*(src0 + i));
@@ -1323,7 +1431,7 @@ qat_memcpy_htobe32(void *dst, const void *src, size_t len)
 	const uint32_t *src0 = src;
 	size_t i;
 
-	KASSERT(len % sizeof(*dst0) == 0);
+	MPASS(len % sizeof(*dst0) == 0);
 
 	for (i = 0; i < len / sizeof(*dst0); i++)
 		*(dst0 + i) = htobe32(*(src0 + i));
@@ -1340,7 +1448,7 @@ qat_memcpy_htobe(void *dst, const void *src, size_t len, uint32_t wordbyte)
 		qat_memcpy_htobe64(dst, src, len);
 		break;
 	default:
-		KASSERT(0);
+		__assert_unreachable();
 	}
 }
 
@@ -1432,7 +1540,7 @@ qat_crypto_load_cipher_cryptoini(
 			algo = HW_CIPHER_ALGO_AES256;
 			break;
 		default:
-			KASSERT(0);
+			__assert_unreachable();
 			break;
 		}
 		desc->qcd_cipher_blk_sz = HW_AES_BLK_SZ;
@@ -1447,7 +1555,7 @@ qat_crypto_load_cipher_cryptoini(
 
 		break;
 	default:
-		KASSERT(0);
+		__assert_unreachable();
 		break;
 	}
 
@@ -1480,12 +1588,12 @@ qat_crypto_load_auth_cryptoini(
 		algo = QAT_SYM_HASH_SHA512;
 		break;
 	default:
-		KASSERT(0);
+		__assert_unreachable();
 		break;
 	}
 	*hash_def = &qat_sym_hash_defs[algo];
 	sah = (*hash_def)->qshd_alg->qshai_sah;
-	KASSERT(sah != NULL);
+	MPASS(sah != NULL);
 	desc->qcd_auth_sz = sah->auth_hash->authsize;
 
 	return HW_AUTH_CONFIG_BUILD(HW_AUTH_MODE1,
@@ -1634,10 +1742,10 @@ qat_crypto_process(void *arg, struct cryptop *crp, int hint)
 	uint8_t icv_buf[CRYPTO_MAX_MAC_LEN];
 
 	qs = qcy->qcy_sessions[CRYPTO_SESID2LID(crp->crp_sid)];
-	mutex_spin_enter(&qs->qs_session_mtx);
-	KASSERT(qs->qs_status & QAT_SESSION_STATUS_ACTIVE);
+	mtx_lock(&qs->qs_session_mtx);
+	MPASS(qs->qs_status & QAT_SESSION_STATUS_ACTIVE);
 	qs->qs_inflight++;
-	mutex_spin_exit(&qs->qs_session_mtx);
+	mtx_unlock(&qs->qs_session_mtx);
 
 	qcb = qat_crypto_select_bank(qcy);
 
@@ -1720,7 +1828,7 @@ qat_crypto_process(void *arg, struct cryptop *crp, int hint)
 fail:
 	if (qsc)
 		qat_crypto_free_sym_cookie(qcb, qsc);
-	mutex_spin_enter(&qs->qs_session_mtx);
+	mtx_lock(&qs->qs_session_mtx);
 	qs->qs_inflight--;
 	qat_crypto_check_free_session(qcy, qs);
 	crp->crp_etype = error;
@@ -1790,7 +1898,7 @@ qat_crypto_bank_init(struct qat_softc *sc, struct qat_crypto_bank *qcb)
 {
 	int error;
 
-	mutex_init(&qcb->qcb_bank_mtx, MUTEX_DEFAULT, IPL_NET);
+	mtx_init(&qr->qr_ring_mtx, "qcb bank", NULL, MTX_DEF);
 
 	QAT_EVCNT_ATTACH(sc, &qcb->qcb_ev_no_symck, EVCNT_TYPE_MISC,
 	    qcb->qcb_ev_no_symck_name, "crypto no_symck");
@@ -1853,7 +1961,7 @@ qat_crypto_init(struct qat_softc *sc)
 		    qs->qs_enc_desc.qcd_desc_paddr +
 		    offsetof(struct qat_crypto_desc, qcd_hash_state_prefix_buf);
 
-		mutex_init(&qs->qs_session_mtx, MUTEX_DEFAULT, IPL_NET);
+		mtx_init(&qs->qs_session_mtx, "qs session", NULL, MTX_DEF);
 
 		qcy->qcy_sessions[i] = qs;
 		qcy->qcy_session_free[i] = qs;
@@ -1879,17 +1987,17 @@ qat_crypto_new_session(void *arg, uint32_t *lid, struct cryptoini *cri)
 	struct cryptoini *cria = NULL;
 	int slice, error;
 
-	mutex_spin_enter(&qcy->qcy_crypto_mtx);
+	mtx_lock(&qcy->qcy_crypto_mtx);
 
 	if (qcy->qcy_session_free_count == 0) {
 		QAT_EVCNT_INCR(&qcy->qcy_ev_no_sess);
-		mutex_spin_exit(&qcy->qcy_crypto_mtx);
+		mtx_unlock(&qcy->qcy_crypto_mtx);
 		return ENOBUFS;
 	}
 	qs = qcy->qcy_session_free[--qcy->qcy_session_free_count];
 	QAT_EVCNT_INCR(&qcy->qcy_ev_new_sess);
 
-	mutex_spin_exit(&qcy->qcy_crypto_mtx);
+	mtx_unlock(&qcy->qcy_crypto_mtx);
 
 	qs->qs_status = QAT_SESSION_STATUS_ACTIVE;
 	qs->qs_inflight = 0;
@@ -1964,7 +2072,7 @@ qat_crypto_new_session(void *arg, uint32_t *lid, struct cryptoini *cri)
 	return 0;
 fail:
 	if (qs != NULL) {
-		mutex_spin_enter(&qs->qs_session_mtx);
+		mtx_lock(&qs->qs_session_mtx);
 		qat_crypto_free_session0(qcy, qs);
 	}
 	return error;
@@ -1973,11 +2081,11 @@ fail:
 static inline void
 qat_crypto_clean_desc(struct qat_crypto_desc *desc)
 {
-	explicit_memset(desc->qcd_content_desc, 0,
+	explicit_bzero(desc->qcd_content_desc,
 	    sizeof(desc->qcd_content_desc));
-	explicit_memset(desc->qcd_hash_state_prefix_buf, 0,
+	explicit_bzero(desc->qcd_hash_state_prefix_buf,
 	    sizeof(desc->qcd_hash_state_prefix_buf));
-	explicit_memset(desc->qcd_req_cache, 0,
+	explicit_bzero(desc->qcd_req_cache,
 	    sizeof(desc->qcd_req_cache));
 }
 
@@ -1989,14 +2097,14 @@ qat_crypto_free_session0(struct qat_crypto *qcy, struct qat_session *qs)
 	qat_crypto_clean_desc(&qs->qs_enc_desc);
 	qs->qs_status &= ~QAT_SESSION_STATUS_ACTIVE;
 
-	mutex_spin_exit(&qs->qs_session_mtx);
+	mtx_unlock(&qs->qs_session_mtx);
 
-	mutex_spin_enter(&qcy->qcy_crypto_mtx);
+	mtx_lock(&qcy->qcy_crypto_mtx);
 
 	qcy->qcy_session_free[qcy->qcy_session_free_count++] = qs;
 	QAT_EVCNT_INCR(&qcy->qcy_ev_free_sess);
 
-	mutex_spin_exit(&qcy->qcy_crypto_mtx);
+	mtx_unlock(&qcy->qcy_crypto_mtx);
 
 	return 0;
 }
@@ -2009,7 +2117,7 @@ qat_crypto_check_free_session(struct qat_crypto *qcy, struct qat_session *qs)
 	    qs->qs_inflight == 0) {
 		qat_crypto_free_session0(qcy, qs);
 	} else {
-		mutex_spin_exit(&qs->qs_session_mtx);
+		mtx_unlock(&qs->qs_session_mtx);
 	}
 }
 
@@ -2022,11 +2130,11 @@ qat_crypto_free_session(void *arg, uint64_t sid)
 
 	qs = qcy->qcy_sessions[CRYPTO_SESID2LID(sid)];
 
-	mutex_spin_enter(&qs->qs_session_mtx);
+	mtx_lock(&qs->qs_session_mtx);
 
 	if (qs->qs_inflight > 0) {
 		qs->qs_status |= QAT_SESSION_STATUS_FREEING;
-		mutex_spin_exit(&qs->qs_session_mtx);
+		mtx_unlock(&qs->qs_session_mtx);
 		return 0;
 	}
 
@@ -2049,21 +2157,23 @@ qat_crypto_start(struct qat_softc *sc)
 	/* opencrypto */
 	qcy->qcy_cid = crypto_get_driverid(0);
 	if (qcy->qcy_cid < 0) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "could not get opencrypto driver id\n");
 		return ENOENT;
 	}
 
+#if 0
 	for (i = 0; i < __arraycount(algs); i++) {
 		error = crypto_register(qcy->qcy_cid, algs[i], 0, 0,
 		    qat_crypto_new_session, qat_crypto_free_session,
 		    qat_crypto_process, qcy);
 		if (error) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "could not register crypto: %d\n", error);
 			return error;
 		}
 	}
+#endif
 
 	return 0;
 }
@@ -2094,8 +2204,8 @@ qat_crypto_sym_rxintr(struct qat_softc *sc, void *arg, void *msg)
 	crp->crp_etype = 0;
 	crypto_done(crp);
 
-	mutex_spin_enter(&qs->qs_session_mtx);
-	KASSERT(qs->qs_status & QAT_SESSION_STATUS_ACTIVE);
+	mtx_lock(&qs->qs_session_mtx);
+	MPASS(qs->qs_status & QAT_SESSION_STATUS_ACTIVE);
 	qs->qs_inflight--;
 	qat_crypto_check_free_session(qcy, qs);
 
@@ -2262,6 +2372,7 @@ qat_dump_mbuf(struct mbuf *m0, int pre, int post)
 
 #endif /* QAT_DUMP */
 
+#if 0 /* XXXMJ */
 MODULE(MODULE_CLASS_DRIVER, qat, "pci,opencrypto");
 
 #ifdef _MODULE
@@ -2290,3 +2401,4 @@ qat_modcmd(modcmd_t cmd, void *data)
 		return ENOTTY;
 	}
 }
+#endif

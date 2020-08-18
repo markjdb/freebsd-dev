@@ -1543,7 +1543,9 @@ struct buffer_list_desc {
 	uint64_t resrvd;
 	uint32_t num_buffers;
 	uint32_t reserved;
+#if 0 /* XXXMJ this layout is crazy */
 	struct flat_buffer_desc phy_buffers[];
+#endif
 };
 
 /* -------------------------------------------------------------------------- */

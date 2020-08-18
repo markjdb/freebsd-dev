@@ -1735,14 +1735,14 @@ qat_ae_batch_put_lm(struct qat_softc *sc, u_char ae,
 	u_int gpr_a0, gpr_a1, gpr_a2, gpr_b0, gpr_b1;
 	int insnsz, error = 0, execed = 0, first_exec = 1;
 
-	if (SIMPLEQ_FIRST(qabi_list) == NULL)
+	if (STAILQ_FIRST(qabi_list) == NULL)
 		return 0;
 
 	alloc_ninst = uimin(USTORE_SIZE, nqabi);
 	ucode = qat_alloc_mem(sizeof(uint64_t) * alloc_ninst);
 
 	ninst = 0;
-	SIMPLEQ_FOREACH(qabi, qabi_list, qabi_next) {
+	STAILQ_FOREACH(qabi, qabi_list, qabi_next) {
 		insnsz = qat_ae_get_inst_num(qabi->qabi_size);
 		if (insnsz + ninst > alloc_ninst) {
 			aprint_debug_dev(sc->sc_dev,
@@ -2742,7 +2742,7 @@ qat_aefw_uof_assign_image(struct qat_softc *sc, struct qat_ae *qae,
 		return ENOENT;
 
 	for (i = 0; i < nregions; i++) {
-		SIMPLEQ_INIT(&slice->qas_regions[i].qar_waiting_pages);
+		STAILQ_INIT(&slice->qas_regions[i].qar_waiting_pages);
 	}
 	for (i = 0; i < npages; i++) {
 		struct qat_ae_page *page = &slice->qas_pages[i];
@@ -2962,8 +2962,8 @@ qat_aefw_init_memory_one(struct qat_softc *sc, struct uof_init_mem *uim)
 
 			qabi = qat_alloc_mem(sizeof(struct qat_ae_batch_init));
 			if (*curinit == 0)
-				SIMPLEQ_INIT(qabi_list);
-			SIMPLEQ_INSERT_TAIL(qabi_list, qabi, qabi_next);
+				STAILQ_INIT(qabi_list);
+			STAILQ_INSERT_TAIL(qabi_list, qabi, qabi_next);
 
 			qabi->qabi_ae = (u_int)ael;
 			qabi->qabi_addr =
@@ -3003,8 +3003,8 @@ qat_aefw_free_lm_init(struct qat_softc *sc, u_char ae)
 	struct qat_aefw_uof *qafu = &sc->sc_aefw_uof;
 	struct qat_ae_batch_init *qabi;
 
-	while ((qabi = SIMPLEQ_FIRST(&qafu->qafu_lm_init[ae])) != NULL) {
-		SIMPLEQ_REMOVE_HEAD(&qafu->qafu_lm_init[ae], qabi_next);
+	while ((qabi = STAILQ_FIRST(&qafu->qafu_lm_init[ae])) != NULL) {
+		STAILQ_REMOVE_HEAD(&qafu->qafu_lm_init[ae], qabi_next);
 		qat_free_mem(qabi);
 	}
 
