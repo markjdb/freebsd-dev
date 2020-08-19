@@ -87,6 +87,77 @@ static void rib_notify(struct rib_head *rnh, enum rib_subscription_type type,
 
 static void destroy_subscription_epoch(epoch_context_t ctx);
 
+/* Routing table UMA zone */
+VNET_DEFINE_STATIC(uma_zone_t, rtzone);
+#define	V_rtzone	VNET(rtzone)
+
+void
+vnet_rtzone_init()
+{
+	
+	V_rtzone = uma_zcreate("rtentry", sizeof(struct rtentry),
+		NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
+}
+
+#ifdef VIMAGE
+void
+vnet_rtzone_destroy()
+{
+
+	uma_zdestroy(V_rtzone);
+}
+#endif
+
+static void
+destroy_rtentry(struct rtentry *rt)
+{
+
+	/*
+	 * At this moment rnh, nh_control may be already freed.
+	 * nhop interface may have been migrated to a different vnet.
+	 * Use vnet stored in the nexthop to delete the entry.
+	 */
+	CURVNET_SET(nhop_get_vnet(rt->rt_nhop));
+
+	/* Unreference nexthop */
+	nhop_free(rt->rt_nhop);
+
+	uma_zfree(V_rtzone, rt);
+
+	CURVNET_RESTORE();
+}
+
+/*
+ * Epoch callback indicating rtentry is safe to destroy
+ */
+static void
+destroy_rtentry_epoch(epoch_context_t ctx)
+{
+	struct rtentry *rt;
+
+	rt = __containerof(ctx, struct rtentry, rt_epoch_ctx);
+
+	destroy_rtentry(rt);
+}
+
+/*
+ * Schedule rtentry deletion
+ */
+static void
+rtfree(struct rtentry *rt)
+{
+
+	KASSERT(rt != NULL, ("%s: NULL rt", __func__));
+
+	RT_LOCK_ASSERT(rt);
+
+	RT_UNLOCK(rt);
+	epoch_call(net_epoch_preempt, destroy_rtentry_epoch,
+	    &rt->rt_epoch_ctx);
+}
+
+
+
 static struct rib_head *
 get_rnh(uint32_t fibnum, const struct rt_addrinfo *info)
 {
@@ -173,12 +244,13 @@ add_route(struct rib_head *rnh, struct rt_addrinfo *info,
 		return (error);
 	}
 
-	rt = uma_zalloc(V_rtzone, M_NOWAIT);
+	rt = uma_zalloc(V_rtzone, M_NOWAIT | M_ZERO);
 	if (rt == NULL) {
 		ifa_free(info->rti_ifa);
 		nhop_free(nh);
 		return (ENOBUFS);
 	}
+	RT_LOCK_INIT(rt);
 	rt->rt_flags = RTF_UP | flags;
 	rt->rt_nhop = nh;
 
@@ -219,6 +291,7 @@ add_route(struct rib_head *rnh, struct rt_addrinfo *info,
 		RIB_WUNLOCK(rnh);
 
 		nhop_free(nh);
+		RT_LOCK_DESTROY(rt);
 		uma_zfree(V_rtzone, rt);
 		return (EEXIST);
 	}
@@ -286,6 +359,7 @@ add_route(struct rib_head *rnh, struct rt_addrinfo *info,
 	 */
 	if (rn == NULL) {
 		nhop_free(nh);
+		RT_LOCK_DESTROY(rt);
 		uma_zfree(V_rtzone, rt);
 		return (EEXIST);
 	}
@@ -743,6 +817,25 @@ rib_notify(struct rib_head *rnh, enum rib_subscription_type type,
 	}
 }
 
+static struct rib_subscription *
+allocate_subscription(rib_subscription_cb_t *f, void *arg,
+    enum rib_subscription_type type, bool waitok)
+{
+	struct rib_subscription *rs;
+	int flags = M_ZERO | (waitok ? M_WAITOK : 0);
+
+	rs = malloc(sizeof(struct rib_subscription), M_RTABLE, flags);
+	if (rs == NULL)
+		return (NULL);
+
+	rs->func = f;
+	rs->arg = arg;
+	rs->type = type;
+
+	return (rs);
+}
+
+
 /*
  * Subscribe for the changes in the routing table specified by @fibnum and
  *  @family.
@@ -756,20 +849,33 @@ rib_subscribe(uint32_t fibnum, int family, rib_subscription_cb_t *f, void *arg,
 	struct rib_head *rnh;
 	struct rib_subscription *rs;
 	struct epoch_tracker et;
-	int flags = M_ZERO | (waitok ? M_WAITOK : 0);
 
-	rs = malloc(sizeof(struct rib_subscription), M_RTABLE, flags);
-	if (rs == NULL)
+	if ((rs = allocate_subscription(f, arg, type, waitok)) == NULL)
 		return (NULL);
 
 	NET_EPOCH_ENTER(et);
 	KASSERT((fibnum < rt_numfibs), ("%s: bad fibnum", __func__));
 	rnh = rt_tables_get_rnh(fibnum, family);
 
-	rs->func = f;
-	rs->arg = arg;
-	rs->type = type;
+	RIB_WLOCK(rnh);
+	CK_STAILQ_INSERT_TAIL(&rnh->rnh_subscribers, rs, next);
+	RIB_WUNLOCK(rnh);
+	NET_EPOCH_EXIT(et);
 
+	return (rs);
+}
+
+struct rib_subscription *
+rib_subscribe_internal(struct rib_head *rnh, rib_subscription_cb_t *f, void *arg,
+    enum rib_subscription_type type, bool waitok)
+{
+	struct rib_subscription *rs;
+	struct epoch_tracker et;
+
+	if ((rs = allocate_subscription(f, arg, type, waitok)) == NULL)
+		return (NULL);
+
+	NET_EPOCH_ENTER(et);
 	RIB_WLOCK(rnh);
 	CK_STAILQ_INSERT_TAIL(&rnh->rnh_subscribers, rs, next);
 	RIB_WUNLOCK(rnh);
