@@ -773,7 +773,7 @@ dt_symtab_lookup(Elf_Data *data_sym, int start, int end, uintptr_t addr,
 #define	DT_OP_RET		0xd65f03c0
 #define	DT_OP_CALL26		0x94000000
 #define	DT_OP_JUMP26		0x14000000
-#define	DT_REL_NONE		R_AACH64_NONE
+#define	DT_REL_NONE		R_AARCH64_NONE
 
 static int
 dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
@@ -1583,14 +1583,14 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 			 * preserved in order to support incremental rebuilds.
 			 */
 			if (shdr_rel.sh_type == SHT_RELA) {
-				rela.r_info =
-				    GELF_R_INFO(GELF_R_SYM(rela.r_info), 0);
+				rela.r_info = GELF_R_INFO(
+				    GELF_R_SYM(rela.r_info), DT_REL_NONE);
 				(void) gelf_update_rela(data_rel, i, &rela);
 			} else {
 				GElf_Rel rel;
 				rel.r_offset = rela.r_offset;
-				rela.r_info =
-				    GELF_R_INFO(GELF_R_SYM(rela.r_info), 0);
+				rel.r_info = GELF_R_INFO(
+				    GELF_R_SYM(rela.r_info), DT_REL_NONE);
 				(void) gelf_update_rel(data_rel, i, &rel);
 			}
 

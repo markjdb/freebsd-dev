@@ -1293,6 +1293,28 @@ static int vnlruproc_sig;
  */
 #define VNLRU_FREEVNODES_SLOP 128
 
+static __inline void
+vn_freevnodes_inc(void)
+{
+	struct vdbatch *vd;
+
+	critical_enter();
+	vd = DPCPU_PTR(vd);
+	vd->freevnodes++;
+	critical_exit();
+}
+
+static __inline void
+vn_freevnodes_dec(void)
+{
+	struct vdbatch *vd;
+
+	critical_enter();
+	vd = DPCPU_PTR(vd);
+	vd->freevnodes--;
+	critical_exit();
+}
+
 static u_long
 vnlru_read_freevnodes(void)
 {
@@ -1734,7 +1756,7 @@ getnewvnode_drop_reserve(void)
 	}
 }
 
-static void
+static void __noinline
 freevnode(struct vnode *vp)
 {
 	struct bufobj *bo;
@@ -3195,19 +3217,14 @@ vunref(struct vnode *vp)
 void
 vhold(struct vnode *vp)
 {
-	struct vdbatch *vd;
 	int old;
 
 	CTR2(KTR_VFS, "%s: vp %p", __func__, vp);
 	old = atomic_fetchadd_int(&vp->v_holdcnt, 1);
 	VNASSERT(old >= 0 && (old & VHOLD_ALL_FLAGS) == 0, vp,
 	    ("%s: wrong hold count %d", __func__, old));
-	if (old != 0)
-		return;
-	critical_enter();
-	vd = DPCPU_PTR(vd);
-	vd->freevnodes--;
-	critical_exit();
+	if (old == 0)
+		vn_freevnodes_dec();
 }
 
 void
@@ -3268,8 +3285,11 @@ vhold_smr(struct vnode *vp)
 		}
 
 		VNASSERT(count >= 0, vp, ("invalid hold count %d\n", count));
-		if (atomic_fcmpset_int(&vp->v_holdcnt, &count, count + 1))
+		if (atomic_fcmpset_int(&vp->v_holdcnt, &count, count + 1)) {
+			if (count == 0)
+				vn_freevnodes_dec();
 			return (true);
+		}
 	}
 }
 
@@ -3309,17 +3329,13 @@ vdbatch_enqueue(struct vnode *vp)
 	VNASSERT(!VN_IS_DOOMED(vp), vp,
 	    ("%s: deferring requeue of a doomed vnode", __func__));
 
-	critical_enter();
-	vd = DPCPU_PTR(vd);
-	vd->freevnodes++;
 	if (vp->v_dbatchcpu != NOCPU) {
 		VI_UNLOCK(vp);
-		critical_exit();
 		return;
 	}
 
 	sched_pin();
-	critical_exit();
+	vd = DPCPU_PTR(vd);
 	mtx_lock(&vd->lock);
 	MPASS(vd->index < VDBATCH_SIZE);
 	MPASS(vd->tab[vd->index] == NULL);
@@ -3421,6 +3437,33 @@ vdrop_deactivate(struct vnode *vp)
 	vdbatch_enqueue(vp);
 }
 
+static void __noinline
+vdropl_final(struct vnode *vp)
+{
+
+	ASSERT_VI_LOCKED(vp, __func__);
+	VNPASS(VN_IS_DOOMED(vp), vp);
+	/*
+	 * Set the VHOLD_NO_SMR flag.
+	 *
+	 * We may be racing against vhold_smr. If they win we can just pretend
+	 * we never got this far, they will vdrop later.
+	 */
+	if (__predict_false(!atomic_cmpset_int(&vp->v_holdcnt, 0, VHOLD_NO_SMR))) {
+		vn_freevnodes_inc();
+		VI_UNLOCK(vp);
+		/*
+		 * We lost the aforementioned race. Any subsequent access is
+		 * invalid as they might have managed to vdropl on their own.
+		 */
+		return;
+	}
+	/*
+	 * Don't bump freevnodes as this one is going away.
+	 */
+	freevnode(vp);
+}
+
 void
 vdrop(struct vnode *vp)
 {
@@ -3444,6 +3487,7 @@ vdropl(struct vnode *vp)
 		return;
 	}
 	if (!VN_IS_DOOMED(vp)) {
+		vn_freevnodes_inc();
 		vdrop_deactivate(vp);
 		/*
 		 * Also unlocks the interlock. We can't assert on it as we
@@ -3452,21 +3496,7 @@ vdropl(struct vnode *vp)
 		 */
 		return;
 	}
-	/*
-	 * Set the VHOLD_NO_SMR flag.
-	 *
-	 * We may be racing against vhold_smr. If they win we can just pretend
-	 * we never got this far, they will vdrop later.
-	 */
-	if (!atomic_cmpset_int(&vp->v_holdcnt, 0, VHOLD_NO_SMR)) {
-		VI_UNLOCK(vp);
-		/*
-		 * We lost the aforementioned race. Any subsequent access is
-		 * invalid as they might have managed to vdropl on their own.
-		 */
-		return;
-	}
-	freevnode(vp);
+	vdropl_final(vp);
 }
 
 /*
@@ -5011,8 +5041,6 @@ vn_isdisk(struct vnode *vp)
 /*
  * VOP_FPLOOKUP_VEXEC routines are subject to special circumstances, see
  * the comment above cache_fplookup for details.
- *
- * We never deny as priv_check_cred calls are not yet supported, see vaccess.
  */
 int
 vaccess_vexec_smr(mode_t file_mode, uid_t file_uid, gid_t file_gid, struct ucred *cred)
@@ -5024,20 +5052,32 @@ vaccess_vexec_smr(mode_t file_mode, uid_t file_uid, gid_t file_gid, struct ucred
 	if (cred->cr_uid == file_uid) {
 		if (file_mode & S_IXUSR)
 			return (0);
-		return (EAGAIN);
+		goto out_error;
 	}
 
 	/* Otherwise, check the groups (first match) */
 	if (groupmember(file_gid, cred)) {
 		if (file_mode & S_IXGRP)
 			return (0);
-		return (EAGAIN);
+		goto out_error;
 	}
 
 	/* Otherwise, check everyone else. */
 	if (file_mode & S_IXOTH)
 		return (0);
-	return (EAGAIN);
+out_error:
+	/*
+	 * Permission check failed.
+	 *
+	 * vaccess() calls priv_check_cred which in turn can descent into MAC
+	 * modules overriding this result. It's quite unclear what semantics
+	 * are allowed for them to operate, thus for safety we don't call them
+	 * from within the SMR section. This also means if any such modules
+	 * are present, we have to let the regular lookup decide.
+	 */
+	if (__predict_false(mac_priv_check_fp_flag || mac_priv_grant_fp_flag))
+		return (EAGAIN);
+	return (EACCES);
 }
 
 /*

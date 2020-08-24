@@ -1,10 +1,7 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
- *
- * Copyright (c) 2019,2020 The FreeBSD Foundation
- *
- * Portions of this software were developed by Konstantin Belousov
- * under sponsorship from the FreeBSD Foundation.
+ * Copyright (c) 2008 Isilon Inc http://www.isilon.com/
+ * Authors: Doug Rabson <dfr@rabson.org>
+ * Developed with Red Inc: Alfred Perlstein <alfred@freebsd.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,27 +23,50 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
-#ifndef _X86_PROCCTL_H
-#define	_X86_PROCCTL_H
+/* Modified from gssd.x for the client side of RPC-over-TLS. */
 
-#define	PROC_KPTI_CTL		(PROC_PROCCTL_MD_MIN + 0)
-#define	PROC_KPTI_STATUS	(PROC_PROCCTL_MD_MIN + 1)
-#define	PROC_LA_CTL		(PROC_PROCCTL_MD_MIN + 2)
-#define	PROC_LA_STATUS		(PROC_PROCCTL_MD_MIN + 3)
+/* $FreeBSD$ */
 
-#define	PROC_KPTI_CTL_ENABLE_ON_EXEC	1
-#define	PROC_KPTI_CTL_DISABLE_ON_EXEC	2
-#define	PROC_KPTI_STATUS_ACTIVE		0x80000000
+struct rpctlscd_connect_res {
+	uint32_t reterr;
+	uint64_t sec;
+	uint64_t usec;
+	uint64_t ssl;
+};
 
-#define	PROC_LA_CTL_LA48_ON_EXEC	1
-#define	PROC_LA_CTL_LA57_ON_EXEC	2
-#define	PROC_LA_CTL_DEFAULT_ON_EXEC	3
+struct rpctlscd_handlerecord_arg {
+	uint64_t sec;
+	uint64_t usec;
+	uint64_t ssl;
+};
 
-#define	PROC_LA_STATUS_LA48		0x01000000
-#define	PROC_LA_STATUS_LA57		0x02000000
+struct rpctlscd_handlerecord_res {
+	uint32_t reterr;
+};
 
-#endif
+struct rpctlscd_disconnect_arg {
+	uint64_t sec;
+	uint64_t usec;
+	uint64_t ssl;
+};
+
+struct rpctlscd_disconnect_res {
+	uint32_t reterr;
+};
+
+program RPCTLSCD {
+	version RPCTLSCDVERS {
+		void RPCTLSCD_NULL(void) = 0;
+
+		rpctlscd_connect_res
+		RPCTLSCD_CONNECT(void) = 1;
+
+		rpctlscd_handlerecord_res
+		RPCTLSCD_HANDLERECORD(rpctlscd_handlerecord_arg) = 2;
+
+		rpctlscd_disconnect_res
+		RPCTLSCD_DISCONNECT(rpctlscd_disconnect_arg) = 3;
+	} = 1;
+} = 0x40677374;
