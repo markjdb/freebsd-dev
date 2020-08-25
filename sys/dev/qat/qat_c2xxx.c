@@ -62,8 +62,13 @@ __FBSDID("$FreeBSD");
 __KERNEL_RCSID(0, "$NetBSD: qat_c2xxx.c,v 1.1 2019/11/20 09:37:46 hikaru Exp $");
 #endif
 
+#include "netbsd_compat.h"
+
 #include <sys/param.h>
+#include <sys/bus.h>
 #include <sys/systm.h>
+
+#include <machine/bus.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
@@ -77,9 +82,9 @@ __KERNEL_RCSID(0, "$NetBSD: qat_c2xxx.c,v 1.1 2019/11/20 09:37:46 hikaru Exp $")
 static uint32_t
 qat_c2xxx_get_accel_mask(struct qat_softc *sc)
 {
-	pcireg_t fusectl;
+	uint32_t fusectl;
 
-	fusectl = pci_conf_read(sc->sc_pc, sc->sc_pcitag, FUSECTL_REG);
+	fusectl = pci_read_config(sc->sc_dev, FUSECTL_REG, 4);
 
 	return ((~fusectl) & ACCEL_MASK_C2XXX);
 }
@@ -87,9 +92,9 @@ qat_c2xxx_get_accel_mask(struct qat_softc *sc)
 static uint32_t
 qat_c2xxx_get_ae_mask(struct qat_softc *sc)
 {
-	pcireg_t fusectl;
+	uint32_t fusectl;
 
-	fusectl = pci_conf_read(sc->sc_pc, sc->sc_pcitag, FUSECTL_REG);
+	fusectl = pci_read_config(sc->sc_dev, FUSECTL_REG, 4);
 	if (fusectl & (
 	    FUSECTL_C2XXX_PKE_DISABLE |
 	    FUSECTL_C2XXX_ATH_DISABLE |
@@ -103,9 +108,9 @@ qat_c2xxx_get_ae_mask(struct qat_softc *sc)
 static enum qat_sku
 qat_c2xxx_get_sku(struct qat_softc *sc)
 {
-	pcireg_t fusectl;
+	uint32_t fusectl;
 
-	fusectl = pci_conf_read(sc->sc_pc, sc->sc_pcitag, FUSECTL_REG);
+	fusectl = pci_read_config(sc->sc_dev, FUSECTL_REG, 4);
 
 	switch (sc->sc_ae_num) {
 	case 1:

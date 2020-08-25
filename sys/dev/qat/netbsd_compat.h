@@ -10,6 +10,9 @@
 #define	__BITS(__m, __n)		\
 	((__BIT(__MAX((__m), (__n)) + 1) - 1) ^ (__BIT(__MIN((__m), (__n))) - 1))
 #define	__LOWEST_SET_BIT(__mask)	((((__mask) - 1) & (__mask)) ^ (__mask))
+#define	__SHIFTOUT(__x, __mask) (((__x) & (__mask)) / __LOWEST_SET_BIT(__mask))
 #define	__SHIFTIN(__x, __mask)		((__x) * __LOWEST_SET_BIT(__mask))
+
+#define	__arraycount	nitems
 
 #endif

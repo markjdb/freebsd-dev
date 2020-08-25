@@ -61,8 +61,13 @@ __FBSDID("$FreeBSD");
 __KERNEL_RCSID(0, "$NetBSD: qat_c3xxx.c,v 1.1 2019/11/20 09:37:46 hikaru Exp $");
 #endif
 
+#include "netbsd_compat.h"
+
 #include <sys/param.h>
+#include <sys/bus.h>
 #include <sys/systm.h>
+
+#include <machine/bus.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
@@ -76,10 +81,10 @@ __KERNEL_RCSID(0, "$NetBSD: qat_c3xxx.c,v 1.1 2019/11/20 09:37:46 hikaru Exp $")
 static uint32_t
 qat_c3xxx_get_accel_mask(struct qat_softc *sc)
 {
-	pcireg_t fusectl, strap;
+	uint32_t fusectl, strap;
 
-	fusectl = pci_conf_read(sc->sc_pc, sc->sc_pcitag, FUSECTL_REG);
-	strap = pci_conf_read(sc->sc_pc, sc->sc_pcitag, SOFTSTRAP_REG_C3XXX);
+	fusectl = pci_read_config(sc->sc_dev, FUSECTL_REG, 4);
+	strap = pci_read_config(sc->sc_dev, SOFTSTRAP_REG_C3XXX, 4);
 
 	return (((~(fusectl | strap)) >> ACCEL_REG_OFFSET_C3XXX) &
 	    ACCEL_MASK_C3XXX);
@@ -88,10 +93,10 @@ qat_c3xxx_get_accel_mask(struct qat_softc *sc)
 static uint32_t
 qat_c3xxx_get_ae_mask(struct qat_softc *sc)
 {
-	pcireg_t fusectl, me_strap, me_disable, ssms_disabled;
+	uint32_t fusectl, me_strap, me_disable, ssms_disabled;
 
-	fusectl = pci_conf_read(sc->sc_pc, sc->sc_pcitag, FUSECTL_REG);
-	me_strap = pci_conf_read(sc->sc_pc, sc->sc_pcitag, SOFTSTRAP_REG_C3XXX);
+	fusectl = pci_read_config(sc->sc_dev, FUSECTL_REG, 4);
+	me_strap = pci_read_config(sc->sc_dev, SOFTSTRAP_REG_C3XXX, 4);
 
 	/* If SSMs are disabled, then disable the corresponding MEs */
 	ssms_disabled = (~qat_c3xxx_get_accel_mask(sc)) & ACCEL_MASK_C3XXX;
@@ -120,11 +125,10 @@ qat_c3xxx_get_sku(struct qat_softc *sc)
 static uint32_t
 qat_c3xxx_get_accel_cap(struct qat_softc *sc)
 {
-	uint32_t cap;
-	pcireg_t legfuse, strap;
+	uint32_t cap, legfuse, strap;
 
-	legfuse = pci_conf_read(sc->sc_pc, sc->sc_pcitag, LEGFUSE_REG);
-	strap = pci_conf_read(sc->sc_pc, sc->sc_pcitag, SOFTSTRAP_REG_C3XXX);
+	legfuse = pci_read_config(sc->sc_dev, LEGFUSE_REG, 4);
+	strap = pci_read_config(sc->sc_dev, SOFTSTRAP_REG_C3XXX, 4);
 
 	cap = QAT_ACCEL_CAP_CRYPTO_SYMMETRIC +
 		QAT_ACCEL_CAP_CRYPTO_ASYMMETRIC +

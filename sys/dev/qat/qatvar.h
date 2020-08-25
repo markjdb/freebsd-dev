@@ -510,7 +510,7 @@ struct qat_sym_hash_alg_info {
 						 * algorithm */
 	uint32_t qshai_state_size;		/* size of above state in bytes */
 
-	const struct swcr_auth_hash *qshai_sah;	/* software auth hash */
+	const struct auth_hash *qshai_sah;	/* software auth hash */
 	uint32_t qshai_state_offset;		/* offset to state in *_CTX */
 	uint32_t qshai_state_word;
 };
@@ -643,6 +643,7 @@ struct qat_crypto_desc {
 } __aligned(QAT_OPTIMAL_ALIGN);
 
 /* should be aligned to 64bytes */
+/* XXXMJ how to guarantee? */
 struct qat_session {
 	struct qat_crypto_desc qs_dec_desc;	/* should be at top of struct*/
 	/* decrypt or auth then decrypt or auth */
@@ -724,10 +725,9 @@ struct qat_hw {
 	size_t qhw_crypto_opaque_offset;
 	void (*qhw_crypto_setup_req_params)(struct qat_crypto_bank *,
 	    struct qat_session *, struct qat_crypto_desc const *,
-	    struct qat_sym_cookie *, /*struct cryptodesc *, struct cryptodesc **/struct cryptop *,
-	    bus_addr_t);
+	    struct qat_sym_cookie *, struct cryptop *, bus_addr_t);
 	void (*qhw_crypto_setup_desc)(struct qat_crypto *, struct qat_session *,
-	    struct qat_crypto_desc *, /*struct cryptoini *, struct cryptoini **/struct cryptop *);
+	    struct qat_crypto_desc *, const struct crypto_session_params *);
 
 	uint8_t qhw_num_banks;			/* max number of banks */
 	uint8_t qhw_num_ap_banks;		/* max number of AutoPush banks */
@@ -811,11 +811,15 @@ struct qat_hw {
 #define QAT_DEFAULT_RING_WEIGHT		0xff
 #define QAT_DEFAULT_PVL			0
 
+struct resource;
+
 struct qat_softc {
 	device_t sc_dev;
 
+#if 0
 	pci_chipset_tag_t sc_pc;
 	pcitag_t sc_pcitag;
+#endif
 
 	bus_space_tag_t sc_csrt[MAX_BARS];
 	bus_space_handle_t sc_csrh[MAX_BARS];
@@ -849,7 +853,8 @@ struct qat_softc {
 	struct qat_ae sc_ae[MAX_NUM_AE];
 
 	/* Interrupt */
-	pci_intr_handle_t *sc_ih;		/* banks and ae cluster ih */
+	struct resource *sc_irq;
+	void *sc_ih;				/* banks and ae cluster ih */
 	void *sc_ae_ih_cookie;			/* ae cluster ih cookie */
 
 	/* Firmware */
@@ -1161,12 +1166,12 @@ void		qat_memcpy_htobe64(void *, const void *, size_t);
 void		qat_memcpy_htobe32(void *, const void *, size_t);
 void		qat_memcpy_htobe(void *, const void *, size_t, uint32_t);
 void		qat_crypto_hmac_precompute(struct qat_crypto_desc *,
-		    /*struct cryptoini *cria*/struct cryptop *, struct qat_sym_hash_def const *,
-		    uint8_t *, uint8_t *);
+		    const struct crypto_session_params *,
+		    struct qat_sym_hash_def const *, uint8_t *, uint8_t *);
 uint16_t	qat_crypto_load_cipher_cryptoini(
-		    struct qat_crypto_desc *, /*struct cryptoini **/struct cryptop *);
+		    struct qat_crypto_desc *, const struct crypto_session_params *);
 uint16_t	qat_crypto_load_auth_cryptoini(
-		    struct qat_crypto_desc *, /*struct cryptoini **/struct cryptop *,
+		    struct qat_crypto_desc *, const struct crypto_session_params *,
 		    struct qat_sym_hash_def const **);
 
 #endif

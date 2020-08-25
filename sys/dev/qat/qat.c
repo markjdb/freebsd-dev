@@ -68,35 +68,23 @@ __KERNEL_RCSID(0, "$NetBSD: qat.c,v 1.6 2020/06/14 23:23:12 riastradh Exp $");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
-#include <sys/kernel.h>
-//#include <sys/device.h>
-#include <sys/module.h>
-//#include <sys/kmem.h>
-#include <sys/mutex.h>
-//#include <sys/bitops.h>
-//#include <sys/atomic.h>
-#include <sys/mbuf.h>
-//#include <sys/cprng.h>
 #include <sys/cpu.h>
-#include <sys/interrupt.h>
+#include <sys/kernel.h>
+#include <sys/mbuf.h>
 #include <sys/md5.h>
-//#include <sys/sha1.h>
-//#include <sys/sha2.h>
+#include <sys/module.h>
+#include <sys/mutex.h>
+#include <sys/smp.h>
 
 #include <machine/bus.h>
 
 #include <opencrypto/cryptodev.h>
-//#include <opencrypto/cryptosoft.h>
 #include <opencrypto/xform.h>
 
 #include "cryptodev_if.h"
 
-/* XXX same as sys/arch/x86/x86/via_padlock.c */
-//#include <opencrypto/cryptosoft_xform.c>
-
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
-//#include <dev/pci/pcidevs.h>
 
 #include "qatreg.h"
 #include "qatvar.h"
@@ -155,14 +143,6 @@ static const struct qat_product {
 	{ 0, 0, NULL, 0, NULL },
 };
 
-/* md5 16 bytes - Initialiser state can be found in RFC 1321*/
-static const uint8_t md5_initial_state[QAT_HASH_MD5_STATE_SIZE] = {
-	0x01, 0x23, 0x45, 0x67,
-	0x89, 0xab, 0xcd, 0xef,
-	0xfe, 0xdc, 0xba, 0x98,
-	0x76, 0x54, 0x32, 0x10,
-};
-
 /* SHA1 - 20 bytes - Initialiser state can be found in FIPS stds 180-2 */
 static const uint8_t sha1_initial_state[QAT_HASH_SHA1_STATE_SIZE] = {
 	0x67, 0x45, 0x23, 0x01,
@@ -210,25 +190,13 @@ static const uint8_t sha512_initial_state[QAT_HASH_SHA512_STATE_SIZE] = {
 
 /* Hash Algorithm specific structure */
 
-/* XXXMJ */
-#if 0
-static const struct qat_sym_hash_alg_info md5_info = {
-	QAT_HASH_MD5_DIGEST_SIZE,
-	QAT_HASH_MD5_BLOCK_SIZE,
-	md5_initial_state,
-	QAT_HASH_MD5_STATE_SIZE,
-	&swcr_auth_hash_hmac_md5_96,
-	offsetof(MD5_CTX, state),
-	4,
-};
-
 static const struct qat_sym_hash_alg_info sha1_info = {
 	QAT_HASH_SHA1_DIGEST_SIZE,
 	QAT_HASH_SHA1_BLOCK_SIZE,
 	sha1_initial_state,
 	QAT_HASH_SHA1_STATE_SIZE,
-	&swcr_auth_hash_hmac_sha1_96,
-	offsetof(SHA1_CTX, state),
+	&auth_hash_hmac_sha1,
+	0,
 	4,
 };
 
@@ -237,7 +205,7 @@ static const struct qat_sym_hash_alg_info sha256_info = {
 	QAT_HASH_SHA256_BLOCK_SIZE,
 	sha256_initial_state,
 	QAT_HASH_SHA256_STATE_SIZE,
-	&swcr_auth_hash_hmac_sha2_256,
+	&auth_hash_hmac_sha2_256,
 	offsetof(SHA256_CTX, state),
 	4,
 };
@@ -247,7 +215,7 @@ static const struct qat_sym_hash_alg_info sha384_info = {
 	QAT_HASH_SHA384_BLOCK_SIZE,
 	sha384_initial_state,
 	QAT_HASH_SHA384_STATE_SIZE,
-	&swcr_auth_hash_hmac_sha2_384,
+	&auth_hash_hmac_sha2_384,
 	offsetof(SHA384_CTX, state),
 	8,
 };
@@ -257,7 +225,7 @@ static const struct qat_sym_hash_alg_info sha512_info = {
 	QAT_HASH_SHA512_BLOCK_SIZE,
 	sha512_initial_state,
 	QAT_HASH_SHA512_STATE_SIZE,
-	&swcr_auth_hash_hmac_sha2_512,
+	&auth_hash_hmac_sha2_512,
 	offsetof(SHA512_CTX, state),
 	8,
 };
@@ -270,13 +238,6 @@ static const struct qat_sym_hash_alg_info aes_gcm_info = {
 };
 
 /* Hash QAT specific structures */
-
-static const struct qat_sym_hash_qat_info md5_config = {
-	HW_AUTH_ALGO_MD5,
-	QAT_HASH_MD5_BLOCK_SIZE,
-	HW_MD5_STATE1_SZ,
-	HW_MD5_STATE2_SZ
-};
 
 static const struct qat_sym_hash_qat_info sha1_config = {
 	HW_AUTH_ALGO_SHA1,
@@ -316,14 +277,12 @@ static const struct qat_sym_hash_qat_info aes_gcm_config = {
 };
 
 static const struct qat_sym_hash_def qat_sym_hash_defs[] = {
-	[QAT_SYM_HASH_MD5] = { &md5_info, &md5_config },
 	[QAT_SYM_HASH_SHA1] = { &sha1_info, &sha1_config },
 	[QAT_SYM_HASH_SHA256] = { &sha256_info, &sha256_config },
 	[QAT_SYM_HASH_SHA384] = { &sha384_info, &sha384_config },
 	[QAT_SYM_HASH_SHA512] = { &sha512_info, &sha512_config },
 	[QAT_SYM_HASH_AES_GCM] = { &aes_gcm_info, &aes_gcm_config },
 };
-#endif
 
 static const struct qat_product *qat_lookup(device_t);
 static int	qat_probe(device_t);
@@ -333,7 +292,7 @@ int		qat_start(struct device *);
 static int	qat_detach(device_t);
 
 static int	qat_alloc_msix_intr(struct qat_softc *);
-void *		qat_establish_msix_intr(struct qat_softc *, pci_intr_handle_t,
+void *		qat_establish_msix_intr(struct qat_softc *, void *,
 			int (*)(void *), void *, const char *, int);
 int		qat_setup_msix_intr(struct qat_softc *);
 
@@ -362,8 +321,8 @@ int		qat_crypto_load_buf(struct qat_softc *, struct cryptop *,
 		    struct qat_sym_cookie *, struct qat_crypto_desc const *,
 		    uint8_t *, int, bus_addr_t *);
 int		qat_crypto_load_iv(struct qat_sym_cookie *, struct cryptop *,
-		    /*struct cryptodesc **/struct cryptop *, struct qat_crypto_desc const *);
-int		qat_crypto_process(void *, struct cryptop *, int);
+		    struct qat_crypto_desc const *);
+int		qat_crypto_process(device_t, struct cryptop *, int);
 int		qat_crypto_setup_ring(struct qat_softc *,
 		    struct qat_crypto_bank *);
 #if 0 /* XXXMJ */
@@ -764,8 +723,11 @@ qat_free_dmamem(struct qat_softc *sc, struct qat_dmamem *qdm)
 
 	bus_dmamap_unload(sc->sc_dmat, qdm->qdm_dma_map);
 	bus_dmamap_destroy(sc->sc_dmat, qdm->qdm_dma_map);
+	/* XXXMJ busdma */
+#if 0
 	bus_dmamem_unmap(sc->sc_dmat, qdm->qdm_dma_vaddr, qdm->qdm_dma_size);
 	bus_dmamem_free(sc->sc_dmat, &qdm->qdm_dma_seg, 1);
+#endif
 	explicit_bzero(qdm, sizeof(*qdm));
 }
 
@@ -828,6 +790,8 @@ fail_0:
 static int
 qat_alloc_msix_intr(struct qat_softc *sc)
 {
+	/* XXXMJ intr */
+#if 0
 	u_int *ih_map, vec;
 	int error, count, ihi;
 
@@ -849,13 +813,15 @@ qat_alloc_msix_intr(struct qat_softc *sc)
 	}
 
 	return error;
+#endif
+	return ENXIO;
 }
 
 void *
-qat_establish_msix_intr(struct qat_softc *sc, pci_intr_handle_t ih,
+qat_establish_msix_intr(struct qat_softc *sc, void *ih,
 	int (*func)(void *), void *arg, const char *name, int index)
 {
-#if 0 /* XXXMJ */
+#if 0 /* XXXMJ intr */
 	kcpuset_t *affinity;
 	int error;
 	char buf[PCI_INTRSTR_LEN];
@@ -894,6 +860,8 @@ qat_establish_msix_intr(struct qat_softc *sc, pci_intr_handle_t ih,
 int
 qat_setup_msix_intr(struct qat_softc *sc)
 {
+	/* XXXMJ */
+#if 0
 	int i;
 	pci_intr_handle_t ih;
 
@@ -913,6 +881,8 @@ qat_setup_msix_intr(struct qat_softc *sc)
 		return ENOMEM;
 
 	return 0;
+#endif
+	return ENXIO;
 }
 
 int
@@ -962,7 +932,7 @@ qat_etr_bank_init(struct qat_softc *sc, int bank)
 
 	MPASS(bank < sc->sc_hw.qhw_num_banks);
 
-	mtx_init(&qq->qq_bank_mtx, "qb bank", NULL, MTX_DEF);
+	mtx_init(&qb->qb_bank_mtx, "qb bank", NULL, MTX_DEF);
 
 	qb->qb_sc = sc;
 	qb->qb_bank = bank;
@@ -1171,7 +1141,10 @@ qat_etr_setup_ring(struct qat_softc *sc, int bank, uint32_t ring,
 	MPASS(qr->qr_dma.qdm_dma_map->dm_nsegs == 1);
 
 	qr->qr_ring_vaddr = qr->qr_dma.qdm_dma_vaddr;
+	/* XXXMJ busdma */
+#if 0
 	qr->qr_ring_paddr = qr->qr_dma.qdm_dma_map->dm_segs[0].ds_addr;
+#endif
 
 #if 0 /* XXXMJ */
 	aprint_verbose_dev(sc->sc_dev,
@@ -1183,12 +1156,15 @@ qat_etr_setup_ring(struct qat_softc *sc, int bank, uint32_t ring,
 	    (unsigned long long)qr->qr_ring_paddr);
 #endif
 
+	/* XXXMJ busdma */
+#if 0
 	memset(qr->qr_ring_vaddr, QAT_RING_PATTERN,
 	    qr->qr_dma.qdm_dma_map->dm_segs[0].ds_len);
 
 	bus_dmamap_sync(sc->sc_dmat, qr->qr_dma.qdm_dma_map, 0,
 	    qr->qr_dma.qdm_dma_map->dm_mapsize,
 	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+#endif
 
 	if (((uintptr_t)qr->qr_ring_paddr & (ring_size_bytes - 1)) != 0) {
 		device_printf(sc->sc_dev, "ring address not aligned\n");
@@ -1269,9 +1245,12 @@ qat_etr_put_msg(struct qat_softc *sc, struct qat_ring *qr, uint32_t *msg)
 	    QAT_MSG_SIZE_TO_BYTES(qr->qr_msg_size));
 #endif
 
+	/* XXXMJ busdma */
+#if 0
 	bus_dmamap_sync(sc->sc_dmat, qr->qr_dma.qdm_dma_map, qr->qr_tail,
 	    QAT_MSG_SIZE_TO_BYTES(qr->qr_msg_size),
 	    BUS_DMASYNC_PREWRITE);
+#endif
 
 	qr->qr_tail = qat_modulo(qr->qr_tail +
 	    QAT_MSG_SIZE_TO_BYTES(qr->qr_msg_size),
@@ -1299,9 +1278,12 @@ qat_etr_ring_intr(struct qat_softc *sc, struct qat_bank *qb,
 
 	msg = (uint32_t *)((uintptr_t)qr->qr_ring_vaddr + qr->qr_head);
 
+	/* XXXMJ busdma */
+#if 0
 	bus_dmamap_sync(sc->sc_dmat, qr->qr_dma.qdm_dma_map, qr->qr_head,
 	    QAT_MSG_SIZE_TO_BYTES(qr->qr_msg_size),
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+#endif
 
 	while (*msg != ETR_RING_EMPTY_ENTRY_SIG) {
 		atomic_subtract_32(qr->qr_inflight, 1);
@@ -1315,9 +1297,12 @@ qat_etr_ring_intr(struct qat_softc *sc, struct qat_bank *qb,
 
 		*msg = ETR_RING_EMPTY_ENTRY_SIG;
 
+		/* XXXMJ busdma */
+#if 0
 		bus_dmamap_sync(sc->sc_dmat, qr->qr_dma.qdm_dma_map, qr->qr_head,
 		    QAT_MSG_SIZE_TO_BYTES(qr->qr_msg_size),
 		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+#endif
 
 		qr->qr_head = qat_modulo(qr->qr_head +
 		    QAT_MSG_SIZE_TO_BYTES(qr->qr_msg_size),
@@ -1326,9 +1311,12 @@ qat_etr_ring_intr(struct qat_softc *sc, struct qat_bank *qb,
 
 		msg = (uint32_t *)((uintptr_t)qr->qr_ring_vaddr + qr->qr_head);
 
+		/* XXXMJ busdma */
+#if 0
 		bus_dmamap_sync(sc->sc_dmat, qr->qr_dma.qdm_dma_map, qr->qr_head,
 		    QAT_MSG_SIZE_TO_BYTES(qr->qr_msg_size),
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+#endif
 	}
 
 	if (nmsg > 0) {
@@ -1364,7 +1352,7 @@ qat_etr_bank_intr(void *arg)
 
 	mtx_unlock(&qb->qb_bank_mtx);
 
-	while ((i = ffs32(estat)) != 0) {
+	while ((i = ffs(estat)) != 0) {
 		struct qat_ring *qr = &qb->qb_et_rings[--i];
 		estat &= ~(1 << i);
 		handled |= qat_etr_ring_intr(sc, qb, qr);
@@ -1453,16 +1441,17 @@ qat_memcpy_htobe(void *dst, const void *src, size_t len, uint32_t wordbyte)
 }
 
 void
-qat_crypto_hmac_precompute(struct qat_crypto_desc *desc, struct cryptoini *cria,
+qat_crypto_hmac_precompute(struct qat_crypto_desc *desc,
+    const struct crypto_session_params *csp,
     struct qat_sym_hash_def const *hash_def, uint8_t *state1, uint8_t *state2)
 {
 	int i, state_swap;
-	struct swcr_auth_hash const *sah = hash_def->qshd_alg->qshai_sah;
+	struct auth_hash const *sah = hash_def->qshd_alg->qshai_sah;
 	uint32_t blklen = hash_def->qshd_alg->qshai_block_len;
 	uint32_t state_offset = hash_def->qshd_alg->qshai_state_offset;
 	uint32_t state_size = hash_def->qshd_alg->qshai_state_size;
 	uint32_t state_word = hash_def->qshd_alg->qshai_state_word;
-	uint32_t keylen = cria->cri_klen / 8;
+	uint32_t keylen = csp->csp_auth_klen;
 	uint32_t padlen = blklen - keylen;
 	uint8_t *ipad = desc->qcd_hash_state_prefix_buf;
 	uint8_t *opad = desc->qcd_hash_state_prefix_buf +
@@ -1473,10 +1462,10 @@ qat_crypto_hmac_precompute(struct qat_crypto_desc *desc, struct cryptoini *cria,
 	 * Currently, the max length is sizeof(aesxcbc_ctx) used by
 	 * swcr_auth_hash_aes_xcbc_mac
 	 */
-	uint8_t ctx[sizeof(aesxcbc_ctx)];
+	union authctx ctx;
 
-	memcpy(ipad, cria->cri_key, keylen);
-	memcpy(opad, cria->cri_key, keylen);
+	memcpy(ipad, csp->csp_auth_key, keylen);
+	memcpy(opad, csp->csp_auth_key, keylen);
 
 	if (padlen > 0) {
 		memset(ipad + keylen, 0, padlen);
@@ -1488,38 +1477,38 @@ qat_crypto_hmac_precompute(struct qat_crypto_desc *desc, struct cryptoini *cria,
 	}
 
 	/* ipad */
-	sah->Init(ctx);
+	sah->Init(&ctx);
 	/* Check the endian of kernel built-in hash state */
 	state_swap = memcmp(hash_def->qshd_alg->qshai_init_state,
-	    ((uint8_t *)ctx) + state_offset, state_word);
-	sah->Update(ctx, ipad, blklen);
+	    ((uint8_t *)&ctx) + state_offset, state_word);
+	sah->Update(&ctx, ipad, blklen);
 	if (state_swap == 0) {
-		memcpy(state1, ((uint8_t *)ctx) + state_offset, state_size);
+		memcpy(state1, ((uint8_t *)&ctx) + state_offset, state_size);
 	} else {
-		qat_memcpy_htobe(state1, ((uint8_t *)ctx) + state_offset,
+		qat_memcpy_htobe(state1, ((uint8_t *)&ctx) + state_offset,
 		    state_size, state_word);
 	}
 
 	/* opad */
-	sah->Init(ctx);
-	sah->Update(ctx, opad, blklen);
+	sah->Init(&ctx);
+	sah->Update(&ctx, opad, blklen);
 	if (state_swap == 0) {
-		memcpy(state2, ((uint8_t *)ctx) + state_offset, state_size);
+		memcpy(state2, ((uint8_t *)&ctx) + state_offset, state_size);
 	} else {
-		qat_memcpy_htobe(state2, ((uint8_t *)ctx) + state_offset,
+		qat_memcpy_htobe(state2, ((uint8_t *)&ctx) + state_offset,
 		    state_size, state_word);
 	}
 }
 
 uint16_t
-qat_crypto_load_cipher_cryptoini(
-    struct qat_crypto_desc *desc, struct cryptoini *crie)
+qat_crypto_load_cipher_cryptoini(struct qat_crypto_desc *desc,
+    const struct crypto_session_params *csp)
 {
 	enum hw_cipher_algo algo = HW_CIPHER_ALGO_NULL;
 	enum hw_cipher_mode mode = HW_CIPHER_CBC_MODE;
 	enum hw_cipher_convert key_convert = HW_CIPHER_NO_CONVERT;
 
-	switch (crie->cri_alg) {
+	switch (csp->csp_cipher_alg) {
 	case CRYPTO_DES_CBC:
 		algo = HW_CIPHER_ALGO_DES;
 		desc->qcd_cipher_blk_sz = HW_DES_BLK_SZ;
@@ -1529,7 +1518,7 @@ qat_crypto_load_cipher_cryptoini(
 		desc->qcd_cipher_blk_sz = HW_3DES_BLK_SZ;
 		break;
 	case CRYPTO_AES_CBC:
-		switch (crie->cri_klen / 8) {
+		switch (csp->csp_cipher_klen) {
 		case HW_AES_128_KEY_SZ:
 			algo = HW_CIPHER_ALGO_AES128;
 			break;
@@ -1565,17 +1554,19 @@ qat_crypto_load_cipher_cryptoini(
 
 uint16_t
 qat_crypto_load_auth_cryptoini(
-    struct qat_crypto_desc *desc, struct cryptoini *cria,
+    struct qat_crypto_desc *desc, const struct crypto_session_params *csp,
     struct qat_sym_hash_def const **hash_def)
 {
-	const struct swcr_auth_hash *sah;
+	const struct auth_hash *sah;
 	enum qat_sym_hash_algorithm algo = 0;
 
-	switch (cria->cri_alg) {
+	switch (csp->csp_auth_alg) {
+#if 0
 	case CRYPTO_MD5_HMAC_96:
 		algo = QAT_SYM_HASH_MD5;
 		break;
-	case CRYPTO_SHA1_HMAC_96:
+#endif
+	case CRYPTO_SHA1_HMAC:
 		algo = QAT_SYM_HASH_SHA1;
 		break;
 	case CRYPTO_SHA2_256_HMAC:
@@ -1594,7 +1585,8 @@ qat_crypto_load_auth_cryptoini(
 	*hash_def = &qat_sym_hash_defs[algo];
 	sah = (*hash_def)->qshd_alg->qshai_sah;
 	MPASS(sah != NULL);
-	desc->qcd_auth_sz = sah->auth_hash->authsize;
+	/* XXXMJ */
+	desc->qcd_auth_sz = 0;
 
 	return HW_AUTH_CONFIG_BUILD(HW_AUTH_MODE1,
 	    (*hash_def)->qshd_qat->qshqi_algo_enc,
@@ -1606,16 +1598,18 @@ qat_crypto_load_buf(struct qat_softc *sc, struct cryptop *crp,
     struct qat_sym_cookie *qsc, struct qat_crypto_desc const *desc,
     uint8_t *icv_buf, int icv_offset, bus_addr_t *icv_paddr)
 {
+	/* XXXMJ busdma */
+#if 0
 	int error, i, nsegs;
 
 	if (crp->crp_flags & CRYPTO_F_IMBUF) {
 		struct mbuf *m = (struct mbuf *)crp->crp_buf;
 
 		if (icv_offset >= 0) {
-			if (m_length(m) == icv_offset) {
+			if (m_length(m, NULL) == icv_offset) {
 				m_copyback(m, icv_offset, desc->qcd_auth_sz,
 				    icv_buf);
-				if (m_length(m) == icv_offset)
+				if (m_length(m, NULL) == icv_offset)
 					return ENOBUFS;
 			} else {
 				struct mbuf *m0;
@@ -1682,12 +1676,17 @@ qat_crypto_load_buf(struct qat_softc *sc, struct cryptop *crp,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	return 0;
+#endif
+
+	return ENOMEM;
 }
 
 int
 qat_crypto_load_iv(struct qat_sym_cookie *qsc, struct cryptop *crp,
-    struct cryptodesc *crde, struct qat_crypto_desc const *desc)
+    struct qat_crypto_desc const *desc)
 {
+	/* XXXMJ */
+#if 0
 	uint32_t ivlen = desc->qcd_cipher_blk_sz;
 
 	if (crde->crd_flags & CRD_F_IV_EXPLICIT) {
@@ -1715,6 +1714,7 @@ qat_crypto_load_iv(struct qat_sym_cookie *qsc, struct cryptop *crp,
 			    qsc->qsc_iv_buf);
 		}
 	}
+#endif
 
 	return 0;
 }
@@ -1722,26 +1722,31 @@ qat_crypto_load_iv(struct qat_sym_cookie *qsc, struct cryptop *crp,
 static inline struct qat_crypto_bank *
 qat_crypto_select_bank(struct qat_crypto *qcy)
 {
-	u_int cpuid = cpu_index(curcpu());
+	u_int cpuid = PCPU_GET(cpuid);
 
 	return &qcy->qcy_banks[cpuid % qcy->qcy_num_banks];
 }
 
 int
-qat_crypto_process(void *arg, struct cryptop *crp, int hint)
+qat_crypto_process(device_t dev, struct cryptop *crp, int hint)
 {
-	struct qat_crypto *qcy = arg;
+	const struct crypto_session_params *csp;
+	struct qat_softc *sc;
+	struct qat_crypto *qcy;
 	struct qat_crypto_bank *qcb;
 	struct qat_session *qs = NULL;
 	struct qat_crypto_desc const *desc;
 	struct qat_sym_cookie *qsc = NULL;
 	struct qat_sym_bulk_cookie *qsbc;
-	struct cryptodesc *crd, *crda = NULL, *crde = NULL;
 	bus_addr_t icv_paddr = 0;
 	int error, icv_offset = -1;
-	uint8_t icv_buf[CRYPTO_MAX_MAC_LEN];
+	uint8_t icv_buf[AALG_MAX_RESULT_LEN];
 
-	qs = qcy->qcy_sessions[CRYPTO_SESID2LID(crp->crp_sid)];
+	sc = device_get_softc(dev);
+	qcy = &sc->sc_crypto;
+	qs = crypto_get_driver_session(crp->crp_session);
+	csp = crypto_get_params(crp->crp_session);
+
 	mtx_lock(&qs->qs_session_mtx);
 	MPASS(qs->qs_status & QAT_SESSION_STATUS_ACTIVE);
 	qs->qs_inflight++;
@@ -1757,6 +1762,7 @@ qat_crypto_process(void *arg, struct cryptop *crp, int hint)
 
 	error = 0;
 	desc = &qs->qs_dec_desc;
+#if 0
 	crd = crp->crp_desc;
 	while (crd != NULL) {
 		switch (crd->crd_alg) {
@@ -1792,11 +1798,17 @@ qat_crypto_process(void *arg, struct cryptop *crp, int hint)
 
 		crd = crd->crd_next;
 	}
+#endif
 
+	desc = NULL;
+
+	/* XXXMJ */
+#if 0
 	qsc->qsc_buf = crp->crp_buf;
+#endif
 
-	if (crde != NULL) {
-		error = qat_crypto_load_iv(qsc, crp, crde, desc);
+	if (csp->csp_cipher_alg != 0) {
+		error = qat_crypto_load_iv(qsc, crp, desc);
 		if (error)
 			goto fail;
 	}
@@ -1813,11 +1825,14 @@ qat_crypto_process(void *arg, struct cryptop *crp, int hint)
 	qsbc->qsbc_cb_tag = crp;
 
 	qcy->qcy_sc->sc_hw.qhw_crypto_setup_req_params(qcb, qs, desc, qsc,
-	    crde, crda, icv_paddr);
+	    crp, icv_paddr);
 
+	/* XXXMJ busdma */
+#if 0
 	bus_dmamap_sync(qcy->qcy_sc->sc_dmat, *qsc->qsc_self_dmamap, 0,
 	    offsetof(struct qat_sym_cookie, qsc_self_dmamap),
 	    BUS_DMASYNC_PREWRITE);
+#endif
 
 	error = qat_etr_put_msg(qcy->qcy_sc, qcb->qcb_sym_tx,
 	    (uint32_t *)qsbc->qsbc_msg);
@@ -1884,10 +1899,13 @@ qat_crypto_setup_ring(struct qat_softc *sc, struct qat_crypto_bank *qcb)
 		qcb->qcb_symck_free[i] = qsc;
 		qcb->qcb_symck_free_count++;
 
+		/* XXXMJ busdma */
+#if 0
 		error = bus_dmamap_create(sc->sc_dmat, QAT_MAXLEN,
 		    QAT_MAXSEG, MCLBYTES, 0, 0, &qsc->qsc_buf_dmamap);
 		if (error)
 			return error;
+#endif
 	}
 
 	return 0;
@@ -1898,7 +1916,7 @@ qat_crypto_bank_init(struct qat_softc *sc, struct qat_crypto_bank *qcb)
 {
 	int error;
 
-	mtx_init(&qr->qr_ring_mtx, "qcb bank", NULL, MTX_DEF);
+	mtx_init(&qcb->qcb_bank_mtx, "qcb bank", NULL, MTX_DEF);
 
 	QAT_EVCNT_ATTACH(sc, &qcb->qcb_ev_no_symck, EVCNT_TYPE_MISC,
 	    qcb->qcb_ev_no_symck_name, "crypto no_symck");
@@ -1920,7 +1938,7 @@ qat_crypto_init(struct qat_softc *sc)
 	qcy->qcy_sc = sc;
 
 	if (sc->sc_hw.qhw_init_arb != NULL)
-		num_banks = uimin(ncpu, sc->sc_hw.qhw_num_banks);
+		num_banks = min(mp_ncpus, sc->sc_hw.qhw_num_banks);
 	else
 		num_banks = sc->sc_ae_num;
 
@@ -1938,7 +1956,7 @@ qat_crypto_init(struct qat_softc *sc)
 			return error;
 	}
 
-	mutex_init(&qcy->qcy_crypto_mtx, MUTEX_DEFAULT, IPL_NET);
+	mtx_init(&qcy->qcy_crypto_mtx, "qcy crypto", NULL, MTX_DEF);
 
 	for (i = 0; i < QAT_NSESSION; i++) {
 		struct qat_dmamem *qdm = &qcy->qcy_session_dmamems[i];
@@ -1978,14 +1996,17 @@ qat_crypto_init(struct qat_softc *sc)
 	return 0;
 }
 
-int
-qat_crypto_new_session(void *arg, uint32_t *lid, struct cryptoini *cri)
+static int
+qat_crypto_new_session(device_t dev, crypto_session_t cses,
+    const struct crypto_session_params *csp)
 {
-	struct qat_crypto *qcy = arg;
-	struct qat_session *qs = NULL;
-	struct cryptoini *crie = NULL;
-	struct cryptoini *cria = NULL;
+	struct qat_softc *sc;
+	struct qat_crypto *qcy;
+	struct qat_session *qs;
 	int slice, error;
+
+	sc = device_get_softc(dev);
+	qcy = &sc->sc_crypto;
 
 	mtx_lock(&qcy->qcy_crypto_mtx);
 
@@ -2001,9 +2022,9 @@ qat_crypto_new_session(void *arg, uint32_t *lid, struct cryptoini *cri)
 
 	qs->qs_status = QAT_SESSION_STATUS_ACTIVE;
 	qs->qs_inflight = 0;
-	*lid = qs->qs_lid;
 
 	error = 0;
+#if 0
 	while (cri) {
 		switch (cri->cri_alg) {
 		case CRYPTO_DES_CBC:
@@ -2029,9 +2050,10 @@ qat_crypto_new_session(void *arg, uint32_t *lid, struct cryptoini *cri)
 			goto fail;
 		cri = cri->cri_next;
 	}
+#endif
 
 	slice = 1;
-	if (crie != NULL && cria != NULL) {
+	if (csp->csp_cipher_alg != 0 && csp->csp_auth_alg != 0) {
 		slice = 2;
 		/* auth then decrypt */
 		qs->qs_dec_desc.qcd_slices[0] = FW_SLICE_AUTH;
@@ -2043,7 +2065,7 @@ qat_crypto_new_session(void *arg, uint32_t *lid, struct cryptoini *cri)
 		qs->qs_enc_desc.qcd_slices[1] = FW_SLICE_AUTH;
 		qs->qs_enc_desc.qcd_cipher_dir = HW_CIPHER_ENCRYPT;
 		qs->qs_enc_desc.qcd_cmd_id = FW_LA_CMD_CIPHER_HASH;
-	} else if (crie != NULL) {
+	} else if (csp->csp_cipher_alg != 0) {
 		/* decrypt */
 		qs->qs_dec_desc.qcd_slices[0] = FW_SLICE_CIPHER;
 		qs->qs_dec_desc.qcd_cipher_dir = HW_CIPHER_DECRYPT;
@@ -2052,7 +2074,7 @@ qat_crypto_new_session(void *arg, uint32_t *lid, struct cryptoini *cri)
 		qs->qs_enc_desc.qcd_slices[0] = FW_SLICE_CIPHER;
 		qs->qs_enc_desc.qcd_cipher_dir = HW_CIPHER_ENCRYPT;
 		qs->qs_enc_desc.qcd_cmd_id = FW_LA_CMD_CIPHER;
-	} else if (cria != NULL) {
+	} else if (csp->csp_auth_alg != 0) {
 		/* auth */
 		qs->qs_dec_desc.qcd_slices[0] = FW_SLICE_AUTH;
 		qs->qs_dec_desc.qcd_cmd_id = FW_LA_CMD_AUTH;
@@ -2066,8 +2088,8 @@ qat_crypto_new_session(void *arg, uint32_t *lid, struct cryptoini *cri)
 	qs->qs_dec_desc.qcd_slices[slice] = FW_SLICE_DRAM_WR;
 	qs->qs_enc_desc.qcd_slices[slice] = FW_SLICE_DRAM_WR;
 
-	qcy->qcy_sc->sc_hw.qhw_crypto_setup_desc(qcy, qs, &qs->qs_dec_desc, crie, cria);
-	qcy->qcy_sc->sc_hw.qhw_crypto_setup_desc(qcy, qs, &qs->qs_enc_desc, crie, cria);
+	qcy->qcy_sc->sc_hw.qhw_crypto_setup_desc(qcy, qs, &qs->qs_dec_desc, csp);
+	qcy->qcy_sc->sc_hw.qhw_crypto_setup_desc(qcy, qs, &qs->qs_enc_desc, csp);
 
 	return 0;
 fail:
@@ -2121,6 +2143,8 @@ qat_crypto_check_free_session(struct qat_crypto *qcy, struct qat_session *qs)
 	}
 }
 
+/* XXXMJ */
+#if 0
 int
 qat_crypto_free_session(void *arg, uint64_t sid)
 {
@@ -2142,6 +2166,7 @@ qat_crypto_free_session(void *arg, uint64_t sid)
 
 	return error;
 }
+#endif
 
 int
 qat_crypto_start(struct qat_softc *sc)
@@ -2150,20 +2175,22 @@ qat_crypto_start(struct qat_softc *sc)
 	int error, i;
 	static const int algs[] = {
 	    CRYPTO_DES_CBC, CRYPTO_3DES_CBC, CRYPTO_AES_CBC,
-	    CRYPTO_MD5_HMAC_96, CRYPTO_SHA1_HMAC_96, CRYPTO_SHA2_256_HMAC,
+	    /*CRYPTO_MD5_HMAC_96,*/ CRYPTO_SHA1_HMAC, CRYPTO_SHA2_256_HMAC,
 	    CRYPTO_SHA2_384_HMAC, CRYPTO_SHA2_512_HMAC,
 	};
 
 	/* opencrypto */
-	qcy->qcy_cid = crypto_get_driverid(0);
+	qcy->qcy_cid = crypto_get_driverid(sc->sc_dev,
+	    sizeof(struct qat_session), 0);
 	if (qcy->qcy_cid < 0) {
 		device_printf(sc->sc_dev,
 		    "could not get opencrypto driver id\n");
 		return ENOENT;
 	}
 
-#if 0
 	for (i = 0; i < __arraycount(algs); i++) {
+		(void)error;
+#if 0
 		error = crypto_register(qcy->qcy_cid, algs[i], 0, 0,
 		    qat_crypto_new_session, qat_crypto_free_session,
 		    qat_crypto_process, qcy);
@@ -2172,8 +2199,8 @@ qat_crypto_start(struct qat_softc *sc)
 			    "could not register crypto: %d\n", error);
 			return error;
 		}
-	}
 #endif
+	}
 
 	return 0;
 }
@@ -2195,9 +2222,12 @@ qat_crypto_sym_rxintr(struct qat_softc *sc, void *arg, void *msg)
 	qs = qsbc->qsbc_session;
 	crp = qsbc->qsbc_cb_tag;
 
+	/* XXXMJ busdma */
+#if 0
 	bus_dmamap_sync(sc->sc_dmat, qsc->qsc_buf_dmamap, 0,
 	    qsc->qsc_buf_dmamap->dm_mapsize,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+#endif
 	bus_dmamap_unload(sc->sc_dmat, qsc->qsc_buf_dmamap);
 	qat_crypto_free_sym_cookie(qcb, qsc);
 

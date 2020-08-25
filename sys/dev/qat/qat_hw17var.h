@@ -72,10 +72,9 @@ int		qat_check_slice_hang(struct qat_softc *);
 
 void		qat_hw17_crypto_setup_desc(struct qat_crypto *,
 		    struct qat_session *, struct qat_crypto_desc *,
-		    struct cryptoini *, struct cryptoini *);
+		    const struct crypto_session_params *);
 void		qat_hw17_crypto_setup_req_params(struct qat_crypto_bank *,
 		    struct qat_session *, struct qat_crypto_desc const *,
-		    struct qat_sym_cookie *, struct cryptodesc *,
-		    struct cryptodesc *, bus_addr_t);
+		    struct qat_sym_cookie *, struct cryptop *, bus_addr_t);
 
 #endif

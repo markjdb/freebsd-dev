@@ -62,14 +62,17 @@ __FBSDID("$FreeBSD");
 __KERNEL_RCSID(0, "$NetBSD: qat_ae.c,v 1.1 2019/11/20 09:37:46 hikaru Exp $");
 #endif
 
+#include "netbsd_compat.h"
+
 #include <sys/param.h>
+#include <sys/bus.h>
+#include <sys/limits.h>
 #include <sys/systm.h>
 
-#include <dev/firmload.h>
+#include <machine/bus.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
-#include <dev/pci/pcidevs.h>
 
 #include "qatreg.h"
 #include "qatvar.h"
@@ -212,7 +215,7 @@ qat_ae_write_4(struct qat_softc *sc, u_char ae, bus_size_t offset,
 
 	} while (times--);
 
-	aprint_error_dev(sc->sc_dev,
+	device_printf(sc->sc_dev,
 	    "couldn't write AE CSR: ae 0x%hhx offset 0x%lx\n", ae, (long)offset);
 	return EFAULT;
 }
@@ -233,7 +236,7 @@ qat_ae_read_4(struct qat_softc *sc, u_char ae, bus_size_t offset,
 		}
 	} while (times--);
 
-	aprint_error_dev(sc->sc_dev,
+	device_printf(sc->sc_dev,
 	    "couldn't read AE CSR: ae 0x%hhx offset 0x%lx\n", ae, (long)offset);
 	return EFAULT;
 }
@@ -245,7 +248,7 @@ qat_ae_ctx_indr_write(struct qat_softc *sc, u_char ae, uint32_t ctx_mask,
 	int ctx;
 	uint32_t ctxptr;
 
-	KASSERT(offset == CTX_FUTURE_COUNT_INDIRECT ||
+	MPASS(offset == CTX_FUTURE_COUNT_INDIRECT ||
 	    offset == FUTURE_COUNT_SIGNAL_INDIRECT ||
 	    offset == CTX_STS_INDIRECT ||
 	    offset == CTX_WAKEUP_EVENTS_INDIRECT ||
@@ -272,7 +275,7 @@ qat_ae_ctx_indr_read(struct qat_softc *sc, u_char ae, uint32_t ctx,
 	int error;
 	uint32_t ctxptr;
 
-	KASSERT(offset == CTX_FUTURE_COUNT_INDIRECT ||
+	MPASS(offset == CTX_FUTURE_COUNT_INDIRECT ||
 	    offset == FUTURE_COUNT_SIGNAL_INDIRECT ||
 	    offset == CTX_STS_INDIRECT ||
 	    offset == CTX_WAKEUP_EVENTS_INDIRECT ||
@@ -368,7 +371,7 @@ qat_aereg_rel_data_write(struct qat_softc *sc, u_char ae, u_char ctx,
 
 	/* This logic only works for GPRs and LM index registers, 
 	   not NN or XFER registers! */
-	KASSERT(regtype == AEREG_GPA_REL || regtype == AEREG_GPB_REL ||
+	MPASS(regtype == AEREG_GPA_REL || regtype == AEREG_GPB_REL ||
 	    regtype == AEREG_LMEM0 || regtype == AEREG_LMEM1);
 
 	if ((regtype == AEREG_GPA_REL) || (regtype == AEREG_GPB_REL)) {
@@ -427,7 +430,7 @@ qat_aereg_rel_data_read(struct qat_softc *sc, u_char ae, u_char ctx,
 	u_short mask, regaddr;
 	u_char nae;
 
-	KASSERT(regtype == AEREG_GPA_REL || regtype == AEREG_GPB_REL ||
+	MPASS(regtype == AEREG_GPA_REL || regtype == AEREG_GPB_REL ||
 	    regtype == AEREG_SR_REL || regtype == AEREG_SR_RD_REL ||
 	    regtype == AEREG_DR_REL || regtype == AEREG_DR_RD_REL ||
 	    regtype == AEREG_LMEM0 || regtype == AEREG_LMEM1);
@@ -570,7 +573,7 @@ qat_aereg_rel_rdxfer_write(struct qat_softc *sc, u_char ae, u_char ctx,
 	u_short mask;
 	u_short dr_offset;
 
-	KASSERT(regtype == AEREG_SR_REL || regtype == AEREG_DR_REL ||
+	MPASS(regtype == AEREG_SR_REL || regtype == AEREG_DR_REL ||
 	    regtype == AEREG_SR_RD_REL || regtype == AEREG_DR_RD_REL);
 
 	QAT_YIELD();
@@ -578,7 +581,7 @@ qat_aereg_rel_rdxfer_write(struct qat_softc *sc, u_char ae, u_char ctx,
 	error = qat_ae_read_4(sc, ae, CTX_ENABLES, &ctxen);
 	if (ctxen & CTX_ENABLES_INUSE_CONTEXTS) {
 		if (ctx & 0x1) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "bad ctx argument in 4-ctx mode,ctx=0x%x\n", ctx);
 			return EINVAL;
 		}
@@ -663,37 +666,37 @@ qat_aereg_abs_data_write(struct qat_softc *sc, u_char ae,
 
 	switch (regtype) {
 	case AEREG_GPA_ABS:
-		KASSERT(absreg < MAX_GPR_REG);
+		MPASS(absreg < MAX_GPR_REG);
 		error = qat_aereg_rel_data_write(sc, ae, ctx, AEREG_GPA_REL,
 		    relreg, value);
 		break;
 	case AEREG_GPB_ABS:
-		KASSERT(absreg < MAX_GPR_REG);
+		MPASS(absreg < MAX_GPR_REG);
 		error = qat_aereg_rel_data_write(sc, ae, ctx, AEREG_GPB_REL,
 		    relreg, value);
 		break;
 	case AEREG_DR_RD_ABS:
-		KASSERT(absreg < MAX_XFER_REG);
+		MPASS(absreg < MAX_XFER_REG);
 		error = qat_aereg_rel_rdxfer_write(sc, ae, ctx, AEREG_DR_RD_REL,
 		    relreg, value);
 		break;
 	case AEREG_SR_RD_ABS:
-		KASSERT(absreg < MAX_XFER_REG);
+		MPASS(absreg < MAX_XFER_REG);
 		error = qat_aereg_rel_rdxfer_write(sc, ae, ctx, AEREG_SR_RD_REL,
 		    relreg, value);
 		break;
 	case AEREG_DR_WR_ABS:
-		KASSERT(absreg < MAX_XFER_REG);
+		MPASS(absreg < MAX_XFER_REG);
 		error = qat_aereg_rel_wrxfer_write(sc, ae, ctx, AEREG_DR_WR_REL,
 		    relreg, value);
 		break;
 	case AEREG_SR_WR_ABS:
-		KASSERT(absreg < MAX_XFER_REG);
+		MPASS(absreg < MAX_XFER_REG);
 		error = qat_aereg_rel_wrxfer_write(sc, ae, ctx, AEREG_SR_WR_REL,
 		    relreg, value);
 		break;
 	case AEREG_NEIGH_ABS:
-		KASSERT(absreg < MAX_NN_REG);
+		MPASS(absreg < MAX_NN_REG);
 		if (absreg >= MAX_NN_REG)
 			return EINVAL;
 		error = qat_aereg_rel_nn_write(sc, ae, ctx, AEREG_NEIGH_REL,
@@ -919,12 +922,15 @@ qat_ae_wait_num_cycles(struct qat_softc *sc, u_char ae, int cycles, int check)
 		elapsed = ccnt - pcnt;
 		if (elapsed == 0) {
 			times--;
+			/* XXXMJ */
+#if 0
 			aprint_debug_dev(sc->sc_dev,
 			    "qat_ae_wait_num_cycles elapsed 0 times %d\n",
 			    times);
+#endif
 		}
 		if (times <= 0) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "qat_ae_wait_num_cycles timeout\n");
 			return -1;
 		}
@@ -1022,7 +1028,10 @@ qat_ae_start(struct qat_softc *sc)
 		if (error)
 			return error;
 
+		/* XXXMJ */
+#if 0
 		aprint_verbose_dev(sc->sc_dev, "Started AE %d\n", ae);
+#endif
 	}
 
 	return 0;
@@ -1051,7 +1060,7 @@ qat_ae_clear_reset(struct qat_softc *sc)
 	do {
 		qat_cap_global_write_4(sc, CAP_GLOBAL_CTL_RESET, reset);
 		if ((times--) == 0) {
-			aprint_error_dev(sc->sc_dev, "couldn't reset AEs\n");
+			device_printf(sc->sc_dev, "couldn't reset AEs\n");
 			return EBUSY;
 		}
 		reg = qat_cap_global_read_4(sc, CAP_GLOBAL_CTL_RESET);
@@ -1129,7 +1138,7 @@ qat_ae_check(struct qat_softc *sc)
 		times = TIMEOUT_AE_CHECK;
 		error = qat_ae_read_4(sc, ae, PROFILE_COUNT, &cnt);
 		if (error) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "couldn't access AE %d CSR\n", ae);
 			return error;
 		}
@@ -1139,7 +1148,7 @@ qat_ae_check(struct qat_softc *sc)
 			error = qat_ae_read_4(sc, ae,
 			    PROFILE_COUNT, &cnt);
 			if (error) {
-				aprint_error_dev(sc->sc_dev,
+				device_printf(sc->sc_dev,
 				    "couldn't access AE %d CSR\n", ae);
 				return error;
 			}
@@ -1149,7 +1158,7 @@ qat_ae_check(struct qat_softc *sc)
 			else
 				break;
 			if (times <= 0) {
-				aprint_error_dev(sc->sc_dev,
+				device_printf(sc->sc_dev,
 				    "AE %d CSR is useless\n", ae);
 				return EFAULT;
 			}
@@ -1266,7 +1275,7 @@ qat_ae_clear_gprs(struct qat_softc *sc)
 			rv = qat_ae_wait_num_cycles(sc, ae, AE_EXEC_CYCLE, 1);
 		} while (rv && times--);
 		if (times <= 0) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "qat_ae_clear_gprs timeout");
 			return ETIMEDOUT;
 		}
@@ -1400,7 +1409,7 @@ qat_ae_ucode_read(struct qat_softc *sc, u_char ae, u_int uaddr, u_int ninst,
 	/* disable SHARE_CS bit to workaround silicon bug */
 	qat_ae_write_4(sc, ae, AE_MISC_CONTROL, misc & 0xfffffffb);
 
-	KASSERT(uaddr + ninst <= USTORE_SIZE);
+	MPASS(uaddr + ninst <= USTORE_SIZE);
 
 	/* save ustore-addr csr */
 	qat_ae_read_4(sc, ae, USTORE_ADDRESS, &ustore_addr);
@@ -1510,7 +1519,7 @@ qat_ae_exec_ucode(struct qat_softc *sc, u_char ae, u_char ctx,
 	uint32_t misc, nmisc, ctxen;
 	u_char nae;
 
-	KASSERT(ninst <= USTORE_SIZE);
+	MPASS(ninst <= USTORE_SIZE);
 
 	if (qat_ae_is_active(sc, ae))
 		return EBUSY;
@@ -1738,15 +1747,18 @@ qat_ae_batch_put_lm(struct qat_softc *sc, u_char ae,
 	if (STAILQ_FIRST(qabi_list) == NULL)
 		return 0;
 
-	alloc_ninst = uimin(USTORE_SIZE, nqabi);
+	alloc_ninst = min(USTORE_SIZE, nqabi);
 	ucode = qat_alloc_mem(sizeof(uint64_t) * alloc_ninst);
 
 	ninst = 0;
 	STAILQ_FOREACH(qabi, qabi_list, qabi_next) {
 		insnsz = qat_ae_get_inst_num(qabi->qabi_size);
 		if (insnsz + ninst > alloc_ninst) {
+			/* XXXMJ */
+#if 0
 			aprint_debug_dev(sc->sc_dev,
 			    "code page is full, call exection unit\n");
+#endif
 			/* add ctx_arb[kill] */
 			ucode[ninst++] = 0x0E000010000ull;
 			execed = 1;
@@ -1861,6 +1873,8 @@ qat_aefw_uof_find_chunk(struct qat_softc *sc,
 int
 qat_aefw_load_mof(struct qat_softc *sc)
 {
+	/* XXXMJ */
+#if 0
 	int error = 0;
 	firmware_handle_t fh = NULL;
 	off_t fwsize;
@@ -1868,7 +1882,7 @@ qat_aefw_load_mof(struct qat_softc *sc)
 	/* load MOF firmware */
 	error = firmware_open("qat", sc->sc_hw.qhw_mof_fwname, &fh);
 	if (error) {
-		aprint_error_dev(sc->sc_dev, "couldn't load mof firmware %s\n",
+		device_printf(sc->sc_dev, "couldn't load mof firmware %s\n",
 		    sc->sc_hw.qhw_mof_fwname);
 		goto fail;
 	}
@@ -1895,18 +1909,22 @@ fail:
 		sc->sc_fw_mof = NULL;
 	}
 	goto out;
+#endif
+	return (ENOENT);
 }
 
 int
 qat_aefw_load_mmp(struct qat_softc *sc)
 {
+	/* XXXMJ */
+#if 0
 	int error = 0;
 	firmware_handle_t fh = NULL;
 	off_t fwsize;
 
 	error = firmware_open("qat", sc->sc_hw.qhw_mmp_fwname, &fh);
 	if (error) {
-		aprint_error_dev(sc->sc_dev, "couldn't load mmp firmware %s\n",
+		device_printf(sc->sc_dev, "couldn't load mmp firmware %s\n",
 		    sc->sc_hw.qhw_mmp_fwname);
 		goto fail;
 	}
@@ -1933,6 +1951,8 @@ fail:
 		sc->sc_fw_mmp = NULL;
 	}
 	goto out;
+#endif
+	return (ENOENT);
 }
 
 int
@@ -1963,9 +1983,12 @@ qat_aefw_mof_find_uof0(struct qat_softc *sc,
 			*fwptr = (void *)((uintptr_t)muh +
 			    (uintptr_t)much->much_offset);
 			*fwsize = (size_t)much->much_size;
+			/* XXXMJ */
+#if 0
 			aprint_verbose_dev(sc->sc_dev,
 			    "%s obj %s at %p size 0x%lx\n",
 			    id, uof_name, *fwptr, *fwsize);
+#endif
 			return 0;
 		}
 	}
@@ -2133,6 +2156,8 @@ qat_aefw_uof_parse_image(struct qat_softc *sc,
 	qui->qui_image = image =
 	    (struct uof_image *)(base + uch->uch_offset);
 
+	/* XXXMJ */
+#if 0
 	aprint_verbose_dev(sc->sc_dev,
 	    "uof_image name %s\n",
 	    qat_aefw_uof_string(sc, image->ui_name));
@@ -2145,6 +2170,7 @@ qat_aefw_uof_parse_image(struct qat_softc *sc,
 	aprint_verbose_dev(sc->sc_dev,
 	    "uof_image pages 0x%08x page regions 0x%08x\n",
 	    image->ui_num_pages, image->ui_num_page_regions);
+#endif
 
 #define ASSIGN_OBJ_TAB(np, typep, type, base, off, lim)			\
 do {									\
@@ -2304,9 +2330,12 @@ qat_aefw_uof_parse(struct qat_softc *sc)
 			if (csum != ufch->ufch_csum)
 				return EINVAL;
 
+			/* XXXMJ */
+#if 0
 			aprint_verbose_dev(sc->sc_dev,
 			    "uof at %p size 0x%lx\n",
 			    uof, uof_size);
+#endif
 		}
 	}
 
@@ -2320,9 +2349,12 @@ qat_aefw_uof_parse(struct qat_softc *sc)
 
 	uoh = uof;
 
+	/* XXXMJ */
+#if 0
 	aprint_verbose_dev(sc->sc_dev,
 	    "uof cpu_type 0x%08x min_cpu_ver 0x%04x max_cpu_ver 0x%04x\n",
 	    uoh->uoh_cpu_type, uoh->uoh_min_cpu_ver, uoh->uoh_max_cpu_ver);
+#endif
 
 	if (size < sizeof(struct uof_chunk_hdr) * uoh->uoh_num_chunks)
 		return EINVAL;
@@ -2531,7 +2563,10 @@ qat_aefw_alloc_auth_dmamem(struct qat_softc *sc, char *image, size_t size,
 
 	auth_chunk = dma->qdm_dma_vaddr;
 	auth_chunk->ac_chunk_size = mapsize;
+	/* XXXMJ */
+#if 0
 	auth_chunk->ac_chunk_bus_addr = dma->qdm_dma_map->dm_segs[0].ds_addr;
+#endif
 
 	virt_addr = (uintptr_t)dma->qdm_dma_vaddr;
 	virt_addr += simg_offset;
@@ -2596,9 +2631,12 @@ qat_aefw_alloc_auth_dmamem(struct qat_softc *sc, char *image, size_t size,
 		auth_desc->fad_img_ae_insts_low = auth_desc->fad_img_low;
 	}
 
+	/* XXXMJ */
+#if 0
 	bus_dmamap_sync(sc->sc_dmat, dma->qdm_dma_map, 0,
 	    dma->qdm_dma_map->dm_mapsize,
 	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+#endif
 
 	return 0;
 }
@@ -2606,16 +2644,22 @@ qat_aefw_alloc_auth_dmamem(struct qat_softc *sc, char *image, size_t size,
 int
 qat_aefw_auth(struct qat_softc *sc, struct qat_dmamem *dma)
 {
-	bus_addr_t addr = dma->qdm_dma_map->dm_segs[0].ds_addr;
+	bus_addr_t addr;
 	uint32_t fcu, sts;
 	int retry = 0;
 
+	/* XXXMJ */
+#if 0
+	addr = dma->qdm_dma_map->dm_segs[0].ds_addr;
+#else
+	addr = 0;
+#endif
 	qat_cap_global_write_4(sc, FCU_DRAM_ADDR_HI, addr >> 32);
 	qat_cap_global_write_4(sc, FCU_DRAM_ADDR_LO, addr);
 	qat_cap_global_write_4(sc, FCU_CTRL, FCU_CTRL_CMD_AUTH);
 
 	do {
-		delay(FW_AUTH_WAIT_PERIOD * 1000);
+		DELAY(FW_AUTH_WAIT_PERIOD * 1000);
 		fcu = qat_cap_global_read_4(sc, FCU_STATUS);
 		sts = __SHIFTOUT(fcu, FCU_STATUS_STS);
 		if (sts == FCU_STATUS_STS_VERI_FAIL)
@@ -2627,7 +2671,7 @@ qat_aefw_auth(struct qat_softc *sc, struct qat_dmamem *dma)
 	} while (retry++ < FW_AUTH_MAX_RETRY);
 
 fail:
-	aprint_error_dev(sc->sc_dev,
+	device_printf(sc->sc_dev,
 	   "firmware authentication error: status 0x%08x retry %d\n",
 	   fcu, retry);
 	return EINVAL;
@@ -2652,13 +2696,13 @@ qat_aefw_suof_load(struct qat_softc *sc, struct qat_dmamem *dma)
 		if (!((ae_mode->sam_ae_mask >> ae) & 0x1))
 			continue;
 		if (qat_ae_is_active(sc, ae)) {
-			aprint_error_dev(sc->sc_dev, "AE %d is active\n", ae);
+			device_printf(sc->sc_dev, "AE %d is active\n", ae);
 			return EINVAL;
 		}
 		qat_cap_global_write_4(sc, FCU_CTRL,
 		    FCU_CTRL_CMD_LOAD | __SHIFTIN(ae, FCU_CTRL_AE));
 		do {
-			delay(FW_AUTH_WAIT_PERIOD * 1000);
+			DELAY(FW_AUTH_WAIT_PERIOD * 1000);
 			fcu = qat_cap_global_read_4(sc, FCU_STATUS);
 			sts = __SHIFTOUT(fcu, FCU_STATUS_STS);
 			loaded = __SHIFTOUT(fcu, FCU_STATUS_LOADED_AE);
@@ -2669,7 +2713,7 @@ qat_aefw_suof_load(struct qat_softc *sc, struct qat_dmamem *dma)
 		} while (retry++ < FW_AUTH_MAX_RETRY);
 
 		if (retry > FW_AUTH_MAX_RETRY) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "firmware load timeout: status %08x\n", fcu);
 			return EINVAL;
 		}
@@ -2720,7 +2764,7 @@ qat_aefw_uof_assign_image(struct qat_softc *sc, struct qat_ae *qae,
 	if (qui->qui_image->ui_ae_mode &
 	    (AE_MODE_RELOAD_CTX_SHARED | AE_MODE_SHARED_USTORE)) {
 		/* XXX */
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "shared ae mode is not supported yet\n");
 		return ENOTSUP;
 	}
@@ -2754,9 +2798,12 @@ qat_aefw_uof_assign_image(struct qat_softc *sc, struct qat_ae *qae,
 			return EINVAL;
 		
 		page->qap_region = &slice->qas_regions[region];
+		/* XXXMJ */
+#if 0
 		aprint_verbose_dev(sc->sc_dev,
 		    "ae %p slice %d page %d assign region %d\n",
 		    qae, qae->qae_num_slices, i, region);
+#endif
 	}
 
 	qae->qae_num_slices++;
@@ -2851,21 +2898,21 @@ qat_aefw_load(struct qat_softc *sc)
 
 	error = qat_aefw_mof_parse(sc);
 	if (error) {
-		aprint_error_dev(sc->sc_dev, "couldn't parse mof: %d\n", error);
+		device_printf(sc->sc_dev, "couldn't parse mof: %d\n", error);
 		return error;
 	}
 
 	if (sc->sc_hw.qhw_fw_auth) {
 		error = qat_aefw_suof_parse(sc);
 		if (error) {
-			aprint_error_dev(sc->sc_dev, "couldn't parse suof: %d\n",
+			device_printf(sc->sc_dev, "couldn't parse suof: %d\n",
 			    error);
 			return error;
 		}
 
 		error = qat_aefw_suof_write(sc);
 		if (error) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "could not write firmware: %d\n", error);
 			return error;
 		}
@@ -2873,21 +2920,21 @@ qat_aefw_load(struct qat_softc *sc)
 	} else {
 		error = qat_aefw_uof_parse(sc);
 		if (error) {
-			aprint_error_dev(sc->sc_dev, "couldn't parse uof: %d\n",
+			device_printf(sc->sc_dev, "couldn't parse uof: %d\n",
 			    error);
 			return error;
 		}
 
 		error = qat_aefw_uof_init(sc);
 		if (error) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "couldn't init for aefw: %d\n", error);
 			return error;
 		}
 
 		error = qat_aefw_uof_write(sc);
 		if (error) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "Could not write firmware: %d\n", error);
 			return error;
 		}
@@ -2905,13 +2952,13 @@ qat_aefw_start(struct qat_softc *sc, u_char ae, u_int ctx_mask)
 	if (sc->sc_hw.qhw_fw_auth) {
 		qat_cap_global_write_4(sc, FCU_CTRL, FCU_CTRL_CMD_START);
 		do {
-			delay(FW_AUTH_WAIT_PERIOD * 1000);
+			DELAY(FW_AUTH_WAIT_PERIOD * 1000);
 			fcu = qat_cap_global_read_4(sc, FCU_STATUS);
 			if (fcu & FCU_STATUS_DONE)
 				return 0;
 		} while (retry++ < FW_AUTH_MAX_RETRY);
 
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "firmware start timeout: status %08x\n", fcu);
 		return EINVAL;
 	} else {
@@ -2941,7 +2988,7 @@ qat_aefw_init_memory_one(struct qat_softc *sc, struct uof_init_mem *uim)
 	switch (uim->uim_region) {
 	case LMEM_REGION:
 		if ((uim->uim_addr + uim->uim_num_bytes) > MAX_LMEM_REG * 4) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "Invalid lmem addr or bytes\n");
 			return ENOBUFS;
 		}
@@ -2974,7 +3021,7 @@ qat_aefw_init_memory_one(struct qat_softc *sc, struct uof_init_mem *uim)
 			    qat_ae_get_inst_num(qabi->qabi_size);
 			(*curinit)++;
 			if (*curinit >= MAX_LMEM_REG) {
-				aprint_error_dev(sc->sc_dev,
+				device_printf(sc->sc_dev,
 				    "Invalid lmem val attr\n");
 				return ENOBUFS;
 			}
@@ -2988,7 +3035,7 @@ qat_aefw_init_memory_one(struct qat_softc *sc, struct uof_init_mem *uim)
 		/* XXX */
 		/* fallthrough */
 	default:
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "unsupported memory region to init: %d\n",
 		    uim->uim_region);
 		return ENOTSUP;
@@ -3051,7 +3098,7 @@ qat_aefw_init_ustore(struct qat_softc *sc)
 		}
 
 		for (ae = 0; ae < sc->sc_ae_num; ae++) {
-			KASSERT(ae < UOF_MAX_NUM_OF_AE);
+			MPASS(ae < UOF_MAX_NUM_OF_AE);
 			if ((ui->ui_ae_assigned & (1 << ae)) == 0)
 				continue;
 
@@ -3153,7 +3200,7 @@ qat_aefw_init_reg_sym_expr(struct qat_softc *sc, u_char ae,
 
 		if (uirs->uirs_value_type == EXPR_VAL) {
 			/* XXX */
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "does not support initializing EXPR_VAL\n");
 			return ENOTSUP;
 		} else {
@@ -3188,7 +3235,7 @@ qat_aefw_init_reg_sym_expr(struct qat_softc *sc, u_char ae,
 		case INIT_EXPR:
 		case INIT_EXPR_ENDIAN_SWAP:
 		default:
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "does not support initializing init_type %d\n",
 			    uirs->uirs_init_type);
 			return ENOTSUP;
@@ -3212,7 +3259,7 @@ qat_aefw_init_memory(struct qat_softc *sc)
 		uimsz = sizeof(struct uof_init_mem) +
 		    sizeof(struct uof_mem_val_attr) * uim->uim_num_val_attr;
 		if (uimsz > initmemsz) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "invalid uof_init_mem or uof_mem_val_attr size\n");
 			return EINVAL;
 		}
@@ -3220,7 +3267,7 @@ qat_aefw_init_memory(struct qat_softc *sc)
 		if (uim->uim_num_bytes > 0) {
 			error = qat_aefw_init_memory_one(sc, uim);
 			if (error) {
-				aprint_error_dev(sc->sc_dev,
+				device_printf(sc->sc_dev,
 				    "Could not init ae memory: %d\n", error);
 				return error;
 			}
@@ -3234,7 +3281,7 @@ qat_aefw_init_memory(struct qat_softc *sc)
 		error = qat_ae_batch_put_lm(sc, ae, &qafu->qafu_lm_init[ae],
 		    qafu->qafu_num_lm_init_inst[ae]);
 		if (error)
-			aprint_error_dev(sc->sc_dev, "Could not put lm\n");
+			device_printf(sc->sc_dev, "Could not put lm\n");
 
 		qat_aefw_free_lm_init(sc, ae);
 	}
@@ -3274,7 +3321,7 @@ qat_aefw_init_globals(struct qat_softc *sc)
 			    &sc->sc_aefw_uof.qafu_imgs[i].qui_pages[p];
 			if (qup->qup_num_uw_blocks &&
 			    (qup->qup_num_uc_var || qup->qup_num_imp_var)) {
-				aprint_error_dev(sc->sc_dev,
+				device_printf(sc->sc_dev,
 				    "not support uC global variables\n");
 				return ENOTSUP;
 			}
@@ -3340,7 +3387,7 @@ qat_aefw_do_pagein(struct qat_softc *sc, u_char ae, struct qat_uof_page *qup)
 
 	if (qup->qup_num_uc_var || qup->qup_num_neigh_reg ||
 	    qup->qup_num_imp_var || qup->qup_num_imp_expr) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "does not support fixup locals\n");
 		return ENOTSUP;
 	}
@@ -3355,7 +3402,7 @@ qat_aefw_do_pagein(struct qat_softc *sc, u_char ae, struct qat_uof_page *qup)
 	uraddr = 0;
 	ninst = qup->qup_num_micro_words;
 	while (ninst > 0) {
-		cpylen = uimin(ninst, UWORD_CPYBUF_SIZE);
+		cpylen = min(ninst, UWORD_CPYBUF_SIZE);
 
 		/* load the buffer */
 		for (i = 0; i < cpylen; i++) {
@@ -3368,7 +3415,7 @@ qat_aefw_do_pagein(struct qat_softc *sc, u_char ae, struct qat_uof_page *qup)
 				 * offset of the page. */
 				if (qup->qup_page_region != 0) {
 					/* XXX */
-					aprint_error_dev(sc->sc_dev,
+					device_printf(sc->sc_dev,
 					    "region != 0 is not supported\n");
 					qat_free_mem(ucode_cpybuf);
 					return ENOTSUP;
@@ -3419,13 +3466,16 @@ qat_aefw_uof_write_one(struct qat_softc *sc, struct qat_uof_image *qui)
 	int error;
 	u_char ae, ctx_mask;
 
+	/* XXXMJ */
+#if 0
 	aprint_verbose_dev(sc->sc_dev,
 		"aefw writing uof %s\n",
 		qat_aefw_uof_string(sc, qui->qui_image->ui_name));
+#endif
 
 	error = qat_aefw_init_globals(sc);
 	if (error) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Could not initialize globals\n");
 		return error;
 	}
@@ -3442,7 +3492,7 @@ qat_aefw_uof_write_one(struct qat_softc *sc, struct qat_uof_image *qui)
 		struct qat_ae_slice *qas;
 		u_int metadata;
 
-		KASSERT(ae < UOF_MAX_NUM_OF_AE);
+		MPASS(ae < UOF_MAX_NUM_OF_AE);
 
 		if ((ui->ui_ae_assigned & (1 << ae)) == 0)
 			continue;
@@ -3471,11 +3521,14 @@ qat_aefw_uof_write_one(struct qat_softc *sc, struct qat_uof_image *qui)
 		}
 
 		metadata = qas->qas_image->qui_image->ui_app_metadata;
+		/* XXXMJ */
+#if 0
 		if (metadata != 0xffffffff) {
 			aprint_normal_dev(sc->sc_dev,
 			    "loaded firmware: %s\n",
 			    qat_aefw_uof_string(sc, metadata));
 		}
+#endif
 
 		/* Assume starting page is page 0 */
 		qap = &qas->qas_pages[0];

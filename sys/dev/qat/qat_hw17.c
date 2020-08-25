@@ -61,14 +61,19 @@ __FBSDID("$FreeBSD");
 __KERNEL_RCSID(0, "$NetBSD: qat_hw17.c,v 1.1 2019/11/20 09:37:46 hikaru Exp $");
 #endif
 
+#include "netbsd_compat.h"
+
 #include <sys/param.h>
+#include <sys/bus.h>
 #include <sys/systm.h>
 #include <sys/proc.h>
+
+#include <machine/bus.h>
 
 #include <opencrypto/xform.h>
 
 /* XXX same as sys/arch/x86/x86/via_padlock.c */
-#include <opencrypto/cryptosoft_xform.c>
+//#include <opencrypto/cryptosoft_xform.c>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
@@ -88,13 +93,15 @@ int		qat_adm_mailbox_send_fw_status(struct qat_softc *);
 int		qat_adm_mailbox_send_constants(struct qat_softc *);
 
 uint32_t	qat_hw17_crypto_setup_cipher_desc(struct qat_session *,
-		    struct qat_crypto_desc *, struct cryptoini *,
-		    union hw_cipher_algo_blk *, uint32_t, struct fw_la_bulk_req *,
-		    enum fw_slice);
+		    struct qat_crypto_desc *,
+		    const struct crypto_session_params *,
+		    union hw_cipher_algo_blk *, uint32_t,
+		    struct fw_la_bulk_req *, enum fw_slice);
 uint32_t	qat_hw17_crypto_setup_auth_desc(struct qat_session *,
-		    struct qat_crypto_desc *, struct cryptoini *,
-		    union hw_auth_algo_blk *, uint32_t, struct fw_la_bulk_req *,
-		    enum fw_slice);
+		    struct qat_crypto_desc *,
+		    const struct crypto_session_params *,
+		    union hw_auth_algo_blk *, uint32_t,
+		    struct fw_la_bulk_req *, enum fw_slice);
 void		qat_hw17_init_comn_req_hdr(struct qat_crypto_desc *,
 		    struct fw_la_bulk_req *);
 
@@ -118,8 +125,11 @@ qat_adm_mailbox_init(struct qat_softc *sc)
 	memcpy(qdm->qdm_dma_vaddr,
 	    mailbox_const_tab, sizeof(mailbox_const_tab));
 
+	/* XXXMJ */
+#if 0
 	bus_dmamap_sync(sc->sc_dmat, qdm->qdm_dma_map, 0,
 	    qdm->qdm_dma_map->dm_mapsize, BUS_DMASYNC_PREWRITE);
+#endif
 
 	error = qat_alloc_dmamem(sc, &sc->sc_admin_comms.qadc_hb_dma,
 	    PAGE_SIZE, PAGE_SIZE);
@@ -148,26 +158,32 @@ qat_adm_mailbox_put_msg_sync(struct qat_softc *sc, uint32_t ae,
 		return EAGAIN;
 
 	memcpy(buf, in, ADMINMSG_LEN);
+	/* XXXMJ */
+#if 0
 	bus_dmamap_sync(sc->sc_dmat, sc->sc_admin_comms.qadc_dma.qdm_dma_map, 0,
 	    sc->sc_admin_comms.qadc_dma.qdm_dma_map->dm_mapsize,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+#endif
 	qat_misc_write_4(sc, mb_offset, 1);
 
 	received = 0;
 	for (times = 0; times < 50; times++) {
-		delay(20000);
+		DELAY(20000);
 		if (qat_misc_read_4(sc, mb_offset) == 0) {
 			received = 1;
 			break;
 		}
 	}
 	if (received) {
+		/* XXXMJ */
+#if 0
 		bus_dmamap_sync(sc->sc_dmat, sc->sc_admin_comms.qadc_dma.qdm_dma_map, 0,
 		    sc->sc_admin_comms.qadc_dma.qdm_dma_map->dm_mapsize,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+#endif
 		memcpy(out, buf + ADMINMSG_LEN, ADMINMSG_LEN);
 	} else {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 		    "Failed to send admin msg to accelerator\n");
 	}
 
@@ -190,7 +206,7 @@ qat_adm_mailbox_send(struct qat_softc *sc,
 		if (error)
 			return error;
 		if (resp->init_resp_hdr.status) {
-			aprint_error_dev(sc->sc_dev,
+			device_printf(sc->sc_dev,
 			    "Failed to send admin msg: cmd %d\n",
 			    req->init_admin_cmd_id);
 			return EFAULT;
@@ -242,11 +258,14 @@ qat_adm_mailbox_send_fw_status(struct qat_softc *sc)
 	if (error)
 		return error;
 
+	/* XXXMJ */
+#if 0
 	aprint_normal_dev(sc->sc_dev,
 	    "loaded firmware: version %d.%d.%d\n",
 	    resp.u.s.version_major_num,
 	    resp.u.s.version_minor_num,
 	    resp.init_resp_pars.u.s1.version_patch_num);
+#endif
 
 	return 0;
 }
@@ -339,17 +358,17 @@ qat_check_slice_hang(struct qat_softc *sc)
 
 uint32_t
 qat_hw17_crypto_setup_cipher_desc(struct qat_session *qs,
-    struct qat_crypto_desc *desc, struct cryptoini *crie,
+    struct qat_crypto_desc *desc, const struct crypto_session_params *csp,
     union hw_cipher_algo_blk *cipher, uint32_t cd_blk_offset,
     struct fw_la_bulk_req *req_tmpl, enum fw_slice next_slice)
 {
 	struct fw_cipher_cd_ctrl_hdr *cipher_cd_ctrl =
 	    (struct fw_cipher_cd_ctrl_hdr *)&req_tmpl->cd_ctrl;
-	int keylen = crie->cri_klen / 8;
+	int keylen = csp->csp_cipher_klen;
 
 	cipher->max.cipher_config.val =
-	    qat_crypto_load_cipher_cryptoini(desc, crie);
-	memcpy(cipher->max.key, crie->cri_key, keylen);
+	    qat_crypto_load_cipher_cryptoini(desc, csp);
+	memcpy(cipher->max.key, csp->csp_cipher_key, keylen);
 
 	cipher_cd_ctrl->cipher_state_sz = desc->qcd_cipher_blk_sz >> 3;
 	cipher_cd_ctrl->cipher_key_sz = keylen >> 3;
@@ -362,7 +381,7 @@ qat_hw17_crypto_setup_cipher_desc(struct qat_session *qs,
 
 uint32_t
 qat_hw17_crypto_setup_auth_desc(struct qat_session *qs,
-    struct qat_crypto_desc *desc, struct cryptoini *cria,
+    struct qat_crypto_desc *desc, const struct crypto_session_params *csp,
     union hw_auth_algo_blk *auth, uint32_t cd_blk_offset,
     struct fw_la_bulk_req *req_tmpl, enum fw_slice next_slice)
 {
@@ -372,7 +391,7 @@ qat_hw17_crypto_setup_auth_desc(struct qat_session *qs,
 	uint8_t *state1, *state2;
 
 	auth->max.inner_setup.auth_config.config =
-	    qat_crypto_load_auth_cryptoini(desc, cria, &hash_def);
+	    qat_crypto_load_auth_cryptoini(desc, csp, &hash_def);
 	auth->max.inner_setup.auth_counter.counter =
 	    htonl(hash_def->qshd_qat->qshqi_auth_counter);
 
@@ -392,7 +411,7 @@ qat_hw17_crypto_setup_auth_desc(struct qat_session *qs,
 
 	state1 = auth->max.state1;
 	state2 = auth->max.state1 + auth_cd_ctrl->inner_state1_sz;
-	qat_crypto_hmac_precompute(desc, cria, hash_def, state1, state2);
+	qat_crypto_hmac_precompute(desc, csp, hash_def, state1, state2);
 
 	FW_COMN_CURR_ID_SET(auth_cd_ctrl, FW_SLICE_AUTH);
 	FW_COMN_NEXT_ID_SET(auth_cd_ctrl, next_slice);
@@ -420,8 +439,7 @@ qat_hw17_init_comn_req_hdr(struct qat_crypto_desc *desc,
 
 void
 qat_hw17_crypto_setup_desc(struct qat_crypto *qcy, struct qat_session *qs,
-    struct qat_crypto_desc *desc,
-    struct cryptoini *crie, struct cryptoini *cria)
+    struct qat_crypto_desc *desc, const struct crypto_session_params *csp)
 {
 	union hw_cipher_algo_blk *cipher;
 	union hw_auth_algo_blk *auth;
@@ -446,14 +464,14 @@ qat_hw17_crypto_setup_desc(struct qat_crypto *qcy, struct qat_session *qs,
 			cipher = (union hw_cipher_algo_blk *)(cd_blk_ptr +
 			    cd_blk_offset);
 			cd_blk_offset += qat_hw17_crypto_setup_cipher_desc(
-			    qs, desc, crie, cipher, cd_blk_offset, req_tmpl,
+			    qs, desc, csp, cipher, cd_blk_offset, req_tmpl,
 			    desc->qcd_slices[i + 1]);
 			break;
 		case FW_SLICE_AUTH:
 			auth = (union hw_auth_algo_blk *)(cd_blk_ptr +
 			    cd_blk_offset);
 			cd_blk_offset += qat_hw17_crypto_setup_auth_desc(
-			    qs, desc, cria, auth, cd_blk_offset, req_tmpl,
+			    qs, desc, csp, auth, cd_blk_offset, req_tmpl,
 			    desc->qcd_slices[i + 1]);
 			req_hdr->serv_specif_flags |= FW_LA_RET_AUTH_RES;
 			/* no digest verify */
@@ -462,7 +480,7 @@ qat_hw17_crypto_setup_desc(struct qat_crypto *qcy, struct qat_session *qs,
 			i = MAX_FW_SLICE; /* end of chain */
 			break;
 		default:
-			KASSERT(0);
+			MPASS(0);
 			break;
 		}
 	}
@@ -477,16 +495,19 @@ qat_hw17_crypto_setup_desc(struct qat_crypto *qcy, struct qat_session *qs,
 	    &desc->qcd_req_cache, sizeof(desc->qcd_req_cache));
 #endif
 
+	/* XXXMJ */
+#if 0
 	bus_dmamap_sync(qcy->qcy_sc->sc_dmat,
 	    qcy->qcy_session_dmamems[qs->qs_lid].qdm_dma_map, 0,
 	    sizeof(struct qat_session),
 	    BUS_DMASYNC_PREWRITE);
+#endif
 }
 
 void
 qat_hw17_crypto_setup_req_params(struct qat_crypto_bank *qcb, struct qat_session *qs,
     struct qat_crypto_desc const *desc, struct qat_sym_cookie *qsc,
-    struct cryptodesc *crde, struct cryptodesc *crda, bus_addr_t icv_paddr)
+    struct cryptop *crp, bus_addr_t icv_paddr)
 {
 	struct qat_sym_bulk_cookie *qsbc;
 	struct fw_la_bulk_req *bulk_req;
@@ -515,8 +536,8 @@ qat_hw17_crypto_setup_req_params(struct qat_crypto_bank *qcb, struct qat_session
 		req_params_offset += sizeof(struct fw_la_cipher_req_params);
 
 		cipher_param->u.s.cipher_IV_ptr = qsc->qsc_iv_buf_paddr;
-		cipher_param->cipher_offset = crde->crd_skip;
-		cipher_param->cipher_length = crde->crd_len;
+		cipher_param->cipher_offset = crp->crp_payload_start;
+		cipher_param->cipher_length = crp->crp_payload_length;
 	}
 
 	if (cmd_id != FW_LA_CMD_CIPHER) {
@@ -524,8 +545,8 @@ qat_hw17_crypto_setup_req_params(struct qat_crypto_bank *qcb, struct qat_session
 		    (req_params_ptr + req_params_offset);
 		req_params_offset += sizeof(struct fw_la_auth_req_params);
 
-		auth_param->auth_off = crda->crd_skip;
-		auth_param->auth_len = crda->crd_len;
+		auth_param->auth_off = crp->crp_aad_start;
+		auth_param->auth_len = crp->crp_aad_length;
 		auth_param->auth_res_addr = icv_paddr;
 		auth_param->auth_res_sz = 0; /* XXX no digest verify */
 		auth_param->hash_state_sz = 0;
