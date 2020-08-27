@@ -12,7 +12,21 @@
 
 PACKAGE=	runtime
 LIB=	zfs
-LIBADD=	md pthread umem util uutil m avl bsdxml geom nvpair z zfs_core zutil
+LIBADD= \
+	avl \
+	bsdxml \
+	crypto \
+	geom \
+	m \
+	md \
+	nvpair \
+	pthread \
+	umem \
+	util \
+	uutil \
+	z \
+	zfs_core \
+	zutil
 
 INCS=	libzfs.h
 USER_C = \
@@ -58,10 +72,6 @@ KERNEL_C = \
         zprop_common.c
 
 
-KERNEL_C+= 	zstd.c \
-		zfs_zstd.c
-
-
 ARCH_C =
 .if ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "i386"
 ARCH_C += 	zfs_fletcher_intel.c \
@@ -94,8 +104,6 @@ CFLAGS+= -I${SRCTOP}/sys/contrib/openzfs/module/icp/include
 CFLAGS+= -include ${SRCTOP}/sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h
 CFLAGS+= -DHAVE_ISSETUGID
 CFLAGS+= -include ${SRCTOP}/sys/modules/zfs/zfs_config.h
-CFLAGS.zfs_zstd.c= -Wno-cast-qual -Wno-pointer-arith
-CFLAGS.zstd.c= -fno-tree-vectorize
 
 
 .include <bsd.lib.mk>
