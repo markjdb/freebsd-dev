@@ -80,9 +80,9 @@ create_one_shm(const char *path, long mode, int idx)
 		memset(&slc, 0, sizeof(slc));
 		slc.psind = idx;
 		slc.alloc_policy = SHM_LARGEPAGE_ALLOC_DEFAULT;
-		error = ioctl(fd, FIOSHMLPGCNF, &slc);
+		error = ioctl(fd, FIOSSHMLPGCNF, &slc);
 		if (error == -1)
-			err(1, "FIOSHMLPGCNF");
+			err(1, "FIOSSHMLPGCNF");
 	}
 	close(fd);
 	return (0);
