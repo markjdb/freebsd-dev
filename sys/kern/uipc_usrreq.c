@@ -1013,11 +1013,6 @@ uipc_send(struct socket *so, int flags, struct mbuf *m, struct sockaddr *nam,
 		const struct sockaddr *from;
 
 		if (nam != NULL) {
-			/* XXX racy. */
-			if (unp->unp_conn != NULL) {
-				error = EISCONN;
-				break;
-			}
 			error = unp_connect(so, nam, td);
 			if (error != 0)
 				break;
@@ -1069,11 +1064,6 @@ uipc_send(struct socket *so, int flags, struct mbuf *m, struct sockaddr *nam,
 	case SOCK_STREAM:
 		if ((so->so_state & SS_ISCONNECTED) == 0) {
 			if (nam != NULL) {
-				/* XXX racy. */
-				if (unp->unp_conn != NULL) {
-					error = EISCONN;
-					break;
-				}
 				error = unp_connect(so, nam, td);
 				if (error != 0)
 					break;
@@ -1508,7 +1498,11 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 
 	unp = sotounpcb(so);
 	UNP_PCB_LOCK(unp);
-	if (unp->unp_flags & UNP_CONNECTING) {
+	if (unp->unp_conn != NULL) {
+		UNP_PCB_UNLOCK(unp);
+		return (EISCONN);
+	}
+	if ((unp->unp_flags & UNP_CONNECTING) != 0) {
 		UNP_PCB_UNLOCK(unp);
 		return (EALREADY);
 	}
@@ -1652,6 +1646,8 @@ unp_connect2(struct socket *so, struct socket *so2, int req)
 
 	UNP_PCB_LOCK_ASSERT(unp);
 	UNP_PCB_LOCK_ASSERT(unp2);
+	KASSERT(unp->unp_conn == NULL,
+	    ("%s: socket %p is already connected", __func__, unp));
 
 	if (so2->so_type != so->so_type)
 		return (EPROTOTYPE);
@@ -1668,6 +1664,8 @@ unp_connect2(struct socket *so, struct socket *so2, int req)
 
 	case SOCK_STREAM:
 	case SOCK_SEQPACKET:
+		KASSERT(unp2->unp_conn == NULL,
+		    ("%s: socket %p is already connected", __func__, unp2));
 		unp2->unp_conn = unp;
 		if (req == PRU_CONNECT &&
 		    ((unp->unp_flags | unp2->unp_flags) & UNP_CONNWAIT))
